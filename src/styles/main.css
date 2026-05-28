@@ -1605,3 +1605,230 @@ body {
   from { opacity: 1; }
   to { opacity: 0; }
 }
+
+/* === v1.1 Agent 智能助手样式 === */
+
+/* 思考动画 */
+.agent-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.thinking-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  animation: thinkingBounce 1.2s ease-in-out infinite;
+}
+
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes thinkingBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+.thinking-text {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+/* Agent 类型徽标 */
+.agent-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  background: linear-gradient(135deg, rgba(79,142,247,0.12), rgba(108,99,255,0.12));
+  color: var(--primary-color);
+  letter-spacing: 0.3px;
+}
+
+/* Agent 结果卡片 */
+.agent-highlight {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(79,142,247,0.08), rgba(108,99,255,0.06));
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  border-left: 3px solid var(--primary-color);
+}
+
+.agent-task-list, .agent-clusters, .agent-promote {
+  margin-bottom: 12px;
+}
+
+.agent-task-list h4, .agent-clusters h4, .agent-promote h4,
+.agent-tips h4, .agent-insights h4, .report-section h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.agent-task-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 0.5px solid var(--border-light);
+}
+
+.agent-task-item:last-child { border-bottom: none; }
+
+.task-rank {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-schedule {
+  font-size: 12px;
+  color: var(--primary-color);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-reason {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cluster-item {
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+}
+
+.cluster-item strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.cluster-item p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.promote-item {
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  margin-bottom: 4px;
+}
+
+.agent-tips ul, .agent-insights ul {
+  margin-left: 16px;
+  font-size: 12px;
+}
+
+.agent-tips li, .agent-insights li {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+}
+
+/* 日报 */
+.report-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.report-summary {
+  font-size: 13px;
+  padding: 8px 12px;
+  background: var(--primary-light);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.report-section {
+  margin-bottom: 10px;
+}
+
+.report-section ul {
+  margin-left: 16px;
+  font-size: 12px;
+}
+
+/* Agent 反馈按钮 */
+.agent-feedback {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--border-light);
+}
+
+.feedback-btn {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+}
+
+.feedback-btn:hover {
+  background: var(--primary-light);
+  transform: scale(1.05);
+}
+
+.feedback-accept:hover { background: rgba(52, 199, 89, 0.15); }
+.feedback-reject:hover { background: rgba(255, 59, 48, 0.1); }
+
+.feedback-done {
+  font-size: 12px;
+  color: var(--success-color);
+}
+
+.error-text {
+  color: var(--danger-color);
+}
+
+.error-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* Agent 专属快捷胶囊颜色 */
+.quick-capsule.agent-priority { border-color: rgba(255, 107, 107, 0.3); }
+.quick-capsule.agent-priority:hover { background: rgba(255, 107, 107, 0.1); }
+.quick-capsule.agent-report { border-color: rgba(79, 142, 247, 0.3); }
+.quick-capsule.agent-report:hover { background: rgba(79, 142, 247, 0.1); }
+.quick-capsule.agent-knowledge { border-color: rgba(78, 203, 113, 0.3); }
+.quick-capsule.agent-knowledge:hover { background: rgba(78, 203, 113, 0.1); }
+.quick-capsule.agent-memory { border-color: rgba(108, 99, 255, 0.3); }
+.quick-capsule.agent-memory:hover { background: rgba(108, 99, 255, 0.1); }

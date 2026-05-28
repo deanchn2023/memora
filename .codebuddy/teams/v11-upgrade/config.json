@@ -1,0 +1,23 @@
+{
+  "name": "v11-upgrade",
+  "leadAgentId": "0e516863d0d9490dbda8486872b539df",
+  "workspacePath": "/Users/congkunzhu/Desktop/codebuddy/Memora",
+  "createdAt": "2026-05-28T15:08:00.632Z",
+  "options": {
+    "workspacePath": "/Users/congkunzhu/Desktop/codebuddy/Memora",
+    "isAutoTeam": false
+  },
+  "members": [
+    {
+      "memberId": "team-lead@v11-upgrade",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    },
+    {
+      "memberId": "backend-dev@v11-upgrade",
+      "name": "backend-dev",
+      "role": "Backend: Feedback + Profile + PromptEngine"
+    }
+  ],
+  "isAutoTeam": false
+}

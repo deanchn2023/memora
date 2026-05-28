@@ -375,35 +375,162 @@ const App = {
     input.value = '';
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
-    // 添加助手消息占位符
+    // 添加助手消息占位符（带加载动画）
     const assistantMessage = document.createElement('div');
     assistantMessage.className = 'message assistant';
     assistantMessage.innerHTML = `
       <div class="message-avatar">🤖</div>
       <div class="message-content">
-        <p>正在思考...</p>
+        <div class="agent-thinking">
+          <div class="thinking-dots"><span></span><span></span><span></span></div>
+          <span class="thinking-text">智能分析中...</span>
+        </div>
       </div>
     `;
     chatMessages.appendChild(assistantMessage);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     try {
-      // 通过主进程发送ADP消息（避免CORS限制）
-      const result = await window.electronAPI.sendADPMessage(message);
-      console.log('[ADP] Result:', result);
-      
-      if (result.success) {
-        const messageContent = assistantMessage.querySelector('.message-content');
-        messageContent.innerHTML = `<p>${this.escapeHtml(result.content)}</p>`;
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+      let result;
+      // 优先使用 Agent 系统（本地 AI），回退到 ADP
+      if (window.electronAPI?.agent?.invoke) {
+        result = await window.electronAPI.agent.invoke(message);
+        
+        if (result.success) {
+          const messageContent = assistantMessage.querySelector('.message-content');
+          const agentType = result.agentType;
+          const agentLabels = { priority: '🎯 优先级规划', knowledge: '📚 知识梳理', memory: '🧠 记忆整理', report: '📊 日报生成', chat: '💬 智能对话' };
+          
+          let html = `<div class="agent-badge">${agentLabels[agentType] || '💬 对话'}</div>`;
+          
+          if (result.result && typeof result.result === 'object') {
+            html += this.renderAgentResult(result.result, agentType);
+          } else {
+            html += `<p>${this.escapeHtml(result.result?.text || JSON.stringify(result.result))}</p>`;
+          }
+          
+          // 反馈按钮
+          if (result.traceId) {
+            html += `<div class="agent-feedback" data-trace-id="${result.traceId}">
+              <button class="feedback-btn feedback-accept" title="有用">👍</button>
+              <button class="feedback-btn feedback-reject" title="没用">👎</button>
+            </div>`;
+          }
+          
+          messageContent.innerHTML = html;
+          
+          // 绑定反馈按钮事件
+          const feedbackDiv = messageContent.querySelector('.agent-feedback');
+          if (feedbackDiv) {
+            const traceId = feedbackDiv.dataset.traceId;
+            feedbackDiv.querySelector('.feedback-accept')?.addEventListener('click', () => {
+              window.electronAPI?.feedback?.accept(traceId, result.result);
+              feedbackDiv.innerHTML = '<span class="feedback-done">✓ 感谢反馈</span>';
+            });
+            feedbackDiv.querySelector('.feedback-reject')?.addEventListener('click', () => {
+              window.electronAPI?.feedback?.reject(traceId, '用户标记无用');
+              feedbackDiv.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
+            });
+          }
+        } else {
+          throw new Error(result.error || 'Agent 调用失败');
+        }
       } else {
-        throw new Error(result.error || '发送失败');
+        // 回退：ADP 消息
+        result = await window.electronAPI.sendADPMessage(message);
+        if (result.success) {
+          const messageContent = assistantMessage.querySelector('.message-content');
+          messageContent.innerHTML = `<p>${this.escapeHtml(result.content)}</p>`;
+        } else {
+          throw new Error(result.error || '发送失败');
+        }
       }
     } catch (error) {
-      console.error('[ADP] API error:', error);
+      console.error('[AI] Error:', error);
       const messageContent = assistantMessage.querySelector('.message-content');
-      messageContent.innerHTML = `<p>抱歉，发生了错误：${this.escapeHtml(error.message)}</p>`;
+      messageContent.innerHTML = `<p class="error-text">抱歉，发生了错误：${this.escapeHtml(error.message)}</p>
+        <p class="error-hint">请检查 API 配置或网络连接</p>`;
     }
+    
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  // 渲染 Agent 结果为 HTML
+  renderAgentResult(result, agentType) {
+    switch (agentType) {
+      case 'priority': return this.renderPriorityResult(result);
+      case 'knowledge': return this.renderKnowledgeResult(result);
+      case 'memory': return this.renderMemoryResult(result);
+      case 'report': return this.renderReportResult(result);
+      default: return `<p>${this.escapeHtml(result.text || JSON.stringify(result, null, 2))}</p>`;
+    }
+  },
+
+  renderPriorityResult(result) {
+    let html = '';
+    if (result.highlight) {
+      html += `<div class="agent-highlight">${this.escapeHtml(result.highlight)}</div>`;
+    }
+    if (result.today_top5?.length) {
+      html += '<div class="agent-task-list"><h4>🎯 今日 Top 5</h4>';
+      result.today_top5.forEach((item, i) => {
+        html += `<div class="agent-task-item">
+          <span class="task-rank">${i + 1}</span>
+          <div class="task-detail">
+            <span class="task-schedule">${this.escapeHtml(item.scheduled_at || '')}</span>
+            <span class="task-reason">${this.escapeHtml(item.reason || '')}</span>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    if (result.tips?.length) {
+      html += `<div class="agent-tips"><h4>💡 提示</h4><ul>${result.tips.map(t => `<li>${this.escapeHtml(t)}</li>`).join('')}</ul></div>`;
+    }
+    return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
+  },
+
+  renderKnowledgeResult(result) {
+    let html = '';
+    if (result.clusters?.length) {
+      html += '<div class="agent-clusters"><h4>📂 知识聚类</h4>';
+      result.clusters.forEach(c => {
+        html += `<div class="cluster-item"><strong>${this.escapeHtml(c.theme)}</strong><p>${this.escapeHtml(c.summary || '')}</p></div>`;
+      });
+      html += '</div>';
+    }
+    if (result.insights?.length) {
+      html += `<div class="agent-insights"><h4>💡 洞察</h4><ul>${result.insights.map(i => `<li>${this.escapeHtml(i)}</li>`).join('')}</ul></div>`;
+    }
+    return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
+  },
+
+  renderMemoryResult(result) {
+    let html = '';
+    if (result.promote?.length) {
+      html += '<div class="agent-promote"><h4>⬆️ 建议晋升</h4>';
+      result.promote.forEach(p => {
+        html += `<div class="promote-item">${this.escapeHtml(p.from)} → ${this.escapeHtml(p.to)}：${this.escapeHtml(p.reason || '')}</div>`;
+      });
+      html += '</div>';
+    }
+    if (result.insights?.length) {
+      html += `<div class="agent-insights"><h4>💡 记忆洞察</h4><ul>${result.insights.map(i => `<li>${this.escapeHtml(i)}</li>`).join('')}</ul></div>`;
+    }
+    return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
+  },
+
+  renderReportResult(result) {
+    let html = '';
+    if (result.title) html += `<h3 class="report-title">${this.escapeHtml(result.title)}</h3>`;
+    if (result.summary) html += `<div class="report-summary">${this.escapeHtml(result.summary)}</div>`;
+    ['completed_section', 'pending_section', 'insights', 'tomorrow_plan'].forEach(key => {
+      const section = result[key];
+      if (section?.items?.length) {
+        html += `<div class="report-section"><h4>${this.escapeHtml(section.title || key)}</h4><ul>${section.items.map(i => `<li>${this.escapeHtml(typeof i === 'string' ? i : JSON.stringify(i))}</li>`).join('')}</ul></div>`;
+      }
+    });
+    return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
   },
 
   clearChat() {
@@ -1462,6 +1589,11 @@ const App = {
       
       if (syncCalendarInput.checked && window.electronAPI) {
         window.electronAPI.addToCalendar(updatedTask);
+      }
+      
+      // v1.1 反馈：编辑任务
+      if (this.editingTask._aiTraceId && window.electronAPI?.feedback?.edit) {
+        window.electronAPI.feedback.edit(this.editingTask._aiTraceId, this.editingTask, taskData, 'manual_edit');
       }
       
       this.showToast('任务已更新');

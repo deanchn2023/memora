@@ -55,6 +55,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recordFeedback: (feedback) => ipcRenderer.invoke('record-feedback', feedback),
   optimizePrompts: () => ipcRenderer.invoke('optimize-prompts'),
   
+  // v1.1 Feedback 系统
+  feedback: {
+    newTraceId: () => ipcRenderer.invoke('ai:newTraceId'),
+    recordTrace: (trace) => ipcRenderer.invoke('ai:recordTrace', trace),
+    record: (feedback) => ipcRenderer.invoke('feedback:record', feedback),
+    query: (options) => ipcRenderer.invoke('feedback:query', options),
+    accept: (traceId, finalOutput) =>
+      ipcRenderer.invoke('feedback:record', { trace_id: traceId, action: 'accept', user_final: finalOutput }),
+    reject: (traceId, reason) =>
+      ipcRenderer.invoke('feedback:record', { trace_id: traceId, action: 'reject', reason }),
+    edit: (traceId, before, after, reason) =>
+      ipcRenderer.invoke('feedback:record', { trace_id: traceId, action: 'edit', ai_output: before, user_final: after, reason }),
+  },
+
+  // v1.1 Profile 系统
+  profile: {
+    get: () => ipcRenderer.invoke('profile:get'),
+    update: (updates) => ipcRenderer.invoke('profile:update', updates),
+  },
+
+  // v1.1 Agent 智能助手
+  agent: {
+    invoke: (query, agentType) => ipcRenderer.invoke('agent:invoke', { query, agentType }),
+  },
+  
   // 剪切板去重管理
   clearClipboardHashes: () => ipcRenderer.invoke('clear-clipboard-hashes'),
   getClipboardHashCount: () => ipcRenderer.invoke('get-clipboard-hash-count'),

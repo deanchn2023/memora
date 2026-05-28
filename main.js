@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
+const crypto = require('crypto');
+const fs = require('fs');
 
 let mainWindow;
 let tray;
@@ -40,6 +42,137 @@ let memoryStore;
 // 记事本系统
 const { Notebook } = require('./src/scripts/notebook');
 let notebook;
+
+// Prompt 引擎
+const PromptEngine = require('./src/scripts/promptEngine');
+const promptEngine = new PromptEngine();
+
+// === FeedbackLogger 反馈闭环系统 ===
+class FeedbackLogger {
+  constructor() {
+    const dir = path.join(app.getPath('userData'), 'feedback');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    this.tracesFile = path.join(dir, 'ai_traces.jsonl');
+    this.feedbackFile = path.join(dir, 'feedback_log.jsonl');
+    this.tracesCache = new Map();
+    this.tracesCacheLimit = 200;
+  }
+
+  newTraceId() {
+    return `tr_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  }
+
+  recordTrace(trace) {
+    try {
+      const line = JSON.stringify(trace) + '\n';
+      fs.appendFileSync(this.tracesFile, line, 'utf8');
+      this.tracesCache.set(trace.trace_id, trace);
+      if (this.tracesCache.size > this.tracesCacheLimit) {
+        const firstKey = this.tracesCache.keys().next().value;
+        this.tracesCache.delete(firstKey);
+      }
+    } catch (e) { console.error('[FeedbackLogger] recordTrace error:', e); }
+  }
+
+  getTrace(traceId) {
+    if (this.tracesCache.has(traceId)) return this.tracesCache.get(traceId);
+    try {
+      if (!fs.existsSync(this.tracesFile)) return null;
+      const lines = fs.readFileSync(this.tracesFile, 'utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i]) continue;
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (obj.trace_id === traceId) return obj;
+        } catch {}
+      }
+    } catch (e) { console.error('[FeedbackLogger] getTrace error:', e); }
+    return null;
+  }
+
+  recordFeedback(feedback) {
+    try {
+      feedback.fb_id = feedback.fb_id ||
+        `fb_${new Date().toISOString().replace(/[:T.-]/g, '').slice(0, 14)}_${crypto.randomBytes(2).toString('hex')}`;
+      feedback.ts = feedback.ts || new Date().toISOString();
+
+      if (feedback.trace_id) {
+        const trace = this.getTrace(feedback.trace_id);
+        if (trace) {
+          feedback.module = feedback.module || trace.module;
+          feedback.ai_output = feedback.ai_output || trace.output;
+          feedback.context = feedback.context || {};
+          feedback.context.source_input = feedback.context.source_input || trace.input?.text;
+          feedback.context.elapsed_since_ai_ms =
+            new Date(feedback.ts) - new Date(trace.ts);
+        }
+      }
+
+      if (feedback.action === 'edit' && feedback.ai_output && feedback.user_final) {
+        feedback.diff = this._computeDiff(feedback.ai_output, feedback.user_final);
+      }
+
+      fs.appendFileSync(this.feedbackFile, JSON.stringify(feedback) + '\n', 'utf8');
+      return feedback.fb_id;
+    } catch (e) { console.error('[FeedbackLogger] recordFeedback error:', e); return null; }
+  }
+
+  queryFeedback(options = {}) {
+    const { module, action, since, limit = 100 } = options;
+    try {
+      if (!fs.existsSync(this.feedbackFile)) return [];
+      const lines = fs.readFileSync(this.feedbackFile, 'utf8').split('\n');
+      const result = [];
+      for (let i = lines.length - 1; i >= 0 && result.length < limit; i--) {
+        if (!lines[i]) continue;
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (module && obj.module !== module) continue;
+          if (action && obj.action !== action) continue;
+          if (since && new Date(obj.ts) < new Date(since)) continue;
+          result.push(obj);
+        } catch {}
+      }
+      return result;
+    } catch (e) { return []; }
+  }
+
+  getRecentBadCases(module, limit = 30) {
+    return this.queryFeedback({ module, action: 'reject', limit })
+      .concat(this.queryFeedback({ module, action: 'edit', limit }))
+      .sort((a, b) => new Date(b.ts) - new Date(a.ts))
+      .slice(0, limit);
+  }
+
+  _computeDiff(before, after) {
+    const diff = {};
+    const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+    for (const k of keys) {
+      if (JSON.stringify(before?.[k]) !== JSON.stringify(after?.[k])) {
+        diff[k] = { from: before?.[k], to: after?.[k] };
+      }
+    }
+    return diff;
+  }
+}
+
+let feedbackLogger;
+
+// === 用户画像 ===
+function getDefaultProfile() {
+  return {
+    user: { name: '朱从坤', english_name: 'Dean', role: '产品经理 & 全栈开发者', industries: ['AI', 'SaaS', '企业服务'] },
+    frequent_persons: [],
+    active_projects: [],
+    preferences: {
+      priority_signals: ['老板', '紧急', 'ASAP', '立即', '今天', '务必'],
+      low_priority_signals: ['FYI', '有空', '可选', '参考', '随意']
+    },
+    work_patterns: { peak_hours: ['09:00-12:00', '14:00-17:00'], task_completion_rate: 0.7 },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
 
 // 默认的记忆提取Prompt
 const DEFAULT_MEMORY_EXTRACTION_PROMPT = `你是一个个人上下文记忆系统AI。
@@ -1753,6 +1886,10 @@ app.whenReady().then(() => {
   notebook = new Notebook();
   console.log('[Notebook] Notebook initialized');
   
+  // 初始化反馈系统
+  feedbackLogger = new FeedbackLogger();
+  console.log('[Feedback] Feedback logger initialized');
+  
   createWindow();
   console.log('[App] Window created');
   createTray();
@@ -1937,3 +2074,108 @@ ipcMain.handle('i18n-get-translations', async () => {
 ipcMain.handle('i18n-t', async (event, key, params) => {
   return I18n.t(key, params);
 });
+
+// === v1.1 Feedback + Profile + Agent IPC ===
+ipcMain.handle('ai:newTraceId', () => feedbackLogger.newTraceId());
+ipcMain.handle('ai:recordTrace', (_, trace) => { feedbackLogger.recordTrace(trace); return true; });
+ipcMain.handle('feedback:record', (_, feedback) => feedbackLogger.recordFeedback(feedback));
+ipcMain.handle('feedback:query', (_, options) => feedbackLogger.queryFeedback(options || {}));
+
+ipcMain.handle('profile:get', () => {
+  const profilePath = path.join(app.getPath('userData'), 'profile.json');
+  try {
+    if (fs.existsSync(profilePath)) return JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+  } catch (e) {}
+  return getDefaultProfile();
+});
+
+ipcMain.handle('profile:update', (_, updates) => {
+  const profilePath = path.join(app.getPath('userData'), 'profile.json');
+  let profile = getDefaultProfile();
+  try {
+    if (fs.existsSync(profilePath)) profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+  } catch (e) {}
+  profile = { ...profile, ...updates, updatedAt: new Date().toISOString() };
+  fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2), 'utf8');
+  return profile;
+});
+
+ipcMain.handle('agent:invoke', async (event, { query, agentType }) => {
+  try {
+    const apiConfig = getAPIConfig();
+    if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
+
+    const profilePath = path.join(app.getPath('userData'), 'profile.json');
+    let profile = getDefaultProfile();
+    try { if (fs.existsSync(profilePath)) profile = JSON.parse(fs.readFileSync(profilePath, 'utf8')); } catch (e) {}
+
+    let intent = agentType || await classifyIntent(query);
+    const context = await retrieveContext(query, intent);
+
+    const promptBuilders = { priority: buildPriorityPrompt, knowledge: buildKnowledgePrompt, memory: buildMemoryPrompt, report: buildReportPrompt };
+    const systemPrompt = (promptBuilders[intent] || buildChatPrompt)(profile, context);
+
+    const traceId = feedbackLogger.newTraceId();
+    const startTs = Date.now();
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+      body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: query }], temperature: 0.5, response_format: { type: 'json_object' } })
+    });
+
+    if (!response.ok) return { success: false, error: 'AI调用失败' };
+    incrementAICallCount();
+
+    const data = await response.json();
+    let aiContent = data.choices?.[0]?.message?.content || '';
+
+    feedbackLogger.recordTrace({ trace_id: traceId, ts: new Date(startTs).toISOString(), module: `agent_${intent}`, model: apiConfig.model, input: { text: query }, output: aiContent, latency_ms: Date.now() - startTs });
+
+    let parsed; try { parsed = JSON.parse(aiContent); } catch { parsed = null; }
+    return { success: true, agentType: intent, traceId, result: parsed || { text: aiContent } };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+async function classifyIntent(query) {
+  const q = query.toLowerCase();
+  if (/今天|今日|重点|优先|排程|日程|先做|重要/.test(q)) return 'priority';
+  if (/整理|梳理|归类|合并|笔记|知识/.test(q)) return 'knowledge';
+  if (/记忆|记住|忘了|回忆|提取/.test(q)) return 'memory';
+  if (/日报|周报|总结|汇报|完成/.test(q)) return 'report';
+  return 'chat';
+}
+
+async function retrieveContext(query) {
+  const ctx = { tasks: null, memories: [], notes: [] };
+  try { if (db?.db?.data?.tasks) { const t = db.db.data.tasks; ctx.tasks = { pending: t.filter(x => x.status !== 'completed').slice(0,20), completed: t.filter(x => x.status === 'completed').slice(0,10), total: t.length }; } } catch (e) {}
+  try { if (memoryStore) ctx.memories = memoryStore.searchRelated(query, 5).map(m => ({ content: m.content, type: m.type, category: m.category })); } catch (e) {}
+  try { if (notebook) ctx.notes = notebook.searchNotes(query).slice(0,5).map(n => ({ title: n.title, content: n.content.substring(0,200), category: n.category })); } catch (e) {}
+  return ctx;
+}
+
+function buildChatPrompt(profile, ctx) {
+  const name = profile.user?.name || '用户';
+  let extra = '';
+  if (ctx.memories?.length) extra += `\n# 相关记忆\n${ctx.memories.map(m => `- [${m.type}] ${m.content}`).join('\n')}`;
+  if (ctx.tasks?.pending?.length) extra += `\n# 待办(${ctx.tasks.pending.length}条)\n${ctx.tasks.pending.slice(0,10).map(t => `- ${t.title}(${t.priority})`).join('\n')}`;
+  return `你是「忆境 Memora」AI助手，服务${name}。简洁实用、可操作、中文回答。${extra}`;
+}
+
+function buildPriorityPrompt(profile, ctx) {
+  const tasks = ctx.tasks?.pending || [];
+  return `你是${profile.user?.name}的优先级规划Agent。\n时间：${new Date().toLocaleString('zh-CN')}\n# 待排程(${tasks.length}条)\n${tasks.slice(0,20).map((t,i) => `[${i+1}] ${t.title}|${t.priority}|截止:${t.dueDate||'无'}`).join('\n')||'暂无'}\n输出JSON：{today_top5:[{task_index:1,scheduled_at:"09:30-10:30",reason:"..."}],highlight:"...",deferred:[],tips:["..."]}`;
+}
+
+function buildKnowledgePrompt(profile, ctx) {
+  return `你是${profile.user?.name}的知识梳理Agent。\n# 近期笔记\n${(ctx.notes||[]).map((n,i)=>`[${i+1}][${n.category}]${n.title}:${n.content}`).join('\n')||'暂无'}\n输出JSON：{clusters:[{theme:"...",note_indices:[],summary:"..."}],duplicates:[],insights:["..."],actions:[]}`;
+}
+
+function buildMemoryPrompt(profile, ctx) {
+  return `你是${profile.user?.name}的记忆整理Agent。\n# 相关记忆\n${(ctx.memories||[]).map((m,i)=>`[${i+1}][${m.type}]${m.content}`).join('\n')||'暂无'}\n输出JSON：{promote:[],demote:[],expire:[],merge:[],insights:["..."]}`;
+}
+
+function buildReportPrompt(profile, ctx) {
+  const c = ctx.tasks?.completed||[], p = ctx.tasks?.pending||[];
+  return `你是${profile.user?.name}的日报Agent。\n已完成(${c.length}): ${c.slice(0,10).map(t=>t.title).join('、')||'无'}\n待办(${p.length}): ${p.slice(0,10).map(t=>t.title+'('+t.priority+')').join('、')||'无'}\n输出JSON：{title:"📅 日报",completed_section:{items:[...]},pending_section:{items:[...]},insights:{items:[...]},tomorrow_plan:{items:[...]},summary:"..."}`;
+}
