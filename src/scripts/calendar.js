@@ -104,6 +104,7 @@ const Calendar = {
 
     const tasks = Store.getTasksByDate(this.currentDate);
 
+    // 绘制时间槽（纯视觉网格）
     for (let hour = 6; hour <= 22; hour++) {
       for (let minute = 0; minute < 60; minute += 30) {
         const slot = document.createElement('div');
@@ -116,7 +117,7 @@ const Calendar = {
         timeLabel.textContent = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
         const timeContent = document.createElement('div');
-        timeContent.className = 'time-content drop-target';
+        timeContent.className = 'time-content';
         timeContent.dataset.hour = hour;
         timeContent.dataset.minute = minute;
 
@@ -126,7 +127,16 @@ const Calendar = {
       }
     }
 
+    // 创建任务覆盖层（absolute 定位，覆盖在网格上方）
+    const overlay = document.createElement('div');
+    overlay.className = 'task-overlay';
+    overlay.id = 'taskOverlay';
+    grid.appendChild(overlay);
+
     tasks.forEach(task => this.renderTaskBlock(task));
+
+    // 给整个网格绑定 drop 事件（基于鼠标位置计算目标时间）
+    this.bindDayViewDrop(grid);
 
     this.scrollToCurrentTime();
   },
@@ -190,72 +200,151 @@ const Calendar = {
   renderTaskBlock(task) {
     if (!task.dueDate) return;
 
+    const overlay = document.getElementById('taskOverlay');
+    if (!overlay) return;
+
     const dueDate = new Date(task.dueDate);
-    const startHour = Math.max(6, dueDate.getHours() - Math.floor(task.estimatedDuration / 60));
-    const startMinute = dueDate.getMinutes();
-    const duration = task.estimatedDuration;
-    const height = (duration / 30) * 60;
+    const duration = task.estimatedDuration || 60;
+    // 开始时间 = 截止时间 - 时长
+    const startDate = new Date(dueDate.getTime() - duration * 60000);
+    const startHour = startDate.getHours();
+    const startMinute = startDate.getMinutes();
 
-    const grid = document.getElementById('timeGrid');
-    const slots = grid.querySelectorAll('.time-content');
+    // 每分钟对应的像素高度（与 CSS time-slot min-height: 64px 对应，每 30 分钟一格）
+    const pxPerMinute = 64 / 30;
+    // 网格起始时间 6:00
+    const gridStartMinutes = 6 * 60;
+    const startTotalMinutes = startHour * 60 + startMinute;
+    const top = (startTotalMinutes - gridStartMinutes) * pxPerMinute;
+    const height = duration * pxPerMinute;
 
-    slots.forEach(slot => {
-      const slotHour = parseInt(slot.dataset.hour);
-      const slotMinute = parseInt(slot.dataset.minute);
+    // 超出可见范围则不渲染
+    if (top + height < 0 || top > (22 - 6 + 1) * 60 * pxPerMinute) return;
 
-      if (slotHour === startHour && Math.abs(slotMinute - startMinute) < 30) {
-        const block = document.createElement('div');
-        block.className = `task-block ${task.priority}${task.isDraft ? ' draft' : ''}`;
-        block.style.height = `${height}px`;
-        block.style.top = '4px';
-        block.dataset.taskId = task.id;
-        block.draggable = true;
+    const block = document.createElement('div');
+    block.className = `task-block ${task.priority}${task.isDraft ? ' draft' : ''}`;
+    block.style.height = `${Math.max(height, 28)}px`;
+    block.style.top = `${top}px`;
+    block.dataset.taskId = task.id;
+    block.draggable = true;
 
-        const draftLabel = task.isDraft ? '<span class="task-draft-label">草稿</span>' : '';
-        block.innerHTML = `
-          <div class="task-title">${task.title} ${draftLabel}</div>
-          <div class="task-time">${dueDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} · ${duration}分钟</div>
-          <button class="task-delete-btn" title="删除任务">×</button>
-        `;
+    const draftLabel = task.isDraft ? '<span class="task-draft-label">草稿</span>' : '';
+    const startTimeStr = startDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const endTimeStr = dueDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    block.innerHTML = `
+      <div class="task-title">${task.title} ${draftLabel}</div>
+      <div class="task-time">${startTimeStr} - ${endTimeStr} · ${duration}分钟</div>
+      <button class="task-delete-btn" title="删除任务">×</button>
+    `;
 
-        // 点击查看详情
-        block.addEventListener('click', (e) => {
-          if (!e.target.classList.contains('task-delete-btn') && !this.isDragging) {
-            this.showTaskDetail(task);
-          }
-        });
-
-        // 删除按钮
-        block.querySelector('.task-delete-btn').addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.deleteTask(task);
-        });
-
-        // 拖拽开始
-        block.addEventListener('dragstart', (e) => {
-          if (e.target.classList.contains('task-delete-btn')) {
-            e.preventDefault();
-            return;
-          }
-          e.dataTransfer.setData('text/plain', task.id);
-          e.dataTransfer.effectAllowed = 'move';
-          this.draggedTask = task;
-          block.classList.add('dragging');
-          console.log('[Calendar] Day view drag started:', task.title);
-        });
-
-        block.addEventListener('dragend', () => {
-          block.classList.remove('dragging');
-          this.draggedTask = null;
-          this.clearAllDropHighlights();
-        });
-
-        slot.appendChild(block);
+    // 点击查看详情 - 从 Store 获取最新数据
+    block.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('task-delete-btn') && !this.isDragging) {
+        const freshTask = Store.getTasks().find(t => t.id === task.id);
+        if (freshTask) this.showTaskDetail(freshTask);
       }
     });
 
-    // 给日视图的 time-content 绑定 drop 事件
-    this.bindDropEvents(grid);
+    // 删除按钮
+    block.querySelector('.task-delete-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.deleteTask(task);
+    });
+
+    // 拖拽开始
+    block.addEventListener('dragstart', (e) => {
+      if (e.target.classList.contains('task-delete-btn')) {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.setData('text/plain', task.id);
+      e.dataTransfer.effectAllowed = 'move';
+      this.draggedTask = task;
+      block.classList.add('dragging');
+    });
+
+    block.addEventListener('dragend', () => {
+      block.classList.remove('dragging');
+      this.draggedTask = null;
+      this.clearAllDropHighlights();
+    });
+
+    overlay.appendChild(block);
+  },
+
+  // 日视图网格级 drop 事件（基于鼠标位置精确定位目标时间）
+  bindDayViewDrop(grid) {
+    // 先移除旧事件（防止重复绑定）
+    if (grid._dayDropHandler) {
+      grid.removeEventListener('dragover', grid._dayDragOverHandler);
+      grid.removeEventListener('drop', grid._dayDropHandler);
+    }
+
+    grid._dayDragOverHandler = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+
+      // 高亮对应的时间槽
+      const timeInfo = this.getTimeFromMouseY(e, grid);
+      if (timeInfo) {
+        this.highlightTimeSlot(grid, timeInfo.hour, timeInfo.minute);
+      }
+    };
+
+    grid._dayDropHandler = (e) => {
+      e.preventDefault();
+      this.clearAllDropHighlights();
+
+      const taskId = e.dataTransfer.getData('text/plain');
+      if (!taskId) return;
+
+      const timeInfo = this.getTimeFromMouseY(e, grid);
+      if (timeInfo) {
+        this.moveTaskToTime(taskId, timeInfo.hour, timeInfo.minute);
+      }
+    };
+
+    grid.addEventListener('dragover', grid._dayDragOverHandler);
+    grid.addEventListener('drop', grid._dayDropHandler);
+  },
+
+  // 根据鼠标 Y 坐标计算对应的时间（30分钟精度）
+  getTimeFromMouseY(e, grid) {
+    const gridRect = grid.getBoundingClientRect();
+    const mouseY = e.clientY - gridRect.top;
+
+    // 时间网格从 padding 顶部开始，减去 padding
+    const gridTop = 24; // padding-top
+    const relativeY = mouseY - gridTop;
+
+    if (relativeY < 0) return { hour: 6, minute: 0 };
+
+    const pxPerMinute = 64 / 30;
+    const totalMinutes = Math.round(relativeY / pxPerMinute);
+    const gridStartMinutes = 6 * 60;
+    const absoluteMinutes = gridStartMinutes + totalMinutes;
+
+    // 对齐到 30 分钟
+    const alignedMinutes = Math.floor(absoluteMinutes / 30) * 30;
+    const hour = Math.floor(alignedMinutes / 60);
+    const minute = alignedMinutes % 60;
+
+    // 限制在 6:00 ~ 22:30
+    if (hour < 6) return { hour: 6, minute: 0 };
+    if (hour > 22 || (hour === 22 && minute > 30)) return { hour: 22, minute: 30 };
+
+    return { hour, minute };
+  },
+
+  // 高亮对应的时间槽
+  highlightTimeSlot(grid, hour, minute) {
+    this.clearAllDropHighlights();
+    const slots = grid.querySelectorAll('.time-content');
+    slots.forEach(slot => {
+      if (parseInt(slot.dataset.hour) === hour && parseInt(slot.dataset.minute) === minute) {
+        slot.classList.add('drag-over');
+      }
+    });
   },
 
   // 给容器内的所有 drop-target 元素绑定拖放事件
@@ -559,21 +648,26 @@ const Calendar = {
 
   // ========== 拖拽移动逻辑 ==========
 
-  // 日视图：移动到指定时间（同一天）
+  // 日视图：移动到指定开始时间（同一天）
   moveTaskToTime(taskId, hour, minute) {
     const task = Store.getTasks().find(t => t.id === taskId);
-    if (!task || !task.dueDate) return;
+    if (!task) return;
 
-    const newDate = new Date(task.dueDate);
-    newDate.setHours(hour, minute, 0, 0);
+    const duration = task.estimatedDuration || 60;
+    // 新的截止时间 = 新开始时间 + 时长
+    const newDueDate = new Date(task.dueDate || new Date());
+    newDueDate.setHours(hour, minute, 0, 0);
+    // dueDate 是截止时间，所以 hour:minute 作为开始，加上时长得到截止时间
+    newDueDate.setTime(newDueDate.getTime() + duration * 60000);
 
-    console.log('[Calendar] Moving task to time:', task.title, '→', newDate.toLocaleString());
-    Store.updateTask(task.id, { dueDate: newDate.toISOString() });
+    Store.updateTask(task.id, { dueDate: newDueDate.toISOString() });
     this.render();
 
     if (typeof App !== 'undefined') {
       App.renderTaskList();
-      App.showToast(`已移至 ${hour}:${String(minute).padStart(2, '0')}`);
+      const endTime = new Date(newDueDate.getTime());
+      const startTime = new Date(endTime.getTime() - duration * 60000);
+      App.showToast(`已移至 ${startTime.getHours()}:${String(startTime.getMinutes()).padStart(2, '0')} - ${endTime.getHours()}:${String(endTime.getMinutes()).padStart(2, '0')}`);
     }
   },
 

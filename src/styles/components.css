@@ -1,6 +1,21 @@
 /* ============= 时间网格 ============= */
 .time-grid {
   padding: 24px;
+  position: relative;
+}
+
+.task-overlay {
+  position: absolute;
+  top: 24px;
+  left: 108px;
+  right: 24px;
+  bottom: 24px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.task-overlay .task-block {
+  pointer-events: auto;
 }
 
 .time-slot {
@@ -35,8 +50,8 @@
 /* 任务色块 */
 .task-block {
   position: absolute;
-  left: 6px;
-  right: 6px;
+  left: 4px;
+  right: 4px;
   border-radius: var(--radius-sm);
   padding: 8px 14px;
   color: white;
@@ -44,6 +59,7 @@
   transition: all 0.25s var(--transition);
   overflow: hidden;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  z-index: 5;
 }
 
 .task-block:hover {

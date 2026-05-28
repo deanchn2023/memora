@@ -1076,10 +1076,18 @@ const App = {
             <span class="note-category">${this.getNoteCategoryLabel(note.category)}</span>
           </div>
           <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
+          <div class="note-preview hidden" id="note-preview-${note.id}">
+            <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
+            <div class="note-preview-hint">点击复制 | 双击编辑</div>
+          </div>
           <div class="note-footer">
             <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
             ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
-            <button class="note-delete" onclick="App.deleteNote('${note.id}')">删除</button>
+            <div class="note-actions">
+              <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
+              <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
+              <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
+            </div>
           </div>
         </div>
       `).join('');
@@ -1370,6 +1378,12 @@ const App = {
     return date;
   },
 
+  // 将 Date 对象格式化为 datetime-local 输入框所需的本地时间字符串 (YYYY-MM-DDTHH:mm)
+  formatDateTimeLocal(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  },
+
   showTaskModal(task = null) {
     console.log('[App] showTaskModal called with:', task);
     this.editingTask = task;
@@ -1387,8 +1401,7 @@ const App = {
       descInput.value = task.description || '';
       
       if (task.dueDate) {
-        const date = new Date(task.dueDate);
-        dueInput.value = date.toISOString().slice(0, 16);
+        dueInput.value = this.formatDateTimeLocal(new Date(task.dueDate));
       }
       
       durationInput.value = task.estimatedDuration;
@@ -1399,11 +1412,10 @@ const App = {
       descInput.value = task?.description || '';
       
       if (task?.dueDate) {
-        const date = new Date(task.dueDate);
-        dueInput.value = date.toISOString().slice(0, 16);
+        dueInput.value = this.formatDateTimeLocal(new Date(task.dueDate));
       } else {
         const defaultDate = this.getDefaultDueDate();
-        dueInput.value = defaultDate.toISOString().slice(0, 16);
+        dueInput.value = this.formatDateTimeLocal(defaultDate);
       }
       
       durationInput.value = task?.estimatedDuration || 60;
