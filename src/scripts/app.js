@@ -4,6 +4,8 @@ const App = {
   autoSaveTimer: null,
   countdownDisplay: null,
   remainingTime: 10,
+  newNoteCount: 0, // 记事本角标：不在记事本页时新笔记的累加计数
+  dbSyncTimer: null, // 数据库同步定时器
 
   init() {
     console.log('[App] init() starting...');
@@ -16,6 +18,9 @@ const App = {
     } catch (e) {
       console.error('[App] Store.init() failed:', e);
     }
+    
+    // 从数据库加载数据（如果可用）
+    this.initDatabaseSync();
     
     try {
       Pomodoro.init();
@@ -67,6 +72,45 @@ const App = {
     
     setTimeout(() => this.updateInitTest(''), 2000);
     console.log('[App] init() finished');
+  },
+
+  // 从数据库加载数据并同步到 Store
+  async initDatabaseSync() {
+    if (!window.electronAPI?.dbGetTasks) return;
+    
+    try {
+      const dbTasks = await window.electronAPI.dbGetTasks();
+      if (dbTasks && dbTasks.length > 0) {
+        // 如果 localStorage 为空但数据库有数据，从数据库恢复
+        const localTasks = Store.getTasks();
+        if (localTasks.length === 0 && dbTasks.length > 0) {
+          Store.saveTasks(dbTasks);
+          console.log('[App] Restored tasks from database:', dbTasks.length);
+        } else if (dbTasks.length > localTasks.length) {
+          // 数据库数据更多，以数据库为准
+          Store.saveTasks(dbTasks);
+          console.log('[App] Synced tasks from database (more data):', dbTasks.length);
+        }
+      }
+    } catch (error) {
+      console.error('[App] Database sync failed:', error);
+    }
+    
+    // 定期同步数据到数据库（每5分钟）
+    this.dbSyncTimer = setInterval(() => this.syncToDatabase(), 5 * 60 * 1000);
+  },
+
+  // 同步 localStorage 数据到数据库
+  async syncToDatabase() {
+    if (!window.electronAPI?.dbSaveTasks) return;
+    
+    try {
+      const tasks = Store.getTasks();
+      await window.electronAPI.dbSaveTasks(tasks);
+      console.log('[App] Synced tasks to database:', tasks.length);
+    } catch (error) {
+      console.error('[App] Database sync failed:', error);
+    }
   },
 
   updateInitTest(msg) {
@@ -645,9 +689,6 @@ const App = {
     document.getElementById('noteCount').textContent = stats.total || 0;
     document.getElementById('analyzedCount').textContent = stats.analyzedCount || 0;
     
-    // 更新记事本标签徽章
-    this.updateNotebookBadge(stats.total || 0);
-    
     // 加载笔记列表
     const result = await window.electronAPI.notebookGetNotes(category);
     const noteList = document.getElementById('notebookList');
@@ -714,11 +755,9 @@ const App = {
         });
         
         if (result.success) {
-          // 更新记事本标签徽章数量
-          const stats = await window.electronAPI.notebookGetStats();
-          this.updateNotebookBadge(stats.total || 0);
+          // 不在记事本页时增加角标，否则刷新列表
+          this.incrementNewNoteCount();
           
-          this.loadNotes();
           this.showToast(`笔记已添加（${this.getNoteCategoryLabel(category)}）`);
         }
       }
@@ -778,16 +817,31 @@ const App = {
   updateNotebookBadge(count) {
     const badge = document.getElementById('notebookBadge');
     if (badge) {
-      console.log('[Notebook] Updating badge count:', count);
       if (count > 0) {
-        badge.textContent = count;
+        badge.textContent = count > 99 ? '99+' : count;
         badge.style.display = 'flex';
       } else {
         badge.style.display = 'none';
       }
-    } else {
-      console.log('[Notebook] Badge element not found');
     }
+  },
+  
+  // 增加新笔记角标计数（不在记事本页时调用）
+  incrementNewNoteCount() {
+    const currentView = Calendar.currentView;
+    if (currentView === 'notebook') {
+      // 已在记事本页，直接刷新列表
+      this.loadNotes();
+      return;
+    }
+    this.newNoteCount++;
+    this.updateNotebookBadge(this.newNoteCount);
+  },
+  
+  // 清空角标（进入记事本页时调用）
+  clearNotebookBadge() {
+    this.newNoteCount = 0;
+    this.updateNotebookBadge(0);
   },
   
   async copyNote(id) {
@@ -1068,6 +1122,12 @@ const App = {
       window.electronAPI.onStartPomodoro(() => {
         Pomodoro.start();
       });
+      
+      // 监听后台新增笔记事件（用于角标计数）
+      window.electronAPI.onNewNoteAdded((data) => {
+        console.log('[App] New note added from background:', data.title);
+        this.incrementNewNoteCount();
+      });
     }
   },
 
@@ -1221,15 +1281,8 @@ const App = {
         });
         
         if (result.success) {
-          // 更新记事本标签徽章数量
-          const stats = await window.electronAPI.notebookGetStats();
-          this.updateNotebookBadge(stats.total || 0);
-          
-          // 如果当前在记事本视图，刷新笔记列表
-          const currentView = document.querySelector('.view-tab.active')?.dataset.view;
-          if (currentView === 'notebook') {
-            this.loadNotes();
-          }
+          // 不在记事本页时增加角标，否则刷新列表
+          this.incrementNewNoteCount();
           
           this.showToast(`已保存到笔记（${this.getNoteCategoryLabel(category)}）`);
           this.hideClipboardDetector();
@@ -1497,15 +1550,8 @@ const App = {
         });
         
         if (result.success) {
-          // 更新记事本标签徽章数量
-          const stats = await window.electronAPI.notebookGetStats();
-          this.updateNotebookBadge(stats.total || 0);
-          
-          // 如果当前在记事本视图，刷新笔记列表
-          const currentView = document.querySelector('.view-tab.active')?.dataset.view;
-          if (currentView === 'notebook') {
-            this.loadNotes();
-          }
+          // 不在记事本页时增加角标，否则刷新列表
+          this.incrementNewNoteCount();
           
           this.showToast(`已保存到记事本（${this.getNoteCategoryLabel(category)}）`);
           document.getElementById('aiTaskInput').value = '';

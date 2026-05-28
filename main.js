@@ -10,6 +10,16 @@ let isAnalyzing = false; // 防止并发分析
 let processedClipboardHashes = new Set();
 const MAX_CLIPBOARD_HASHES = 500; // 限制哈希记录数量防止内存膨胀
 
+// 数据库层（lowdb）
+const { Database } = require('./src/scripts/database');
+let db;
+
+// i18n
+const { I18n } = require('./src/scripts/i18n');
+
+// 自动备份定时器
+let autoBackupTimer = null;
+
 // 默认内置API Key（用户未配置时使用，限制10次/天）
 const DEFAULT_API_KEY = 'sk-b4116cb788d64e3fb20e8e5bd1333168';
 const DEFAULT_BASE_URL = 'https://api.deepseek.com';
@@ -188,11 +198,19 @@ const DEFAULT_AI_PROMPT = `你是一个任务识别AI。
 
 // 获取当前使用的Prompt（从设置或默认）
 function getCurrentAIPrompt() {
+  if (db) {
+    const settings = db.getSettings();
+    return settings.ai_prompt || DEFAULT_AI_PROMPT;
+  }
   return getSetting('ai_prompt') || DEFAULT_AI_PROMPT;
 }
 
 // 获取当前使用的记忆提取Prompt（从设置或默认）
 function getCurrentMemoryPrompt() {
+  if (db) {
+    const settings = db.getSettings();
+    return settings.memory_prompt || DEFAULT_MEMORY_EXTRACTION_PROMPT;
+  }
   return getSetting('memory_prompt') || DEFAULT_MEMORY_EXTRACTION_PROMPT;
 }
 
@@ -548,6 +566,14 @@ async function analyzeClipboardText(text) {
           }
         });
         console.log('[Notebook] Clipboard content saved (pre-classification rejected)');
+        
+        // 通知前端有新笔记
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('new-note-added', {
+            source: 'clipboard',
+            title: text.substring(0, 30)
+          });
+        }
       }
       isAnalyzing = false;
       return;
@@ -672,6 +698,14 @@ async function analyzeClipboardText(text) {
           }
         });
         console.log('[Notebook] Clipboard content saved to notebook');
+        
+        // 通知前端有新笔记（用于角标计数）
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('new-note-added', {
+            source: 'clipboard',
+            title: result.title || text.substring(0, 30)
+          });
+        }
       }
       
       // 提取结构化记忆（只保存提炼后的信息）
@@ -1698,8 +1732,18 @@ ipcMain.on('window-close', () => {
   mainWindow.hide();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('[App] Starting 忆境 Memora...');
+  
+  // 初始化数据库层
+  db = new Database(app.getPath('userData'));
+  await db.init();
+  console.log('[Database] Database initialized');
+  
+  // 初始化 i18n
+  const savedLocale = db.getSettings().locale || 'zh-CN';
+  I18n.init(savedLocale);
+  console.log('[i18n] Locale set to:', savedLocale);
   
   // 初始化记忆系统
   memoryStore = new MemoryStore();
@@ -1715,6 +1759,10 @@ app.whenReady().then(() => {
   console.log('[App] Tray created');
   startClipboardWatcher();
   console.log('[App] Clipboard watcher started');
+  
+  // 自动备份（每天凌晨3点）
+  startAutoBackup();
+  console.log('[App] Auto backup scheduled');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1734,4 +1782,158 @@ app.on('before-quit', () => {
   if (clipboardWatcher) {
     clearInterval(clipboardWatcher);
   }
+  if (autoBackupTimer) {
+    clearInterval(autoBackupTimer);
+  }
+  // 保存数据库
+  if (db) {
+    db.save().catch(e => console.error('[Database] Save on quit failed:', e));
+  }
+});
+
+// ========== 自动备份 ==========
+function startAutoBackup() {
+  // 每天凌晨3点执行备份（检查间隔30分钟）
+  autoBackupTimer = setInterval(async () => {
+    const now = new Date();
+    if (now.getHours() === 3 && now.getMinutes() < 30) {
+      if (db) {
+        const result = await db.createBackup();
+        console.log('[Backup] Auto backup result:', result.success ? 'success' : result.error);
+      }
+    }
+  }, 30 * 60 * 1000);
+}
+
+// ========== 数据库 IPC 处理器 ==========
+ipcMain.handle('db-get-tasks', async () => {
+  if (!db) return [];
+  return db.getTasks();
+});
+
+ipcMain.handle('db-save-tasks', async (event, tasks) => {
+  if (!db) return { success: false };
+  db.db.data.tasks = tasks;
+  await db.save();
+  return { success: true };
+});
+
+ipcMain.handle('db-get-stats', async () => {
+  if (!db) return {};
+  return db.getStats();
+});
+
+ipcMain.handle('db-create-backup', async () => {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  return await db.createBackup();
+});
+
+ipcMain.handle('db-list-backups', async () => {
+  if (!db) return [];
+  return db.listBackups();
+});
+
+ipcMain.handle('db-restore-backup', async (event, backupPath) => {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  return await db.restoreBackup(backupPath);
+});
+
+ipcMain.handle('db-export-data', async () => {
+  if (!db) return '';
+  return await db.exportData();
+});
+
+ipcMain.handle('db-import-data', async (event, jsonString) => {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  return await db.importData(jsonString);
+});
+
+// ========== 多窗口支持 ==========
+let childWindows = new Map();
+
+function createChildWindow(type, options = {}) {
+  const iconPath = path.join(__dirname, 'resources', 'icon.png');
+  let icon;
+  try {
+    icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) icon = nativeImage.createEmpty();
+  } catch (e) {
+    icon = nativeImage.createEmpty();
+  }
+
+  const titles = {
+    notebook: I18n.t('nav.notebook'),
+    calendar: I18n.t('nav.month'),
+    pomodoro: I18n.t('pomodoro.title')
+  };
+
+  const sizes = {
+    notebook: { width: 800, height: 600 },
+    calendar: { width: 900, height: 700 },
+    pomodoro: { width: 400, height: 500 }
+  };
+
+  const size = sizes[type] || { width: 800, height: 600 };
+
+  const childWindow = new BrowserWindow({
+    width: size.width,
+    height: size.height,
+    minWidth: 400,
+    minHeight: 300,
+    title: titles[type] || 'Memora',
+    parent: mainWindow,
+    backgroundColor: '#f5f5f7',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    },
+    icon: icon
+  });
+
+  // 加载对应的页面视图
+  childWindow.loadFile(path.join(__dirname, 'src', 'index.html'), {
+    hash: type
+  });
+
+  childWindow.on('closed', () => {
+    childWindows.delete(type);
+  });
+
+  childWindows.set(type, childWindow);
+  return childWindow;
+}
+
+ipcMain.handle('open-child-window', async (event, type) => {
+  const existing = childWindows.get(type);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return { success: true };
+  }
+  createChildWindow(type);
+  return { success: true };
+});
+
+// ========== i18n IPC 处理器 ==========
+ipcMain.handle('i18n-get-locale', async () => {
+  return I18n.getLocale();
+});
+
+ipcMain.handle('i18n-set-locale', async (event, locale) => {
+  const result = I18n.setLocale(locale);
+  if (result && db) {
+    const settings = db.getSettings();
+    settings.locale = locale;
+    db.saveSettings(settings);
+    await db.save();
+  }
+  return { success: result };
+});
+
+ipcMain.handle('i18n-get-translations', async () => {
+  return I18n.translations;
+});
+
+ipcMain.handle('i18n-t', async (event, key, params) => {
+  return I18n.t(key, params);
 });

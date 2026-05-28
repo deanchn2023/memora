@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearClipboardHashes: () => ipcRenderer.invoke('clear-clipboard-hashes'),
   getClipboardHashCount: () => ipcRenderer.invoke('get-clipboard-hash-count'),
   
+  // 事件监听
   onClipboardTaskDetected: (callback) => {
     ipcRenderer.on('clipboard-task-detected', (event, data) => callback(data));
   },
@@ -67,7 +68,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('start-pomodoro', () => callback());
   },
   
+  onNewNoteAdded: (callback) => {
+    ipcRenderer.on('new-note-added', (event, data) => callback(data));
+  },
+  
+  // 窗口控制
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
-  closeWindow: () => ipcRenderer.send('window-close')
+  closeWindow: () => ipcRenderer.send('window-close'),
+  
+  // 数据库操作
+  dbGetTasks: () => ipcRenderer.invoke('db-get-tasks'),
+  dbSaveTasks: (tasks) => ipcRenderer.invoke('db-save-tasks', tasks),
+  dbGetStats: () => ipcRenderer.invoke('db-get-stats'),
+  dbCreateBackup: () => ipcRenderer.invoke('db-create-backup'),
+  dbListBackups: () => ipcRenderer.invoke('db-list-backups'),
+  dbRestoreBackup: (backupPath) => ipcRenderer.invoke('db-restore-backup', backupPath),
+  dbExportData: () => ipcRenderer.invoke('db-export-data'),
+  dbImportData: (jsonString) => ipcRenderer.invoke('db-import-data', jsonString),
+  
+  // 多窗口
+  openChildWindow: (type) => ipcRenderer.invoke('open-child-window', type),
+  
+  // i18n
+  i18nGetLocale: () => ipcRenderer.invoke('i18n-get-locale'),
+  i18nSetLocale: (locale) => ipcRenderer.invoke('i18n-set-locale', locale),
+  i18nGetTranslations: () => ipcRenderer.invoke('i18n-get-translations'),
+  i18nT: (key, params) => ipcRenderer.invoke('i18n-t', key, params)
 });

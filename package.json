@@ -25,6 +25,7 @@
     "electron-builder": "^24.9.1"
   },
   "dependencies": {
+    "lowdb": "^7.0.1",
     "uuid": "^9.0.0",
     "ws": "^8.21.0"
   },

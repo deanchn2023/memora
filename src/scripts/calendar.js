@@ -494,6 +494,11 @@ const Calendar = {
     // 更新日期显示为"记事本"
     document.getElementById('currentDate').textContent = '记事本';
     
+    // 进入记事本页时清空角标
+    if (typeof App !== 'undefined') {
+      App.clearNotebookBadge();
+    }
+    
     // 加载笔记列表
     App.loadNotes();
   }
