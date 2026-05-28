@@ -1,0 +1,60 @@
+{
+  "name": "memora",
+  "version": "1.0.0",
+  "description": "忆境 Memora - AI驱动的个人记忆与事项管理助手",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --disable-gpu --no-sandbox --disable-gpu-sandbox",
+    "dev": "electron . --disable-gpu --no-sandbox --disable-gpu-sandbox --enable-logging",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "keywords": [
+    "task",
+    "pomodoro",
+    "ai",
+    "clipboard",
+    "calendar"
+  ],
+  "author": "Dean Chen",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "uuid": "^9.0.0",
+    "ws": "^8.21.0"
+  },
+  "build": {
+    "appId": "com.memora.app",
+    "productName": "忆境 Memora",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "resources/icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "resources/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "icon": "resources/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
+  }
+}

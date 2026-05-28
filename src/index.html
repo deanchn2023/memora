@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://api.deepseek.com wss://wss.lke.cloud.tencent.com; font-src 'self' data:;">
+  <title>忆境 Memora</title>
+  <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/components.css">
+</head>
+<body>
+  <div id="app">
+    <div class="titlebar">
+      <div class="titlebar-drag">
+        <div class="app-logo">M</div>
+        <span class="app-title">忆境 Memora</span>
+      </div>
+      <div class="titlebar-controls">
+        <button class="titlebar-btn minimize" onclick="electronAPI.minimizeWindow()">
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <rect y="5" width="12" height="2" fill="currentColor"/>
+          </svg>
+        </button>
+        <button class="titlebar-btn maximize" onclick="electronAPI.maximizeWindow()">
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <rect x="1" y="1" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"/>
+          </svg>
+        </button>
+        <button class="titlebar-btn close" onclick="electronAPI.closeWindow()">
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="main-container">
+      <div class="header">
+        <div class="view-tabs">
+          <button class="view-tab active" data-view="day">日</button>
+          <button class="view-tab" data-view="week">周</button>
+          <button class="view-tab" data-view="month">月</button>
+          <button class="view-tab" data-view="notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
+        </div>
+        <div class="date-navigator">
+          <button class="nav-btn" id="prevDate">◀</button>
+          <span class="current-date" id="currentDate">2026年5月27日</span>
+          <button class="nav-btn" id="nextDate">▶</button>
+          <button class="today-btn" id="todayBtn">今天</button>
+        </div>
+        <div class="header-actions">
+          <button class="ai-assistant-btn" id="openAIAssistantBtn" title="AI助手">🤖</button>
+          <button class="settings-btn" id="openSettingsBtn" title="设置">⚙️</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="sidebar">
+          <div class="pomodoro-section">
+            <h3>番茄钟</h3>
+            <div class="pomodoro-timer">
+              <div class="timer-display" id="timerDisplay">25:00</div>
+              <div class="pomodoro-count" id="pomodoroCount">○ ○ ○ ○</div>
+            </div>
+            <div class="pomodoro-controls">
+              <button class="pomodoro-btn primary" id="startPomodoro">开始</button>
+              <button class="pomodoro-btn" id="resetPomodoro">重置</button>
+            </div>
+            <div class="current-task" id="currentTask">
+              <span class="label">当前任务:</span>
+              <span class="task-name">无</span>
+            </div>
+          </div>
+
+          <div class="task-list-section">
+            <h3>待办列表</h3>
+            <div class="task-list" id="taskList">
+              <div class="empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                  <rect x="9" y="3" width="6" height="4" rx="1"/>
+                  <path d="M9 12h6M9 16h6"/>
+                </svg>
+                <p>暂无待办事项</p>
+              </div>
+            </div>
+            <button class="add-task-btn" id="addTaskBtn">+ 新建任务</button>
+          </div>
+        </div>
+
+        <div class="main-view">
+          <div class="day-view" id="dayView">
+            <div class="time-grid" id="timeGrid"></div>
+          </div>
+          <div class="week-view hidden" id="weekView"></div>
+          <div class="month-view hidden" id="monthView"></div>
+          <div class="notebook-view hidden" id="notebookView">
+            <div class="notebook-header">
+              <div class="notebook-search">
+                <input type="text" id="notebookSearchInput" placeholder="搜索笔记...">
+                <button class="search-btn">🔍</button>
+              </div>
+            </div>
+            <div class="notebook-content">
+              <div class="notebook-sidebar">
+                <div class="sidebar-section">
+                  <h4>分类</h4>
+                  <div class="category-list">
+                    <button class="category-item active" data-category="all">全部</button>
+                    <div class="category-item-wrapper">
+                      <button class="category-item" data-category="meeting">会议记录</button>
+                      <button class="category-delete" data-category="meeting" title="删除所有会议记录">🗑️</button>
+                    </div>
+                    <div class="category-item-wrapper">
+                      <button class="category-item" data-category="feedback">问题反馈</button>
+                      <button class="category-delete" data-category="feedback" title="删除所有问题反馈">🗑️</button>
+                    </div>
+                    <div class="category-item-wrapper">
+                      <button class="category-item" data-category="task">待办任务</button>
+                      <button class="category-delete" data-category="task" title="删除所有待办任务">🗑️</button>
+                    </div>
+                    <div class="category-item-wrapper">
+                      <button class="category-item" data-category="idea">想法创意</button>
+                      <button class="category-delete" data-category="idea" title="删除所有想法创意">🗑️</button>
+                    </div>
+                    <div class="category-item-wrapper">
+                      <button class="category-item" data-category="general">其他</button>
+                      <button class="category-delete" data-category="general" title="删除所有其他笔记">🗑️</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="sidebar-section">
+                  <h4>统计</h4>
+                  <div class="stats-info" id="notebookStats">
+                    <div>总笔记: <span id="noteCount">0</span></div>
+                    <div>已分析: <span id="analyzedCount">0</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="notebook-list" id="notebookList">
+                <div class="empty-state">暂无笔记</div>
+              </div>
+            </div>
+          </div>
+          <div class="ai-assistant-view hidden" id="aiAssistantView">
+            <div class="ai-chat-container">
+              <div class="chat-messages" id="chatMessages">
+                <!-- 功能提示卡片 -->
+                <div class="feature-cards">
+                  <div class="feature-card">
+                    <div class="feature-icon">📝</div>
+                    <div class="feature-content">
+                      <h4>智能任务分析</h4>
+                      <p>帮你分析和管理待办事项</p>
+                    </div>
+                  </div>
+                  <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <div class="feature-content">
+                      <h4>记忆提炼</h4>
+                      <p>从笔记中提取关键记忆</p>
+                    </div>
+                  </div>
+                  <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <div class="feature-content">
+                      <h4>数据统计</h4>
+                      <p>展示你的完成进度</p>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- 快捷问题胶囊 -->
+                <div class="quick-questions">
+                  <p class="quick-title">💡 快捷问题</p>
+                  <div class="quick-capsules">
+                    <button class="quick-capsule" data-question="今天还有哪些待办事项？">今天还有哪些待办事项？</button>
+                    <button class="quick-capsule" data-question="最紧急的事项是什么？">最紧急的事项是什么？</button>
+                    <button class="quick-capsule" data-question="我已经完成了多少事项？">我已经完成了多少事项？</button>
+                    <button class="quick-capsule" data-question="你记得我的偏好吗？">你记得我的偏好吗？</button>
+                    <button class="quick-capsule" data-question="帮我分析一下记事本内容">帮我分析一下记事本内容</button>
+                    <button class="quick-capsule" data-question="给我一些时间管理建议">给我一些时间管理建议</button>
+                  </div>
+                </div>
+                
+                <div class="message assistant">
+                  <div class="message-avatar">🤖</div>
+                  <div class="message-content">
+                    <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-input-area">
+                <div class="input-wrapper">
+                  <input type="text" id="aiChatInput" placeholder="输入你的问题..." autocomplete="off">
+                  <button class="action-btn" id="clearChatBtn">清空</button>
+                  <button class="send-btn" id="sendAIMessageBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="22" y1="2" x2="11" y2="13"></line>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="clipboard-detector hidden" id="clipboardDetector">
+        <div class="detector-content">
+          <div class="detector-header">
+            <span class="detector-icon">📋</span>
+            <span class="detector-title">检测到待办事项</span>
+          </div>
+          <div class="detector-body">
+            <div class="raw-text">
+              <span class="label">原文:</span>
+              <p id="rawText"></p>
+            </div>
+            <div class="divider"></div>
+            <div class="task-preview">
+              <div class="preview-item">
+                <span class="preview-icon">📌</span>
+                <span class="preview-label">任务:</span>
+                <span id="previewTitle"></span>
+              </div>
+              <div class="preview-item">
+                <span class="preview-icon">⏰</span>
+                <span class="preview-label">截止:</span>
+                <span id="previewDue"></span>
+              </div>
+              <div class="preview-item">
+                <span class="preview-icon">⏱</span>
+                <span class="preview-label">预估:</span>
+                <span id="previewDuration"></span>
+              </div>
+              <div class="preview-item">
+                <span class="preview-icon">🔥</span>
+                <span class="preview-label">优先级:</span>
+                <span id="previewPriority"></span>
+              </div>
+              <div class="preview-item">
+                <span class="preview-icon">✓</span>
+                <span class="preview-label">置信度:</span>
+                <span id="previewConfidence" style="display: none;"></span>
+              </div>
+              <div class="preview-item">
+                <span class="preview-icon">💡</span>
+                <span class="preview-label">原因:</span>
+                <span id="previewReason" style="display: none; font-size: 12px; color: var(--text-secondary);"></span>
+              </div>
+            </div>
+          </div>
+          <div class="detector-actions">
+            <button class="action-btn primary" id="createTaskBtn">创建任务</button>
+            <button class="action-btn secondary" id="saveToNoteBtn">保存到笔记</button>
+            <button class="action-btn secondary" id="saveToMemoryBtn">保存到记忆</button>
+            <button class="action-btn" id="editTaskBtn">编辑</button>
+            <button class="action-btn" id="ignoreBtn">忽略</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="taskModal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">新建任务</h3>
+        <button class="modal-close" id="closeModal">×</button>
+      </div>
+      <div class="modal-body">
+        <!-- AI分析输入框 -->
+        <div class="form-group">
+          <label for="aiTaskInput">📝 AI智能分析（输入任务描述，AI自动创建待办）</label>
+          <textarea id="aiTaskInput" placeholder="输入任务描述，例如：明天下午给客户发报价，需要准备PPT和合同..."></textarea>
+          <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <button class="btn primary small" id="aiAnalyzeBtn">🤖 AI分析</button>
+            <button class="btn secondary small" id="aiSaveToNoteBtn">📝 保存到记事本</button>
+            <button class="btn secondary small" id="aiExtractMemoryBtn">🧠 提炼到记忆</button>
+          </div>
+        </div>
+        
+        <!-- AI分析结果 -->
+        <div class="ai-analysis-result hidden" id="aiAnalysisResult">
+          <div class="analysis-header">
+            <span class="analysis-title">AI分析结果</span>
+            <span class="confidence-badge" id="analysisConfidence">置信度: 0%</span>
+          </div>
+          <div class="analysis-content" id="analysisContent"></div>
+        </div>
+        
+        <div class="form-group">
+          <label for="taskTitle">任务标题</label>
+          <input type="text" id="taskTitle" placeholder="输入任务标题">
+        </div>
+        <div class="form-group">
+          <label for="taskDesc">任务描述</label>
+          <textarea id="taskDesc" placeholder="输入任务描述（可选）"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="taskDue">截止时间</label>
+            <input type="datetime-local" id="taskDue">
+          </div>
+          <div class="form-group">
+            <label for="taskDuration">预估时长（分钟）</label>
+            <input type="number" id="taskDuration" value="60" min="5" max="480">
+          </div>
+        </div>
+        
+        <!-- 番茄钟设置 -->
+        <div class="form-group">
+          <label for="taskPomodoros">🍅 番茄钟数量</label>
+          <div class="pomodoro-selector">
+            <button class="pomodoro-btn" data-pomodoros="1">1</button>
+            <button class="pomodoro-btn" data-pomodoros="2">2</button>
+            <button class="pomodoro-btn" data-pomodoros="3">3</button>
+            <button class="pomodoro-btn" data-pomodoros="4">4</button>
+            <button class="pomodoro-btn active" data-pomodoros="auto">智能分配</button>
+          </div>
+          <input type="hidden" id="taskPomodoros" value="auto">
+          <div class="pomodoro-hint" id="pomodoroHint" style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
+            智能分配：根据任务时长自动计算番茄钟数量（每个番茄25分钟）
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label for="taskPriority">优先级</label>
+          <select id="taskPriority">
+            <option value="low">低</option>
+            <option value="medium" selected>中</option>
+            <option value="high">高</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="isAllDay" value="true">
+            <span>全天任务</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="syncCalendar" checked>
+            <span>同步到系统日历</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="cancelTask">取消</button>
+        <button class="btn primary" id="saveTask">保存</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 设置Modal -->
+  <div class="modal hidden" id="settingsModal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="max-width: 800px;">
+      <div class="modal-header">
+        <h3>设置</h3>
+        <button class="modal-close" id="closeSettingsBtn">×</button>
+      </div>
+      <div class="modal-body">
+        <!-- 设置标签页 -->
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-tab="api">API配置</button>
+          <button class="settings-tab" data-tab="adp">ADP配置</button>
+          <button class="settings-tab" data-tab="prompt">Prompt配置</button>
+          <button class="settings-tab" data-tab="memory">记忆管理</button>
+        </div>
+        
+        <!-- API配置 -->
+        <div class="settings-panel" id="apiPanel">
+          <div class="form-group">
+            <label for="apiKey">API Key</label>
+            <input type="password" id="apiKey" placeholder="输入API Key（不输入则使用内置密钥）">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              不设置API Key时使用内置密钥，每日限制10次调用；设置后使用您自己的密钥。
+            </small>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="apiBaseUrl">API地址</label>
+              <input type="text" id="apiBaseUrl" placeholder="https://api.deepseek.com">
+            </div>
+            <div class="form-group">
+              <label for="apiModel">模型名称</label>
+              <input type="text" id="apiModel" placeholder="deepseek-v4-flash">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="apiDailyLimit">每日调用限制（设置自定义Key后生效）</label>
+            <input type="number" id="apiDailyLimit" min="1" max="10000" value="1000">
+          </div>
+          <div class="config-status" id="apiStatus">
+            <span id="currentKeyType">当前使用: 内置密钥</span>
+            <span id="currentDailyLimit">每日限制: 10次</span>
+          </div>
+        </div>
+        
+        <!-- ADP配置 -->
+        <div class="settings-panel hidden" id="adpPanel">
+          <div class="form-group">
+            <label for="adpAppKey">ADP AppKey</label>
+            <input type="password" id="adpAppKey" placeholder="输入ADP应用AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              腾讯云ADP智能体平台的AppKey，用于AI助手功能。配置后可以使用更强大的AI能力。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpUrl">ADP API地址</label>
+            <input type="text" id="adpUrl" placeholder="https://wss.lke.cloud.tencent.com/adp/v2/chat">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              ADP API的WebSocket地址，通常不需要修改。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpAgentName">助手名称</label>
+            <input type="text" id="adpAgentName" placeholder="我的AI助手">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              在AI助手界面显示的助手名称。
+            </small>
+          </div>
+          <div class="config-status" id="adpStatus">
+            <span id="adpConfigStatus">当前状态: 未配置</span>
+          </div>
+        </div>
+        
+        <!-- Prompt配置 -->
+        <div class="settings-panel hidden" id="promptPanel">
+          <div class="form-group">
+            <label for="aiPromptEditor">AI任务识别Prompt</label>
+            <textarea id="aiPromptEditor" rows="10" placeholder="输入AI Prompt..."></textarea>
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              修改Prompt可以调整AI识别待办事项的规则。满足"时间+事项"或明确的任务描述都会创建任务。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="memoryPromptEditor">记忆提取Prompt</label>
+            <textarea id="memoryPromptEditor" rows="10" placeholder="输入记忆提取Prompt..."></textarea>
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              用于从文本中提取结构化记忆，包括人物、主题、关键观点等。
+            </small>
+          </div>
+        </div>
+        
+        <!-- 记忆管理 -->
+        <div class="settings-panel hidden" id="memoryPanel">
+          <div class="memory-stats" id="memoryStats">
+            <div class="stat-item">
+              <span class="stat-value">0</span>
+              <span class="stat-label">总记忆数</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">0</span>
+              <span class="stat-label">短期记忆</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">0</span>
+              <span class="stat-label">长期记忆</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">0</span>
+              <span class="stat-label">实体数量</span>
+            </div>
+          </div>
+          <div class="memory-list-container">
+            <div class="memory-input-section">
+              <label>手工添加记忆</label>
+              <textarea id="manualMemoryInput" placeholder="输入记忆内容，例如：我喜欢在工作时听音乐、我的常用邮箱是xxx@example.com..."></textarea>
+              <div class="memory-input-actions">
+                <select id="manualMemoryType">
+                  <option value="short">短期记忆</option>
+                  <option value="long">长期记忆</option>
+                </select>
+                <button class="btn primary small" id="addManualMemoryBtn">添加记忆</button>
+              </div>
+            </div>
+            <div class="memory-list-header">
+              <span>最近记忆</span>
+              <div class="memory-list-actions">
+                <button class="btn small" id="refreshMemoriesBtn">刷新</button>
+                <button class="btn small danger" id="clearAllMemoriesBtn">清空所有记忆</button>
+              </div>
+            </div>
+            <div class="memory-list" id="memoryList">
+              <div class="empty-state">暂无记忆记录</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="resetPromptBtn">重置Prompt</button>
+        <button class="btn secondary" id="clearClipboardHashesBtn">清空已处理记录</button>
+        <button class="btn secondary" id="clearAPIKeyBtn">清空API配置</button>
+        <button class="btn primary" id="saveSettingsBtn">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  window.onerror = function(msg, url, line, col, error) {
+    console.error('[JS Error]', msg, 'at line', line);
+    return false;
+  };
+  window.onunhandledrejection = function(event) {
+    console.error('[Promise Error]', event.reason);
+  };
+  console.log('[HTML] Script error handlers registered');
+</script>
+<script src="scripts/store.js"></script>
+<script src="scripts/pomodoro.js"></script>
+<script src="scripts/calendar.js"></script>
+<script src="scripts/reminder.js"></script>
+<script src="scripts/app.js"></script>
+<script>
+  console.log('[HTML] All scripts loaded');
+</script>
+</body>
+</html>
