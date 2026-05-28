@@ -1732,12 +1732,12 @@ ipcMain.on('window-close', () => {
   mainWindow.hide();
 });
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   console.log('[App] Starting 忆境 Memora...');
   
-  // 初始化数据库层
+  // 初始化数据库层（同步）
   db = new Database(app.getPath('userData'));
-  await db.init();
+  db.init();
   console.log('[Database] Database initialized');
   
   // 初始化 i18n
@@ -1813,8 +1813,8 @@ ipcMain.handle('db-get-tasks', async () => {
 
 ipcMain.handle('db-save-tasks', async (event, tasks) => {
   if (!db) return { success: false };
-  db.db.data.tasks = tasks;
-  await db.save();
+  db.data.tasks = tasks;
+  db.save();
   return { success: true };
 });
 
@@ -1825,7 +1825,7 @@ ipcMain.handle('db-get-stats', async () => {
 
 ipcMain.handle('db-create-backup', async () => {
   if (!db) return { success: false, error: 'Database not initialized' };
-  return await db.createBackup();
+  return db.createBackup();
 });
 
 ipcMain.handle('db-list-backups', async () => {
@@ -1835,17 +1835,17 @@ ipcMain.handle('db-list-backups', async () => {
 
 ipcMain.handle('db-restore-backup', async (event, backupPath) => {
   if (!db) return { success: false, error: 'Database not initialized' };
-  return await db.restoreBackup(backupPath);
+  return db.restoreBackup(backupPath);
 });
 
 ipcMain.handle('db-export-data', async () => {
   if (!db) return '';
-  return await db.exportData();
+  return db.exportData();
 });
 
 ipcMain.handle('db-import-data', async (event, jsonString) => {
   if (!db) return { success: false, error: 'Database not initialized' };
-  return await db.importData(jsonString);
+  return db.importData(jsonString);
 });
 
 // ========== 多窗口支持 ==========

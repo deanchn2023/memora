@@ -1,9 +1,8 @@
 /**
- * 忆境 Memora - lowdb 数据持久化层
- * 替代 localStorage，支持大容量存储和自动备份
+ * 忆境 Memora - 数据持久化层
+ * 使用原生 fs 实现 JSON 文件存储，替代 localStorage
+ * 自动备份、数据导入导出
  */
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
 const path = require('path');
 const fs = require('fs');
 
@@ -11,8 +10,7 @@ class Database {
   constructor(userDataPath) {
     this.dbPath = path.join(userDataPath, 'memora-data.json');
     this.backupDir = path.join(userDataPath, 'backups');
-    this.adapter = new JSONFile(this.dbPath);
-    this.db = null;
+    this.data = null;
     this.defaults = {
       tasks: [],
       settings: {},
@@ -28,13 +26,26 @@ class Database {
     };
   }
 
-  async init() {
-    this.db = new Low(this.adapter, this.defaults);
-    await this.db.read();
-    
+  init() {
     // 确保 backups 目录存在
     if (!fs.existsSync(this.backupDir)) {
       fs.mkdirSync(this.backupDir, { recursive: true });
+    }
+    
+    // 读取或创建数据库文件
+    if (fs.existsSync(this.dbPath)) {
+      try {
+        const raw = fs.readFileSync(this.dbPath, 'utf8');
+        this.data = JSON.parse(raw);
+        // 合并缺失的默认字段
+        this.data = { ...this.defaults, ...this.data };
+      } catch (e) {
+        console.error('[Database] Read error, using defaults:', e.message);
+        this.data = JSON.parse(JSON.stringify(this.defaults));
+      }
+    } else {
+      this.data = JSON.parse(JSON.stringify(this.defaults));
+      this.save();
     }
     
     console.log('[Database] Initialized at:', this.dbPath);
@@ -43,11 +54,11 @@ class Database {
 
   // ========== 任务操作 ==========
   getTasks() {
-    return this.db.data.tasks || [];
+    return this.data.tasks || [];
   }
 
   addTask(task) {
-    if (!this.db.data.tasks) this.db.data.tasks = [];
+    if (!this.data.tasks) this.data.tasks = [];
     const newTask = {
       id: `task_${Date.now()}`,
       title: task.title,
@@ -71,27 +82,27 @@ class Database {
       updatedAt: new Date().toISOString(),
       completedAt: null
     };
-    this.db.data.tasks.push(newTask);
+    this.data.tasks.push(newTask);
     return newTask;
   }
 
   updateTask(taskId, updates) {
-    if (!this.db.data.tasks) return null;
-    const index = this.db.data.tasks.findIndex(t => t.id === taskId);
+    if (!this.data.tasks) return null;
+    const index = this.data.tasks.findIndex(t => t.id === taskId);
     if (index !== -1) {
-      this.db.data.tasks[index] = {
-        ...this.db.data.tasks[index],
+      this.data.tasks[index] = {
+        ...this.data.tasks[index],
         ...updates,
         updatedAt: new Date().toISOString()
       };
-      return this.db.data.tasks[index];
+      return this.data.tasks[index];
     }
     return null;
   }
 
   deleteTask(taskId) {
-    if (!this.db.data.tasks) return false;
-    this.db.data.tasks = this.db.data.tasks.filter(t => t.id !== taskId);
+    if (!this.data.tasks) return false;
+    this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
     return true;
   }
 
@@ -140,13 +151,13 @@ class Database {
   }
 
   addPomodoroSession(taskId, session) {
-    if (!this.db.data.tasks) return;
-    const index = this.db.data.tasks.findIndex(t => t.id === taskId);
+    if (!this.data.tasks) return;
+    const index = this.data.tasks.findIndex(t => t.id === taskId);
     if (index !== -1) {
-      if (!this.db.data.tasks[index].pomodoroSessions) {
-        this.db.data.tasks[index].pomodoroSessions = [];
+      if (!this.data.tasks[index].pomodoroSessions) {
+        this.data.tasks[index].pomodoroSessions = [];
       }
-      this.db.data.tasks[index].pomodoroSessions.push({
+      this.data.tasks[index].pomodoroSessions.push({
         id: `pomo_${Date.now()}`,
         taskId,
         type: session.type,
@@ -156,22 +167,22 @@ class Database {
         completed: session.completed,
         interrupted: session.interrupted || false
       });
-      this.db.data.tasks[index].actualDuration += session.duration;
+      this.data.tasks[index].actualDuration += session.duration;
     }
   }
 
   // ========== 设置操作 ==========
   getSettings() {
-    return this.db.data.settings || {};
+    return this.data.settings || {};
   }
 
   saveSettings(settings) {
-    this.db.data.settings = { ...this.db.data.settings, ...settings };
+    this.data.settings = { ...this.data.settings, ...settings };
   }
 
   // ========== 番茄钟状态 ==========
   getPomodoroState() {
-    return this.db.data.pomodoro || {
+    return this.data.pomodoro || {
       isRunning: false,
       currentSession: 0,
       totalSessions: 0,
@@ -182,21 +193,27 @@ class Database {
   }
 
   savePomodoroState(state) {
-    this.db.data.pomodoro = state;
+    this.data.pomodoro = state;
   }
 
   // ========== 持久化 ==========
-  async save() {
-    await this.db.write();
+  save() {
+    try {
+      fs.writeFileSync(this.dbPath, JSON.stringify(this.data, null, 2), 'utf8');
+      return true;
+    } catch (e) {
+      console.error('[Database] Save error:', e);
+      return false;
+    }
   }
 
   // ========== 自动备份 ==========
-  async createBackup() {
+  createBackup() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = path.join(this.backupDir, `memora-backup-${timestamp}.json`);
     
     try {
-      const data = JSON.stringify(this.db.data, null, 2);
+      const data = JSON.stringify(this.data, null, 2);
       fs.writeFileSync(backupPath, data, 'utf8');
       
       // 保留最近10个备份
@@ -221,7 +238,6 @@ class Database {
         backups.slice(keepCount).forEach(f => {
           fs.unlinkSync(path.join(this.backupDir, f));
         });
-        console.log(`[Database] Cleaned ${backups.length - keepCount} old backups`);
       }
     } catch (error) {
       console.error('[Database] Cleanup error:', error);
@@ -249,11 +265,11 @@ class Database {
     }
   }
 
-  async restoreBackup(backupPath) {
+  restoreBackup(backupPath) {
     try {
       const data = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
-      this.db.data = data;
-      await this.db.write();
+      this.data = data;
+      this.save();
       console.log('[Database] Restored from backup:', backupPath);
       return { success: true };
     } catch (error) {
@@ -263,15 +279,15 @@ class Database {
   }
 
   // ========== 数据导出 ==========
-  async exportData() {
-    return JSON.stringify(this.db.data, null, 2);
+  exportData() {
+    return JSON.stringify(this.data, null, 2);
   }
 
-  async importData(jsonString) {
+  importData(jsonString) {
     try {
       const data = JSON.parse(jsonString);
-      this.db.data = data;
-      await this.db.write();
+      this.data = data;
+      this.save();
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -287,7 +303,7 @@ class Database {
       totalTasks: tasks.length,
       completedTasks: completed.length,
       pendingTasks: pending.length,
-      dataSize: JSON.stringify(this.db.data).length
+      dataSize: JSON.stringify(this.data).length
     };
   }
 }
