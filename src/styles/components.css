@@ -110,14 +110,35 @@
 }
 
 .task-block.dragging {
-  opacity: 0.7;
+  opacity: 0.5;
   z-index: 1000;
   box-shadow: var(--shadow-lg);
+  transform: scale(0.95);
 }
 
 .time-content.drag-over {
-  background: var(--primary-light);
+  background: rgba(79, 142, 247, 0.12);
   border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 2px rgba(79, 142, 247, 0.3);
+}
+
+/* 拖拽放置提示线 */
+.time-content.drag-over::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary-color), #8B5CF6);
+  border-radius: 2px;
+  animation: dropPulse 1s ease infinite;
+  z-index: 5;
+}
+
+@keyframes dropPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 
 .task-block.draft {
@@ -658,11 +679,16 @@
   background: var(--bg-primary);
   padding: 14px;
   min-height: 200px;
-  transition: background 0.15s ease;
+  transition: all 0.2s var(--transition);
 }
 
 .week-day:hover {
   background: var(--bg-secondary);
+}
+
+.week-day.drag-over {
+  background: rgba(79, 142, 247, 0.06);
+  box-shadow: inset 0 0 0 2px rgba(79, 142, 247, 0.25);
 }
 
 .week-day-header {
@@ -710,14 +736,43 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: grab;
   transition: all 0.2s var(--transition);
   border-left: 3px solid var(--primary-color);
+  position: relative;
 }
 
 .week-task:hover {
   background: var(--primary-light);
   transform: translateX(2px);
+}
+
+.week-task:active {
+  cursor: grabbing;
+}
+
+.week-task.dragging {
+  opacity: 0.4;
+  transform: scale(0.95);
+}
+
+.week-task-time {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.week-task.priority-high {
+  border-left-color: var(--danger-color);
+}
+
+.week-task.priority-medium {
+  border-left-color: var(--warning-color);
+}
+
+.week-task.priority-low {
+  border-left-color: var(--success-color);
 }
 
 .week-task-delete {
@@ -770,7 +825,7 @@
   padding: 10px;
   min-height: 90px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s var(--transition);
 }
 
 .month-day:hover {
@@ -785,6 +840,11 @@
   background: var(--primary-light);
   border: 2px solid rgba(79, 142, 247, 0.15);
   border-radius: var(--radius-sm);
+}
+
+.month-day.drag-over {
+  background: rgba(79, 142, 247, 0.1);
+  box-shadow: inset 0 0 0 2px rgba(79, 142, 247, 0.3);
 }
 
 .month-day-number {
@@ -814,6 +874,61 @@
   border-radius: 50%;
   background: linear-gradient(135deg, #4F8EF7, #6C63FF);
   box-shadow: 0 1px 3px rgba(79, 142, 247, 0.3);
+}
+
+/* 月视图任务标签 */
+.month-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.month-task-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+  transition: all 0.15s var(--transition);
+  color: white;
+  line-height: 1.4;
+}
+
+.month-task-tag:active {
+  cursor: grabbing;
+}
+
+.month-task-tag.dragging {
+  opacity: 0.4;
+  transform: scale(0.9);
+}
+
+.month-task-tag.priority-high {
+  background: linear-gradient(135deg, #FF6B6B, #EE5A24);
+}
+
+.month-task-tag.priority-medium {
+  background: linear-gradient(135deg, #FFB347, #F5A623);
+}
+
+.month-task-tag.priority-low {
+  background: linear-gradient(135deg, #4ECB71, #2ECC71);
+}
+
+.month-task-more {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  padding: 1px 6px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.month-task-more:hover {
+  color: var(--primary-color);
 }
 
 /* ============= AI 分析结果 ============= */
