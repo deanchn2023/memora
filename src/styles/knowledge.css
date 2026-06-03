@@ -1,0 +1,728 @@
+/* ============= 知识跟随页面样式 ============= */
+
+/* 知识跟随视图 */
+.knowledge-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+}
+
+/* 搜索栏 */
+.knowledge-search-bar {
+  display: flex;
+  gap: 10px;
+  padding: 18px 24px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 0.5px solid var(--border-light);
+  align-items: center;
+}
+
+.knowledge-search-input {
+  flex: 1;
+  padding: 11px 18px;
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  font-size: 14px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.2s var(--transition);
+}
+
+.knowledge-search-input:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.knowledge-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.knowledge-search-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s var(--transition);
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+}
+
+.knowledge-search-btn.adp-search {
+  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  color: white;
+  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
+}
+
+.knowledge-search-btn.adp-search:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+}
+
+.knowledge-search-btn.local-search {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1.5px solid var(--border-color);
+}
+
+.knowledge-search-btn.local-search:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--primary-light);
+}
+
+.knowledge-search-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* 知识内容滚动区域 */
+.knowledge-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 区域标题 */
+.knowledge-section {
+  border-radius: var(--radius-lg);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  transition: all 0.25s var(--transition);
+}
+
+.knowledge-section:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.knowledge-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 0.5px solid var(--border-light);
+  background: rgba(79, 142, 247, 0.02);
+}
+
+.knowledge-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.knowledge-section-title .icon {
+  font-size: 18px;
+}
+
+.knowledge-section-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.knowledge-action-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+}
+
+.knowledge-action-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--primary-light);
+}
+
+/* 剪贴板触发提示 */
+.knowledge-clipboard-hint {
+  padding: 10px 16px;
+  background: var(--primary-light);
+  border-bottom: 0.5px solid rgba(79, 142, 247, 0.1);
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.knowledge-clipboard-hint .clip-icon {
+  font-size: 14px;
+}
+
+/* 知识卡片 */
+.knowledge-card-list {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.knowledge-card {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  transition: all 0.25s var(--transition);
+  cursor: pointer;
+}
+
+.knowledge-card:hover {
+  border-color: rgba(79, 142, 247, 0.2);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+/* ADP 推荐卡片 - 左侧蓝色边框 */
+.knowledge-card.adp-recommend {
+  border-left: 3px solid #4F8EF7;
+  background: rgba(79, 142, 247, 0.02);
+}
+
+.knowledge-card.adp-recommend:hover {
+  background: rgba(79, 142, 247, 0.04);
+}
+
+/* ADP 搜索结果卡片 - 左侧紫色边框 */
+.knowledge-card.adp-search {
+  border-left: 3px solid #8B5CF6;
+  background: rgba(139, 92, 246, 0.02);
+}
+
+.knowledge-card.adp-search:hover {
+  background: rgba(139, 92, 246, 0.04);
+}
+
+/* 本地知识卡片 - 左侧绿色边框 */
+.knowledge-card.local-memory {
+  border-left: 3px solid #34C759;
+  background: rgba(52, 199, 89, 0.02);
+}
+
+.knowledge-card.local-notebook {
+  border-left: 3px solid #FF9500;
+  background: rgba(255, 149, 0, 0.02);
+}
+
+.knowledge-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.knowledge-card-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.knowledge-card-source.source-adp-recommend {
+  background: rgba(79, 142, 247, 0.1);
+  color: #4F8EF7;
+}
+
+.knowledge-card-source.source-adp-search {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8B5CF6;
+}
+
+.knowledge-card-source.source-local-memory {
+  background: rgba(52, 199, 89, 0.1);
+  color: #34C759;
+}
+
+.knowledge-card-source.source-local-notebook {
+  background: rgba(255, 149, 0, 0.1);
+  color: #FF9500;
+}
+
+.knowledge-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  margin-bottom: 6px;
+  letter-spacing: -0.1px;
+}
+
+.knowledge-card-content {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.knowledge-card-content.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+.knowledge-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--border-light);
+}
+
+.knowledge-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.knowledge-card-meta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.knowledge-card-actions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s var(--transition);
+}
+
+.knowledge-card:hover .knowledge-card-actions {
+  opacity: 1;
+}
+
+.knowledge-card-action {
+  padding: 3px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  color: var(--text-secondary);
+}
+
+.knowledge-card-action:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--primary-light);
+}
+
+.knowledge-card-action.save-action:hover {
+  border-color: var(--success-color);
+  color: var(--success-color);
+  background: var(--success-light);
+}
+
+.knowledge-card-action.delete-action:hover {
+  border-color: var(--danger-color);
+  color: var(--danger-color);
+  background: var(--danger-light);
+}
+
+/* 匹配度标签 */
+.relevance-score {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(79, 142, 247, 0.08);
+  color: var(--primary-color);
+}
+
+/* 意图标签 */
+.intent-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.intent-tag.search_knowledge {
+  background: rgba(79, 142, 247, 0.1);
+  color: #4F8EF7;
+}
+
+.intent-tag.get_document {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8B5CF6;
+}
+
+.intent-tag.query_question {
+  background: rgba(255, 149, 0, 0.1);
+  color: #FF9500;
+}
+
+.intent-tag.doubt {
+  background: rgba(142, 142, 147, 0.1);
+  color: #86868b;
+}
+
+/* ADP 流式输出区域 */
+.adp-streaming-area {
+  padding: 16px 20px;
+  min-height: 100px;
+}
+
+.adp-streaming-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.adp-streaming-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.adp-streaming-status .spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(79, 142, 247, 0.2);
+  border-top-color: #4F8EF7;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.adp-streaming-controls {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.adp-stream-control {
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  color: var(--text-secondary);
+}
+
+.adp-stream-control:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.adp-stream-control.stop {
+  border-color: rgba(255, 59, 48, 0.3);
+  color: var(--danger-color);
+}
+
+.adp-stream-control.stop:hover {
+  background: var(--danger-light);
+}
+
+/* 流式输出内容 */
+.adp-streaming-content {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 40px;
+}
+
+.adp-streaming-content .cursor {
+  display: inline-block;
+  width: 2px;
+  height: 16px;
+  background: var(--primary-color);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: cursorBlink 1s step-end infinite;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 流式输出完成后的操作 */
+.adp-streaming-done {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--border-light);
+}
+
+.adp-done-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+.adp-done-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-xs);
+}
+
+.adp-done-btn.primary {
+  background: rgba(79, 142, 247, 0.08);
+  border-color: rgba(79, 142, 247, 0.25);
+  color: #4F8EF7;
+}
+
+.adp-done-btn.primary:hover {
+  background: rgba(79, 142, 247, 0.15);
+}
+
+/* 空状态 */
+.knowledge-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  color: var(--text-tertiary);
+}
+
+.knowledge-empty .empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.knowledge-empty p {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.knowledge-empty .empty-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 搜索结果区分隔线 */
+.knowledge-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+
+.knowledge-divider::before,
+.knowledge-divider::after {
+  content: '';
+  flex: 1;
+  height: 0.5px;
+  background: var(--border-light);
+}
+
+/* ADP 配置缺失提示 */
+.knowledge-no-config {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.knowledge-no-config .warn-icon {
+  font-size: 32px;
+  margin-bottom: 10px;
+}
+
+.knowledge-no-config p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.knowledge-no-config .config-btn {
+  padding: 8px 20px;
+  border: 1.5px solid var(--primary-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--primary-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+}
+
+.knowledge-no-config .config-btn:hover {
+  background: var(--primary-color);
+  color: white;
+  box-shadow: var(--shadow-glow);
+}
+
+/* 剪贴板意图标签（在检测弹窗中） */
+.clipboard-intent-section {
+  margin: 10px 0 0;
+  padding: 10px 14px;
+  background: rgba(79, 142, 247, 0.04);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(79, 142, 247, 0.1);
+}
+
+.clipboard-intent-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.clipboard-intent-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.clipboard-intent-tag {
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.clipboard-intent-tag:hover {
+  transform: scale(1.05);
+}
+
+.clipboard-intent-tag.active {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.clipboard-intent-tag.active.intent-search {
+  background: rgba(79, 142, 247, 0.12);
+  border-color: rgba(79, 142, 247, 0.3);
+  color: #4F8EF7;
+}
+
+.clipboard-intent-tag.active.intent-doc {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.3);
+  color: #8B5CF6;
+}
+
+.clipboard-intent-tag.active.intent-question {
+  background: rgba(255, 149, 0, 0.12);
+  border-color: rgba(255, 149, 0, 0.3);
+  color: #FF9500;
+}
+
+.clipboard-intent-tag.active.intent-doubt {
+  background: rgba(142, 142, 147, 0.12);
+  border-color: rgba(142, 142, 147, 0.3);
+  color: #86868b;
+}
+
+/* 知识搜索按钮（剪贴板弹窗中） */
+.search-knowledge-btn {
+  padding: 10px 22px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s var(--transition);
+  background: linear-gradient(135deg, #4F8EF7, #8B5CF6);
+  color: white;
+  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
+  letter-spacing: -0.1px;
+}
+
+.search-knowledge-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+}
+
+/* 推荐已读/未读状态 */
+.knowledge-card.unread {
+  border-left-width: 4px;
+}
+
+.knowledge-card.unread::after {
+  content: '';
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  box-shadow: 0 0 6px var(--primary-glow);
+}
+
+.knowledge-card {
+  position: relative;
+}
+
+/* 响应式 */
+@media (max-width: 900px) {
+  .knowledge-search-bar {
+    flex-wrap: wrap;
+  }
+  
+  .knowledge-search-input {
+    min-width: 200px;
+  }
+  
+  .knowledge-content {
+    padding: 16px;
+  }
+}

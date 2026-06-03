@@ -68,6 +68,9 @@ const Calendar = {
       case 'notebook':
         this.renderNotebookView();
         break;
+      case 'knowledge':
+        this.renderKnowledgeView();
+        break;
     }
   },
 
@@ -88,6 +91,12 @@ const Calendar = {
       case 'month':
         displayText = this.currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
         break;
+      case 'notebook':
+        displayText = '记事本';
+        break;
+      case 'knowledge':
+        displayText = '知识跟随';
+        break;
     }
 
     document.getElementById('currentDate').textContent = displayText;
@@ -98,6 +107,9 @@ const Calendar = {
     document.getElementById('dayView').classList.remove('hidden');
     document.getElementById('weekView').classList.add('hidden');
     document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('notebookView').classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     const grid = document.getElementById('timeGrid');
     grid.innerHTML = '';
@@ -392,6 +404,9 @@ const Calendar = {
     document.getElementById('dayView').classList.add('hidden');
     document.getElementById('weekView').classList.remove('hidden');
     document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('notebookView').classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     const container = document.getElementById('weekView');
     container.innerHTML = '';
@@ -520,6 +535,9 @@ const Calendar = {
     document.getElementById('dayView').classList.add('hidden');
     document.getElementById('weekView').classList.add('hidden');
     document.getElementById('monthView').classList.remove('hidden');
+    document.getElementById('notebookView').classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     const container = document.getElementById('monthView');
     container.innerHTML = '';
@@ -753,6 +771,8 @@ const Calendar = {
     document.getElementById('weekView').classList.add('hidden');
     document.getElementById('monthView').classList.add('hidden');
     document.getElementById('notebookView').classList.remove('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     document.getElementById('currentDate').textContent = '记事本';
 
@@ -761,6 +781,22 @@ const Calendar = {
     }
 
     App.loadNotes();
+  },
+
+  renderKnowledgeView() {
+    document.getElementById('dayView').classList.add('hidden');
+    document.getElementById('weekView').classList.add('hidden');
+    document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('notebookView').classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.remove('hidden');
+
+    document.getElementById('currentDate').textContent = '知识跟随';
+
+    // 初始化知识跟随模块
+    if (window.knowledgeFollow) {
+      window.knowledgeFollow.init();
+    }
   }
 };
 

@@ -23,6 +23,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setADPConfig: (config) => ipcRenderer.invoke('set-adp-config', config),
   sendADPMessage: (message) => ipcRenderer.invoke('send-adp-message', message),
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
+
+  // 知识跟随
+  knowledgeSearchADP: (params) => ipcRenderer.invoke('knowledge:search-adp', params),
+  knowledgeStopADP: () => ipcRenderer.invoke('knowledge:stop-adp'),
+  knowledgeSearchLocal: (params) => ipcRenderer.invoke('knowledge:search-local', params),
+  knowledgeSaveItem: (item) => ipcRenderer.invoke('knowledge:save-item', item),
+  knowledgeDeleteItem: (params) => ipcRenderer.invoke('knowledge:delete-item', params),
+  knowledgeGetRecommendations: (params) => ipcRenderer.invoke('knowledge:get-recommendations', params),
+  knowledgeGetHistory: (params) => ipcRenderer.invoke('knowledge:get-history', params),
+  knowledgeClassifyIntent: (params) => ipcRenderer.invoke('knowledge:classify-intent', params),
+  knowledgeGetDeviceFingerprint: () => ipcRenderer.invoke('knowledge:get-device-fingerprint'),
+  onKnowledgeADPChunk: (callback) => {
+    ipcRenderer.on('knowledge:adp-chunk', (event, data) => callback(data));
+  },
+  onKnowledgeRecommendation: (callback) => {
+    ipcRenderer.on('knowledge:recommendation-new', (event, data) => callback(data));
+  },
   
   // 记忆系统
   getMemories: (options) => ipcRenderer.invoke('get-memories', options),

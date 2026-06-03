@@ -200,6 +200,28 @@ const App = {
     });
     document.getElementById('clearChatBtn').addEventListener('click', () => this.clearChat());
     
+    // 搜索知识按钮（剪贴板检测弹窗中）
+    document.getElementById('searchKnowledgeBtn').addEventListener('click', () => {
+      const rawText = document.getElementById('rawText')?.textContent;
+      const activeIntent = document.querySelector('.clipboard-intent-tag.active');
+      const intent = activeIntent ? activeIntent.dataset.intent : null;
+      
+      this.hideClipboardDetector();
+      this.showKnowledgeView();
+      
+      // 将剪贴板内容填入搜索框
+      if (rawText && document.getElementById('knowledgeSearchInput')) {
+        document.getElementById('knowledgeSearchInput').value = rawText;
+      }
+      
+      // 自动触发 ADP 搜索
+      if (rawText && window.knowledgeFollow) {
+        setTimeout(() => {
+          window.knowledgeFollow.handleADPSearch(intent);
+        }, 300);
+      }
+    });
+    
     // 快捷问题胶囊点击事件
     document.addEventListener('click', (e) => {
       if (e.target.classList.contains('quick-capsule')) {
@@ -207,6 +229,22 @@ const App = {
         if (question) {
           document.getElementById('aiChatInput').value = question;
           this.sendAIMessage();
+        }
+      }
+      
+      // 剪贴板意图标签点击 → 跳转知识跟随页面搜索
+      if (e.target.classList.contains('clipboard-intent-tag')) {
+        const intent = e.target.dataset.intent;
+        const rawText = document.getElementById('rawText')?.textContent;
+        this.hideClipboardDetector();
+        this.showKnowledgeView();
+        if (rawText && document.getElementById('knowledgeSearchInput')) {
+          document.getElementById('knowledgeSearchInput').value = rawText;
+        }
+        if (rawText && window.knowledgeFollow) {
+          setTimeout(() => {
+            window.knowledgeFollow.handleADPSearch(intent);
+          }, 300);
         }
       }
     });
@@ -359,9 +397,11 @@ const App = {
     if (!window.electronAPI) return;
     window.electronAPI.getADPConfig().then(config => {
       document.getElementById('adpAppKey').value = config.appKey || '';
+      document.getElementById('adpKnowledgeAppKey').value = config.knowledgeAppKey || '';
+      document.getElementById('adpSearchAppKey').value = config.searchAppKey || '';
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
-      document.getElementById('adpConfigStatus').textContent = `当前状态: ${config.appKey ? '已配置' : '未配置'}`;
+      document.getElementById('adpConfigStatus').textContent = `当前状态: ${config.appKey ? '已配置通用Key' : '未配置'}${config.knowledgeAppKey ? ' | 知识推荐Key已配置' : ''}${config.searchAppKey ? ' | 搜索Key已配置' : ''}`;
     });
   },
 
@@ -387,10 +427,28 @@ const App = {
     document.getElementById('weekView').classList.add('hidden');
     document.getElementById('monthView').classList.add('hidden');
     document.getElementById('notebookView').classList.add('hidden');
+    document.getElementById('knowledgeView').classList.add('hidden');
     
     // 显示AI助手视图
     document.getElementById('aiAssistantView').classList.remove('hidden');
     document.getElementById('aiChatInput').focus();
+  },
+
+  showKnowledgeView() {
+    // 隐藏其他视图
+    document.getElementById('dayView').classList.add('hidden');
+    document.getElementById('weekView').classList.add('hidden');
+    document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('notebookView').classList.add('hidden');
+    document.getElementById('aiAssistantView').classList.add('hidden');
+    
+    // 显示知识跟随视图
+    document.getElementById('knowledgeView').classList.remove('hidden');
+    
+    // 初始化知识跟随模块
+    if (window.knowledgeFollow) {
+      window.knowledgeFollow.init();
+    }
   },
 
   async sendAIMessage() {
@@ -704,11 +762,15 @@ const App = {
       
       // 保存ADP配置
       const adpAppKey = document.getElementById('adpAppKey').value;
+      const adpKnowledgeAppKey = document.getElementById('adpKnowledgeAppKey').value;
+      const adpSearchAppKey = document.getElementById('adpSearchAppKey').value;
       const adpUrl = document.getElementById('adpUrl').value;
       const adpAgentName = document.getElementById('adpAgentName').value;
       
       await window.electronAPI.setADPConfig({
         appKey: adpAppKey || null,
+        knowledgeAppKey: adpKnowledgeAppKey || '',
+        searchAppKey: adpSearchAppKey || '',
         url: adpUrl || null,
         agentName: adpAgentName || null
       });
@@ -1464,6 +1526,21 @@ const App = {
       if (reasonEl) {
         reasonEl.textContent = `识别原因: ${data.task.reason}`;
         reasonEl.style.display = 'block';
+      }
+    }
+
+    // 知识跟随：显示意图识别标签
+    const intentSection = document.getElementById('clipboardIntentSection');
+    if (intentSection) {
+      if (data.knowledgeIntent) {
+        intentSection.style.display = 'block';
+        // 清除所有 active 状态
+        document.querySelectorAll('.clipboard-intent-tag').forEach(tag => tag.classList.remove('active'));
+        // 设置当前意图为 active
+        const activeTag = document.querySelector(`.clipboard-intent-tag[data-intent="${data.knowledgeIntent}"]`);
+        if (activeTag) activeTag.classList.add('active');
+      } else {
+        intentSection.style.display = 'none';
       }
     }
     

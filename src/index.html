@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://api.deepseek.com wss://wss.lke.cloud.tencent.com; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com; font-src 'self' data:;">
   <title>忆境 Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
+  <link rel="stylesheet" href="styles/knowledge.css">
 </head>
 <body>
   <div id="app">
@@ -41,6 +42,7 @@
           <button class="view-tab" data-view="week">周</button>
           <button class="view-tab" data-view="month">月</button>
           <button class="view-tab" data-view="notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
+          <button class="view-tab" data-view="knowledge">知识</button>
         </div>
         <div class="date-navigator">
           <button class="nav-btn" id="prevDate">◀</button>
@@ -204,6 +206,80 @@
               </div>
             </div>
           </div>
+          <!-- 知识跟随视图 -->
+          <div class="knowledge-view hidden" id="knowledgeView">
+            <div class="knowledge-search-bar">
+              <input type="text" id="knowledgeSearchInput" class="knowledge-search-input" placeholder="🔍 输入关键词搜索知识..." autocomplete="off">
+              <button class="knowledge-search-btn adp-search" id="knowledgeADPSearchBtn">🤖 ADP搜索</button>
+              <button class="knowledge-search-btn local-search" id="knowledgeLocalSearchBtn">📚 本地搜索</button>
+            </div>
+            <div class="knowledge-content">
+              <!-- 智能推荐区 -->
+              <div class="knowledge-section">
+                <div class="knowledge-section-header">
+                  <div class="knowledge-section-title">
+                    <span class="icon">🤖</span> 智能推荐
+                  </div>
+                  <div class="knowledge-section-actions">
+                    <button class="knowledge-action-btn" id="knowledgeRefreshBtn">🔄 刷新</button>
+                    <button class="knowledge-action-btn" id="knowledgeSettingsBtn">⚙️ 设置</button>
+                  </div>
+                </div>
+                <div id="recommendationList" class="knowledge-card-list">
+                  <div class="knowledge-empty">
+                    <div class="empty-icon">🤖</div>
+                    <p>暂无智能推荐</p>
+                    <span class="empty-hint">复制含疑问的内容，系统将自动推荐知识</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 搜索结果区 -->
+              <div class="knowledge-section">
+                <div class="knowledge-section-header">
+                  <div class="knowledge-section-title">
+                    <span class="icon">🔎</span> 搜索结果
+                  </div>
+                </div>
+
+                <!-- 本地知识（上方3条） -->
+                <div class="knowledge-divider">本地知识</div>
+                <div id="localSearchResults" class="knowledge-card-list">
+                  <div class="knowledge-empty">
+                    <div class="empty-icon">📭</div>
+                    <p>输入关键词搜索本地记忆和笔记</p>
+                    <span class="empty-hint">支持记忆库和笔记模糊搜索</span>
+                  </div>
+                </div>
+
+                <!-- ADP 问答（下方） -->
+                <div class="knowledge-divider">ADP 问答</div>
+                <div class="adp-streaming-area" id="adpStreamingArea">
+                  <div class="adp-streaming-header">
+                    <div class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
+                      <div class="spinner"></div>
+                      <span>ADP 正在思考...</span>
+                    </div>
+                    <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
+                      <button class="adp-stream-control stop" onclick="knowledgeFollow.stopADPStreaming()">⏹ 停止</button>
+                    </div>
+                  </div>
+                  <div class="adp-streaming-content" id="adpStreamingContent">
+                    <div class="knowledge-empty" style="padding: 24px;">
+                      <div class="empty-icon">💡</div>
+                      <p>使用 ADP 搜索获取智能知识推荐</p>
+                      <span class="empty-hint">ADP 将基于腾讯云智能体为您搜索和推荐相关知识</span>
+                    </div>
+                  </div>
+                  <div class="adp-streaming-done" id="adpStreamingDone" style="display: none;">
+                    <button class="adp-done-btn primary" onclick="knowledgeFollow.saveADPResult()">💾 保存到知识库</button>
+                    <button class="adp-done-btn" onclick="knowledgeFollow.copyADPResult()">📋 复制</button>
+                    <button class="adp-done-btn" onclick="knowledgeFollow.dismissADPResult()">❌ 忽略</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -217,6 +293,15 @@
             <div class="raw-text">
               <span class="label">原文:</span>
               <p id="rawText"></p>
+            </div>
+            <div class="clipboard-intent-section" id="clipboardIntentSection" style="display: none;">
+              <span class="clipboard-intent-label">意图识别</span>
+              <div class="clipboard-intent-tags" id="clipboardIntentTags">
+                <span class="clipboard-intent-tag intent-search" data-intent="search_knowledge">🔍 搜索知识</span>
+                <span class="clipboard-intent-tag intent-doc" data-intent="get_document">📄 获取文档</span>
+                <span class="clipboard-intent-tag intent-question" data-intent="query_question">❓ 查询问题</span>
+                <span class="clipboard-intent-tag intent-doubt" data-intent="doubt">🤔 有疑问</span>
+              </div>
             </div>
             <div class="divider"></div>
             <div class="task-preview">
@@ -256,6 +341,7 @@
             <button class="action-btn primary" id="createTaskBtn">创建任务</button>
             <button class="action-btn secondary" id="saveToNoteBtn">保存到笔记</button>
             <button class="action-btn secondary" id="saveToMemoryBtn">保存到记忆</button>
+            <button class="search-knowledge-btn" id="searchKnowledgeBtn">🔍 搜索知识</button>
             <button class="action-btn" id="editTaskBtn">编辑</button>
             <button class="action-btn" id="ignoreBtn">忽略</button>
           </div>
@@ -405,17 +491,31 @@
         <!-- ADP配置 -->
         <div class="settings-panel hidden" id="adpPanel">
           <div class="form-group">
-            <label for="adpAppKey">ADP AppKey</label>
+            <label for="adpAppKey">ADP AppKey（AI助手通用）</label>
             <input type="password" id="adpAppKey" placeholder="输入ADP应用AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
               腾讯云ADP智能体平台的AppKey，用于AI助手功能。配置后可以使用更强大的AI能力。
             </small>
           </div>
           <div class="form-group">
+            <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey（可选）</label>
+            <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用通用AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              知识跟随模块的智能推荐专用 AppKey。留空时回退到通用 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpSearchAppKey">搜索问答 AppKey（可选）</label>
+            <input type="password" id="adpSearchAppKey" placeholder="留空则使用知识推荐或通用AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              知识搜索问答专用 AppKey。留空时依次回退到知识推荐 AppKey → 通用 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
             <label for="adpUrl">ADP API地址</label>
             <input type="text" id="adpUrl" placeholder="https://wss.lke.cloud.tencent.com/adp/v2/chat">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              ADP API的WebSocket地址，通常不需要修改。
+              ADP API的地址，通常不需要修改。
             </small>
           </div>
           <div class="form-group">
@@ -663,6 +763,8 @@
 <script src="scripts/pomodoro.js"></script>
 <script src="scripts/calendar.js"></script>
 <script src="scripts/reminder.js"></script>
+<script src="scripts/knowledgeSearch.js"></script>
+<script src="scripts/knowledgeFollow.js"></script>
 <script src="scripts/app.js"></script>
 <script>
   console.log('[HTML] All scripts loaded');

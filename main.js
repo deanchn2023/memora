@@ -1124,6 +1124,9 @@ async function analyzeClipboardText(text) {
         }
       }
       
+      // 知识跟随：剪贴板意图分类
+      const clipboardIntent = classifyClipboardIntent(text);
+
       if (result.is_task && confidence >= FILTER_CONFIG.confidenceThreshold) {
         // 高置信度：自动弹出建议
         console.log('[AI] High confidence task detected:', result.title, 'confidence:', confidence);
@@ -1138,12 +1141,12 @@ async function analyzeClipboardText(text) {
             tags: result.tags || [],
             confidence: confidence,
             reason: result.reason
-          }
+          },
+          knowledgeIntent: clipboardIntent
         });
       } else if (result.is_task && confidence >= FILTER_CONFIG.lowConfidenceThreshold) {
         // 中等置信度：静默加入候选
         console.log('[AI] Medium confidence task, adding to candidates:', result.title, 'confidence:', confidence);
-        // 发送到前端显示（调试期）
         mainWindow.webContents.send('clipboard-candidate-detected', {
           rawText: text,
           task: {
@@ -1152,11 +1155,18 @@ async function analyzeClipboardText(text) {
             priority: result.priority || 'medium',
             confidence: confidence,
             reason: result.reason
-          }
+          },
+          knowledgeIntent: clipboardIntent
         });
       } else {
         console.log('[AI] No task or low confidence:', result.reason || 'confidence too low');
         // 低置信度内容只保存到记事本，不提取记忆
+      }
+
+      // 知识跟随：识别到意图时，异步调用 ADP 获取知识推荐
+      if (clipboardIntent) {
+        console.log('[Knowledge] Clipboard intent detected:', clipboardIntent, '- triggering ADP recommendation');
+        triggerKnowledgeRecommendation(text, clipboardIntent);
       }
     }
   } catch (error) {
@@ -1651,7 +1661,11 @@ ipcMain.handle('get-adp-config', async () => {
   return {
     appKey: getSetting('adp_app_key') || '',
     url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
-    agentName: getSetting('adp_agent_name') || '我的AI助手'
+    agentName: getSetting('adp_agent_name') || '我的AI助手',
+    // 知识跟随专用 AppKey
+    knowledgeAppKey: getSetting('adp_knowledge_app_key') || '',
+    // 搜索问答专用 AppKey
+    searchAppKey: getSetting('adp_search_app_key') || ''
   };
 });
 
@@ -1665,6 +1679,12 @@ ipcMain.handle('set-adp-config', async (event, config) => {
   if (config.agentName) {
     setSetting('adp_agent_name', config.agentName);
   }
+  if (config.knowledgeAppKey !== undefined) {
+    setSetting('adp_knowledge_app_key', config.knowledgeAppKey);
+  }
+  if (config.searchAppKey !== undefined) {
+    setSetting('adp_search_app_key', config.searchAppKey);
+  }
   return { success: true };
 });
 
@@ -1672,6 +1692,8 @@ ipcMain.handle('clear-adp-config', async () => {
   setSetting('adp_app_key', '');
   setSetting('adp_url', '');
   setSetting('adp_agent_name', '');
+  setSetting('adp_knowledge_app_key', '');
+  setSetting('adp_search_app_key', '');
   return { success: true };
 });
 
@@ -2922,6 +2944,561 @@ ipcMain.handle('optimizer:apply-candidate', async (_, filename) => {
     console.log(`[Optimizer] Active prompt switched to: ${filename}`);
     return { success: true, module: moduleName };
   } catch (error) { return { success: false, error: error.message }; }
+});
+
+// ========== 知识跟随模块 ==========
+
+// 知识项数据存储
+const KNOWLEDGE_DIR = path.join(app.getPath('userData'), 'knowledge');
+if (!fs.existsSync(KNOWLEDGE_DIR)) {
+  fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
+}
+
+const KNOWLEDGE_ITEMS_FILE = path.join(KNOWLEDGE_DIR, 'knowledge-items.json');
+const KNOWLEDGE_RECOMMENDATIONS_FILE = path.join(KNOWLEDGE_DIR, 'recommendations.json');
+
+function loadKnowledgeItems() {
+  try {
+    if (fs.existsSync(KNOWLEDGE_ITEMS_FILE)) {
+      return JSON.parse(fs.readFileSync(KNOWLEDGE_ITEMS_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[Knowledge] Load items error:', e);
+  }
+  return [];
+}
+
+function saveKnowledgeItems(items) {
+  try {
+    fs.writeFileSync(KNOWLEDGE_ITEMS_FILE, JSON.stringify(items, null, 2));
+  } catch (e) {
+    console.error('[Knowledge] Save items error:', e);
+  }
+}
+
+function loadKnowledgeRecommendations() {
+  try {
+    if (fs.existsSync(KNOWLEDGE_RECOMMENDATIONS_FILE)) {
+      return JSON.parse(fs.readFileSync(KNOWLEDGE_RECOMMENDATIONS_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[Knowledge] Load recommendations error:', e);
+  }
+  return [];
+}
+
+function saveKnowledgeRecommendations(recs) {
+  try {
+    fs.writeFileSync(KNOWLEDGE_RECOMMENDATIONS_FILE, JSON.stringify(recs, null, 2));
+  } catch (e) {
+    console.error('[Knowledge] Save recommendations error:', e);
+  }
+}
+
+// 设备指纹
+let cachedDeviceFingerprint = null;
+function getDeviceFingerprint() {
+  if (cachedDeviceFingerprint) return cachedDeviceFingerprint;
+
+  let mac = 'unknown';
+  let ip = 'unknown';
+
+  try {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.mac && iface.mac !== '00:00:00:00:00:00' && !iface.internal) {
+          mac = iface.mac;
+          break;
+        }
+      }
+      if (mac !== 'unknown') break;
+    }
+    // 获取本机IP
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          ip = iface.address;
+          break;
+        }
+      }
+      if (ip !== 'unknown') break;
+    }
+  } catch (e) {
+    console.error('[Knowledge] Device fingerprint error:', e);
+  }
+
+  const hash = crypto.createHash('sha256').update(`${mac}_${ip}`).digest('hex').substring(0, 16);
+  cachedDeviceFingerprint = `mac_${hash.substring(0, 8)}_ip_${hash.substring(8, 16)}`;
+  return cachedDeviceFingerprint;
+}
+
+// 剪贴板意图分类
+function classifyClipboardIntent(text) {
+  if (!text || text.trim().length === 0) return null;
+
+  const intentPatterns = {
+    search_knowledge: [
+      /搜索|查找|寻找|什么是|how to|了解|学习|研究|看看.*是什么/i,
+      /怎么用|如何使用|怎么操作|教程|指南|入门/i
+    ],
+    get_document: [
+      /文档|API文档|使用手册|开发指南|参考文档|SDK文档/i,
+      /在哪找|哪里有|下载地址|仓库地址|官方文档/i
+    ],
+    query_question: [
+      /为什么|怎么解决|报错|error|异常|failed|问题/i,
+      /为什么.*不|怎么.*不行|无法|不能|失败/i
+    ],
+    doubt: [
+      /不确定|是不是|好像|似乎|应该.*吧|？？/i,
+      /\?{2,}/
+    ]
+  };
+
+  const scores = {};
+  for (const [intent, patterns] of Object.entries(intentPatterns)) {
+    scores[intent] = 0;
+    for (const pattern of patterns) {
+      if (pattern.test(text)) scores[intent] += 1;
+    }
+  }
+
+  const maxScore = Math.max(...Object.values(scores));
+  if (maxScore === 0) return null;
+  return Object.entries(scores).find(([_, s]) => s === maxScore)[0];
+}
+
+// 知识跟随：基于剪贴板意图异步触发 ADP 推荐搜索
+async function triggerKnowledgeRecommendation(text, intent) {
+  try {
+    const searchAppKey = getSetting('adp_search_app_key');
+    const knowledgeAppKey = getSetting('adp_knowledge_app_key');
+    const generalAppKey = getSetting('adp_app_key');
+    const defaultAppKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
+
+    // 推荐使用知识专用 AppKey，其次通用
+    const appKey = (knowledgeAppKey && knowledgeAppKey.trim()) || (generalAppKey && generalAppKey.trim()) || defaultAppKey;
+    const url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+
+    const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+    const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+    // 根据意图构建不同的搜索 query
+    let query = text.substring(0, 200);
+    if (intent === 'search_knowledge') {
+      query = `请搜索相关知识：${text.substring(0, 100)}`;
+    } else if (intent === 'get_document') {
+      query = `请提供相关文档链接和摘要：${text.substring(0, 100)}`;
+    } else if (intent === 'query_question') {
+      query = `请回答以下问题：${text.substring(0, 100)}`;
+    } else if (intent === 'doubt') {
+      query = `请解释澄清：${text.substring(0, 100)}`;
+    }
+
+    const requestBody = {
+      RequestId: requestId,
+      ConversationId: convId,
+      AppKey: appKey.trim(),
+      VisitorId: getDeviceFingerprint(),
+      Contents: [{ Type: 'text', Text: query }],
+      Incremental: true,
+      Stream: 'enable',
+      StreamingThrottle: 5
+    };
+
+    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+
+    const response = await fetch(httpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      console.error('[Knowledge] Recommendation ADP failed:', response.status);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          const data = line.substring(5).trim();
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.event === 'text.delta' && parsed.content?.text) {
+              fullText += parsed.content.text;
+            } else if (parsed.event === 'message.added' && parsed.content?.text) {
+              fullText += parsed.content.text;
+            } else if (parsed.event === 'content.added' && parsed.content?.text) {
+              fullText += parsed.content.text;
+            } else if (parsed.event === 'response.completed' || parsed.event === 'message.done') {
+              break;
+            } else if (parsed.event === 'error' || parsed.error) {
+              console.error('[Knowledge] Recommendation ADP error:', parsed.error);
+              return;
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // 保存推荐结果并通知前端
+    if (fullText) {
+      const recs = loadKnowledgeRecommendations();
+      const newRec = {
+        id: 'kr_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+        device_fingerprint: getDeviceFingerprint(),
+        clipboard_hash: crypto.createHash('md5').update(text).digest('hex'),
+        clipboard_preview: text.substring(0, 50),
+        title: text.substring(0, 50),
+        content: fullText,
+        source: 'adp_recommend',
+        intent: intent,
+        is_read: false,
+        is_saved: false,
+        created_at: new Date().toISOString()
+      };
+      recs.unshift(newRec);
+      if (recs.length > 100) recs.length = 100;
+      saveKnowledgeRecommendations(recs);
+
+      // 通知前端有新推荐
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:recommendation-new', { recommendation: newRec });
+      }
+      console.log('[Knowledge] Recommendation saved and pushed to frontend');
+    }
+  } catch (e) {
+    console.error('[Knowledge] triggerKnowledgeRecommendation error:', e);
+  }
+}
+
+// ADP SSE 流式请求管理
+let activeADPController = null;
+
+// 知识跟随：ADP 搜索（SSE 流式）
+ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversationId }) => {
+  // 优先使用搜索专用 AppKey，其次使用知识推荐 AppKey，最后使用通用 AppKey
+  const searchAppKey = getSetting('adp_search_app_key');
+  const knowledgeAppKey = getSetting('adp_knowledge_app_key');
+  const generalAppKey = getSetting('adp_app_key');
+  const defaultAppKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
+
+  const appKey = (searchAppKey && searchAppKey.trim()) || (knowledgeAppKey && knowledgeAppKey.trim()) || (generalAppKey && generalAppKey.trim()) || defaultAppKey;
+  const url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+
+  console.log('[Knowledge] ADP search:', query, 'using appKey prefix:', appKey.substring(0, 10) + '...');
+
+  const convId = conversationId || Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+  const requestBody = {
+    RequestId: requestId,
+    ConversationId: convId,
+    AppKey: appKey.trim(),
+    VisitorId: getDeviceFingerprint(),
+    Contents: [{ Type: 'text', Text: query }],
+    Incremental: true,
+    Stream: 'enable',
+    StreamingThrottle: 5
+  };
+
+  // 创建 AbortController 用于取消请求
+  const controller = new AbortController();
+  activeADPController = controller;
+
+  try {
+    const https = require('https');
+    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+
+    const response = await fetch(httpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `ADP请求失败: ${response.status}`, conversationId: convId };
+    }
+
+    // 异步处理 SSE 流
+    (async () => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // 保留不完整的行
+
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const data = line.substring(5).trim();
+              if (data === '[DONE]') {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, conversationId: convId });
+                }
+                break;
+              }
+
+              try {
+                const parsed = JSON.parse(data);
+                let text = '';
+
+                if (parsed.event === 'text.delta' && parsed.content?.text) {
+                  text = parsed.content.text;
+                } else if (parsed.event === 'message.added' && parsed.content?.text) {
+                  text = parsed.content.text;
+                } else if (parsed.event === 'content.added' && parsed.content?.text) {
+                  text = parsed.content.text;
+                } else if (parsed.event === 'response.completed' || parsed.event === 'message.done') {
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, conversationId: convId });
+                  }
+                  break;
+                } else if (parsed.event === 'error' || parsed.error) {
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, error: parsed.error?.message || JSON.stringify(parsed.error), conversationId: convId });
+                  }
+                  break;
+                }
+
+                if (text) {
+                  fullText += text;
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('knowledge:adp-chunk', { text, done: false, conversationId: convId });
+                  }
+                }
+              } catch (parseErr) {
+                // 非 JSON 数据，忽略
+              }
+            }
+          }
+        }
+
+        // 流结束，如果没有发送过 done 信号则发送
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, conversationId: convId });
+        }
+
+        // 保存搜索结果到推荐列表
+        if (fullText) {
+          const recs = loadKnowledgeRecommendations();
+          const newRec = {
+            id: 'kr_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+            device_fingerprint: getDeviceFingerprint(),
+            clipboard_hash: '',
+            clipboard_preview: query.substring(0, 50),
+            title: query.substring(0, 50),
+            content: fullText,
+            source: 'adp_search',
+            intent: intent || 'search_knowledge',
+            is_read: false,
+            is_saved: false,
+            created_at: new Date().toISOString()
+          };
+          recs.unshift(newRec);
+          if (recs.length > 100) recs.length = 100; // 限制数量
+          saveKnowledgeRecommendations(recs);
+        }
+      } catch (readErr) {
+        if (readErr.name !== 'AbortError') {
+          console.error('[Knowledge] SSE read error:', readErr);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, error: readErr.message, conversationId: convId });
+          }
+        }
+      }
+    })();
+
+    return { success: true, conversationId: convId };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return { success: false, error: '请求已取消', conversationId: convId };
+    }
+    console.error('[Knowledge] ADP fetch error:', error);
+    return { success: false, error: error.message, conversationId: convId };
+  }
+});
+
+// 停止 ADP 流式输出
+ipcMain.handle('knowledge:stop-adp', async () => {
+  if (activeADPController) {
+    activeADPController.abort();
+    activeADPController = null;
+  }
+  return { success: true };
+});
+
+// 知识跟随：本地搜索
+ipcMain.handle('knowledge:search-local', async (event, { query, limit }) => {
+  const results = [];
+
+  // 搜索记忆
+  if (memoryStore) {
+    const memories = memoryStore.searchRelated(query, 20);
+    memories.forEach(m => {
+      const score = calculateLocalRelevance(query, m.content);
+      results.push({
+        type: 'memory',
+        id: m.id,
+        title: m.content.substring(0, 50),
+        content: m.content,
+        category: m.category,
+        memoryType: m.type,
+        createdAt: m.createdAt,
+        score,
+        source: 'local_memory'
+      });
+    });
+  }
+
+  // 搜索笔记
+  if (notebook) {
+    const notes = notebook.searchNotes(query);
+    notes.forEach(n => {
+      const score = calculateLocalRelevance(query, n.content || n.title || '');
+      results.push({
+        type: 'notebook',
+        id: n.id,
+        title: n.title || n.content.substring(0, 30),
+        content: n.content,
+        category: n.category,
+        createdAt: n.createdAt,
+        score,
+        source: 'local_notebook'
+      });
+    });
+  }
+
+  return { results: results.sort((a, b) => b.score - a.score).slice(0, limit || 3) };
+});
+
+function calculateLocalRelevance(query, content) {
+  if (!query || !content) return 0;
+  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  if (keywords.length === 0) return 0;
+  const lower = content.toLowerCase();
+  let score = 0;
+  keywords.forEach(kw => {
+    if (lower.includes(kw)) score += 1;
+    const regex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const matches = lower.match(regex);
+    if (matches) score += matches.length * 0.3;
+  });
+  return Math.min(score / keywords.length, 1.0);
+}
+
+// 知识跟随：保存知识项
+ipcMain.handle('knowledge:save-item', async (event, item) => {
+  const items = loadKnowledgeItems();
+
+  if (item.id) {
+    // 更新已有项的保存状态
+    const idx = items.findIndex(i => i.id === item.id);
+    if (idx !== -1) {
+      items[idx].is_saved = true;
+      items[idx].updated_at = new Date().toISOString();
+      saveKnowledgeItems(items);
+      return { success: true, item: items[idx] };
+    }
+
+    // 可能是推荐项的 ID
+    const recs = loadKnowledgeRecommendations();
+    const recIdx = recs.findIndex(r => r.id === item.id);
+    if (recIdx !== -1) {
+      recs[recIdx].is_saved = true;
+      saveKnowledgeRecommendations(recs);
+    }
+  }
+
+  // 创建新知识项
+  const newItem = {
+    id: 'ki_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+    title: item.title || '知识项',
+    content: item.content || '',
+    source: item.source || 'manual',
+    source_id: item.source_id || null,
+    query: item.query || '',
+    intent: item.intent || null,
+    device_fingerprint: getDeviceFingerprint(),
+    tags: item.tags || [],
+    is_saved: true,
+    adp_conversation_id: item.adpConversationId || null,
+    relevance_score: item.relevanceScore || 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  items.unshift(newItem);
+  if (items.length > 500) items.length = 500;
+  saveKnowledgeItems(items);
+
+  return { success: true, item: newItem };
+});
+
+// 知识跟随：删除知识项
+ipcMain.handle('knowledge:delete-item', async (event, { id }) => {
+  let items = loadKnowledgeItems();
+  items = items.filter(i => i.id !== id);
+  saveKnowledgeItems(items);
+
+  // 同时从推荐列表删除
+  let recs = loadKnowledgeRecommendations();
+  recs = recs.filter(r => r.id !== id);
+  saveKnowledgeRecommendations(recs);
+
+  return { success: true };
+});
+
+// 知识跟随：获取推荐列表
+ipcMain.handle('knowledge:get-recommendations', async (event, { deviceFingerprint }) => {
+  const recs = loadKnowledgeRecommendations();
+  const fingerprint = deviceFingerprint || getDeviceFingerprint();
+  const filtered = recs.filter(r => !deviceFingerprint || r.device_fingerprint === fingerprint);
+  return { recommendations: filtered.slice(0, 20) };
+});
+
+// 知识跟随：获取搜索历史
+ipcMain.handle('knowledge:get-history', async (event, { limit, offset }) => {
+  const items = loadKnowledgeItems();
+  return {
+    items: items.slice(offset || 0, (offset || 0) + (limit || 20)),
+    total: items.length
+  };
+});
+
+// 知识跟随：剪贴板意图分类
+ipcMain.handle('knowledge:classify-intent', async (event, { text }) => {
+  const intent = classifyClipboardIntent(text);
+  return { intent };
+});
+
+// 知识跟随：获取设备指纹
+ipcMain.handle('knowledge:get-device-fingerprint', async () => {
+  return { fingerprint: getDeviceFingerprint() };
 });
 
 ipcMain.handle('optimizer:run', async (_, options = {}) => {
