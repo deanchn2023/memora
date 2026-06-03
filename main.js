@@ -3191,6 +3191,18 @@ async function triggerKnowledgeRecommendation(text, intent) {
 // ADP SSE 流式请求管理
 let activeADPController = null;
 
+// 打开外部链接
+ipcMain.handle('open-external', async (event, url) => {
+  const { shell } = require('electron');
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (e) {
+    console.error('[App] openExternal error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
 // 知识跟随：ADP 搜索（SSE 流式）
 ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversationId }) => {
   // 优先使用搜索专用 AppKey，其次使用知识推荐 AppKey，最后使用通用 AppKey

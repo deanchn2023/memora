@@ -1,7 +1,9 @@
 /**
  * 知识跟随 - 核心前端逻辑
- * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、意图识别展示
+ * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、公开资源搜索、意图识别展示
  */
+
+const TOOLKIT_BASE_URL = 'http://21.91.29.59:3000';
 
 class KnowledgeFollow {
   constructor() {
@@ -11,6 +13,7 @@ class KnowledgeFollow {
     this.adpFullText = '';
     this.recommendations = [];
     this.searchResults = [];
+    this.publicResults = [];
     this.initialized = false;
   }
 
@@ -41,16 +44,10 @@ class KnowledgeFollow {
       });
     }
 
-    // ADP搜索按钮
-    const adpSearchBtn = document.getElementById('knowledgeADPSearchBtn');
-    if (adpSearchBtn) {
-      adpSearchBtn.addEventListener('click', () => this.handleADPSearch());
-    }
-
-    // 本地搜索按钮
-    const localSearchBtn = document.getElementById('knowledgeLocalSearchBtn');
-    if (localSearchBtn) {
-      localSearchBtn.addEventListener('click', () => this.handleLocalSearch());
+    // 搜索按钮（合并：同时搜索公开API + 本地 + ADP）
+    const searchBtn = document.getElementById('knowledgeSearchBtn');
+    if (searchBtn) {
+      searchBtn.addEventListener('click', () => this.handleSearch());
     }
 
     // 刷新推荐
@@ -67,7 +64,7 @@ class KnowledgeFollow {
   }
 
   /**
-   * 设置 ADP chunk 监听（主进程推送流式内容）
+   * 设置 ADP chunk 监听
    */
   setupADPChunkListener() {
     if (window.electronAPI && window.electronAPI.onKnowledgeADPChunk) {
@@ -89,30 +86,213 @@ class KnowledgeFollow {
   }
 
   /**
-   * 处理综合搜索（本地 + ADP）
+   * 综合搜索：公开API + 本地记忆 + ADP 同时发起
    */
-  async handleSearch() {
+  async handleSearch(intent = null) {
     const input = document.getElementById('knowledgeSearchInput');
     const query = input ? input.value.trim() : '';
     if (!query) return;
 
-    // 并行执行本地搜索和 ADP 搜索
-    this.handleLocalSearch();
-    this.handleADPSearch();
+    // 显示搜索结果区
+    const resultsSection = document.getElementById('knowledgeSearchResults');
+    if (resultsSection) resultsSection.style.display = 'block';
+
+    // 并行搜索三个来源
+    this.handlePublicSearch(query);
+    this.handleLocalSearch(query);
+    this.handleADPSearch(intent);
+  }
+
+  /**
+   * 公开资源搜索（ADPToolkit API）
+   */
+  async handlePublicSearch(query) {
+    const container = document.getElementById('publicSearchResults');
+    if (!container) return;
+
+    container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索资源中...</p></div>';
+
+    try {
+      // 并行搜索4种资源类型
+      const [docsRes, casesRes, demosRes, learningRes] = await Promise.allSettled([
+        fetch(`${TOOLKIT_BASE_URL}/api/public/documents?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
+        fetch(`${TOOLKIT_BASE_URL}/api/public/cases?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
+        fetch(`${TOOLKIT_BASE_URL}/api/public/demos?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
+        fetch(`${TOOLKIT_BASE_URL}/api/public/learning?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json())
+      ]);
+
+      const items = [];
+
+      // 处理文档
+      if (docsRes.status === 'fulfilled' && docsRes.value?.data) {
+        docsRes.value.data.forEach(d => items.push({
+          id: d.id, type: 'document', title: d.title,
+          description: d.description, category: d.category,
+          industry: d.industry, author: d.author_name,
+          fileName: d.file_name, fileType: d.file_type,
+          views: d.view_count, downloads: d.download_count,
+          createdAt: d.created_at, updatedAt: d.updated_at
+        }));
+      }
+
+      // 处理案例
+      if (casesRes.status === 'fulfilled' && casesRes.value?.data) {
+        casesRes.value.data.forEach(c => items.push({
+          id: c.id, type: 'case', title: c.title,
+          description: c.description, category: c.industry,
+          industry: c.industry, author: c.client_name,
+          fileName: null, fileType: null,
+          views: c.view_count, downloads: c.download_count,
+          demoUrl: c.demo_url, createdAt: c.created_at, updatedAt: c.updated_at
+        }));
+      }
+
+      // 处理 Demo
+      if (demosRes.status === 'fulfilled' && demosRes.value?.data) {
+        demosRes.value.data.forEach(d => items.push({
+          id: d.id, type: 'demo', title: d.name,
+          description: d.description, category: d.category,
+          industry: d.industry, author: null,
+          fileName: null, fileType: null,
+          views: d.click_count, downloads: d.download_count,
+          accessUrl: d.access_url, createdAt: d.created_at, updatedAt: d.updated_at
+        }));
+      }
+
+      // 处理学习材料
+      if (learningRes.status === 'fulfilled' && learningRes.value?.data) {
+        learningRes.value.data.forEach(l => items.push({
+          id: l.id, type: 'learning', title: l.title,
+          description: l.description, category: l.category,
+          industry: null, author: l.author_name,
+          tags: l.tags, fileName: null, fileType: null,
+          views: l.view_count, downloads: l.download_count,
+          htmlUrl: l.html_url, createdAt: l.created_at, updatedAt: l.updated_at
+        }));
+      }
+
+      this.publicResults = items;
+      this.renderPublicResults(items);
+    } catch (e) {
+      console.error('[KnowledgeFollow] Public search error:', e);
+      container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">❌</div><p>资源搜索失败</p><span class="empty-hint">请检查网络连接</span></div>';
+    }
+  }
+
+  /**
+   * 渲染公开资源文件列表
+   */
+  renderPublicResults(items) {
+    const container = document.getElementById('publicSearchResults');
+    if (!container) return;
+
+    if (items.length === 0) {
+      container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">📭</div><p>未找到相关资源</p><span class="empty-hint">尝试换个关键词搜索</span></div>';
+      return;
+    }
+
+    container.innerHTML = items.map(item => this.renderFileItem(item)).join('');
+  }
+
+  /**
+   * 渲染单个文件列表项
+   */
+  renderFileItem(item) {
+    const typeConfig = {
+      document: { icon: '📄', label: '文档', color: '#007AFF', bg: 'rgba(0,122,255,0.08)' },
+      case:     { icon: '💼', label: '案例', color: '#FF9500', bg: 'rgba(255,149,0,0.08)' },
+      demo:     { icon: '🎮', label: 'Demo', color: '#34C759', bg: 'rgba(52,199,89,0.08)' },
+      learning: { icon: '📖', label: '学习', color: '#AF52DE', bg: 'rgba(175,82,222,0.08)' }
+    };
+    const cfg = typeConfig[item.type] || typeConfig.document;
+    const timeAgo = this.formatTimeAgo(item.updatedAt || item.createdAt);
+
+    // 文件类型图标
+    const ext = (item.fileType || '').toLowerCase();
+    let fileIcon = '📄';
+    if (ext === '.pdf') fileIcon = '📕';
+    else if (['.doc', '.docx'].includes(ext)) fileIcon = '📘';
+    else if (['.ppt', '.pptx'].includes(ext)) fileIcon = '📙';
+    else if (['.xls', '.xlsx'].includes(ext)) fileIcon = '📗';
+    else if (['.html', '.htm'].includes(ext)) fileIcon = '🌐';
+    else if (item.type === 'demo') fileIcon = '🎮';
+    else if (item.type === 'learning') fileIcon = '📖';
+
+    const fileName = item.fileName || `${item.title}`;
+    const views = item.views || 0;
+    const downloads = item.downloads || 0;
+
+    return `
+      <div class="knowledge-file-item" data-id="${item.id}" data-type="${item.type}" onclick="knowledgeFollow.openPublicResource('${item.id}', '${item.type}')">
+        <div class="file-icon" style="background: ${cfg.bg}; color: ${cfg.color};">${fileIcon}</div>
+        <div class="file-info">
+          <div class="file-name">${this.escapeHtml(fileName || item.title)}</div>
+          <div class="file-desc">${this.escapeHtml((item.description || '').substring(0, 100))}${(item.description || '').length > 100 ? '...' : ''}</div>
+          <div class="file-meta">
+            <span class="file-type-badge" style="background: ${cfg.bg}; color: ${cfg.color};">${cfg.icon} ${cfg.label}</span>
+            ${item.category ? `<span class="file-category">${this.escapeHtml(item.category)}</span>` : ''}
+            ${item.author ? `<span class="file-author">👤 ${this.escapeHtml(item.author)}</span>` : ''}
+            <span class="file-stat">👁 ${views}</span>
+            <span class="file-stat">⬇️ ${downloads}</span>
+            <span class="file-time">${timeAgo}</span>
+          </div>
+        </div>
+        <div class="file-action">
+          <button class="file-download-btn" onclick="event.stopPropagation(); knowledgeFollow.downloadPublicResource('${item.id}', '${item.type}')" title="下载">⬇️</button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * 打开公开资源详情
+   */
+  openPublicResource(id, type) {
+    const urlMap = {
+      document: `${TOOLKIT_BASE_URL}/api/public/documents/${id}`,
+      case: `${TOOLKIT_BASE_URL}/api/public/cases/${id}`,
+      demo: `${TOOLKIT_BASE_URL}/api/public/demos/${id}`,
+      learning: `${TOOLKIT_BASE_URL}/api/public/learning/${id}`
+    };
+
+    // 在默认浏览器中打开公开页面
+    const publicPageUrl = `${TOOLKIT_BASE_URL}/public.html`;
+    // 使用 shell.openExternal
+    if (window.electronAPI && window.electronAPI.openExternal) {
+      window.electronAPI.openExternal(publicPageUrl);
+    } else {
+      window.open(publicPageUrl, '_blank');
+    }
+  }
+
+  /**
+   * 下载公开资源
+   */
+  downloadPublicResource(id, type) {
+    const url = `${TOOLKIT_BASE_URL}/api/public/download/${type}/${id}`;
+    if (window.electronAPI && window.electronAPI.openExternal) {
+      window.electronAPI.openExternal(url);
+    } else {
+      window.open(url, '_blank');
+    }
+  }
+
+  /**
+   * 清除搜索结果
+   */
+  clearSearchResults() {
+    const resultsSection = document.getElementById('knowledgeSearchResults');
+    if (resultsSection) resultsSection.style.display = 'none';
   }
 
   /**
    * 本地知识搜索
    */
-  async handleLocalSearch() {
-    const input = document.getElementById('knowledgeSearchInput');
-    const query = input ? input.value.trim() : '';
-    if (!query) return;
-
+  async handleLocalSearch(query) {
     const localContainer = document.getElementById('localSearchResults');
     if (!localContainer) return;
 
-    localContainer.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">🔍</div><p>搜索中...</p></div>';
+    localContainer.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索记忆中...</p></div>';
 
     try {
       const results = await this.searchEngine.searchLocalKnowledge(query, 3);
@@ -132,7 +312,7 @@ class KnowledgeFollow {
     if (!container) return;
 
     if (results.length === 0) {
-      container.innerHTML = `<div class="knowledge-empty"><div class="empty-icon">📭</div><p>未找到相关知识</p><span class="empty-hint">尝试换个关键词搜索</span></div>`;
+      container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">📭</div><p>本地无相关记忆</p></div>';
       return;
     }
 
@@ -203,7 +383,6 @@ class KnowledgeFollow {
         this.isADPStreaming = false;
         this.showStreamingStatus(false);
       } else {
-        // 流式输出已开始，chunk 会通过 IPC 推送
         if (result.conversationId) {
           this.currentADPConversationId = result.conversationId;
         }
@@ -225,11 +404,9 @@ class KnowledgeFollow {
 
     if (data.text) {
       this.adpFullText += data.text;
-      // 渲染 Markdown（简单版，只处理基本格式）
       const html = this.renderSimpleMarkdown(this.adpFullText);
       streamContainer.innerHTML = html + '<span class="cursor"></span>';
 
-      // 自动滚动
       const scrollParent = streamContainer.closest('.knowledge-content');
       if (scrollParent) {
         scrollParent.scrollTop = scrollParent.scrollHeight;
@@ -237,7 +414,6 @@ class KnowledgeFollow {
     }
 
     if (data.done) {
-      // 流式输出完成
       this.isADPStreaming = false;
       const html = this.renderSimpleMarkdown(this.adpFullText);
       streamContainer.innerHTML = html;
@@ -265,7 +441,6 @@ class KnowledgeFollow {
 
       const streamContainer = document.getElementById('adpStreamingContent');
       if (streamContainer) {
-        // 移除光标
         const cursor = streamContainer.querySelector('.cursor');
         if (cursor) cursor.remove();
       }
@@ -379,7 +554,7 @@ class KnowledgeFollow {
     if (!container) return;
 
     if (this.recommendations.length === 0) {
-      container.innerHTML = `<div class="knowledge-empty"><div class="empty-icon">🤖</div><p>暂无智能推荐</p><span class="empty-hint">复制含疑问的内容，系统将自动推荐知识</span></div>`;
+      container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">🤖</div><p>暂无智能推荐</p><span class="empty-hint">复制含疑问的内容，系统将自动推荐知识</span></div>';
       return;
     }
 
@@ -416,7 +591,7 @@ class KnowledgeFollow {
   }
 
   /**
-   * 添加新推荐（从剪贴板触发）
+   * 添加新推荐
    */
   addRecommendation(recommendation) {
     this.recommendations.unshift(recommendation);
@@ -454,7 +629,6 @@ class KnowledgeFollow {
    * 查看本地知识详情
    */
   async viewDetail(id, type) {
-    // 简单展开/折叠
     const card = document.querySelector(`.knowledge-card[data-id="${id}"][data-type="${type}"]`);
     if (card) {
       const content = card.querySelector('.knowledge-card-content');
@@ -491,7 +665,6 @@ class KnowledgeFollow {
   openSettings() {
     const settingsBtn = document.getElementById('openSettingsBtn');
     if (settingsBtn) settingsBtn.click();
-    // 切换到 ADP 配置面板
     setTimeout(() => {
       const adpTab = document.querySelector('.settings-tab[data-tab="adp"]');
       if (adpTab) adpTab.click();
@@ -519,16 +692,12 @@ class KnowledgeFollow {
   renderSimpleMarkdown(text) {
     if (!text) return '';
     let html = this.escapeHtml(text);
-    // 标题
     html = html.replace(/^### (.+)$/gm, '<h4 style="font-size:14px;font-weight:600;margin:10px 0 6px;color:var(--text-primary)">$1</h4>');
     html = html.replace(/^## (.+)$/gm, '<h3 style="font-size:15px;font-weight:600;margin:12px 0 8px;color:var(--text-primary)">$1</h3>');
     html = html.replace(/^# (.+)$/gm, '<h2 style="font-size:16px;font-weight:700;margin:14px 0 8px;color:var(--text-primary)">$1</h2>');
-    // 粗体
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // 列表
     html = html.replace(/^\d+\.\s+(.+)$/gm, '<div style="padding-left:16px;margin:2px 0">$1</div>');
     html = html.replace(/^[-*]\s+(.+)$/gm, '<div style="padding-left:16px;margin:2px 0">• $1</div>');
-    // 换行
     html = html.replace(/\n/g, '<br>');
     return html;
   }
@@ -599,3 +768,4 @@ class KnowledgeFollow {
 
 // 全局实例
 const knowledgeFollow = new KnowledgeFollow();
+window.knowledgeFollow = knowledgeFollow;

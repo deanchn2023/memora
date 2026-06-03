@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000; font-src 'self' data:;">
   <title>忆境 Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
@@ -210,8 +210,7 @@
           <div class="knowledge-view hidden" id="knowledgeView">
             <div class="knowledge-search-bar">
               <input type="text" id="knowledgeSearchInput" class="knowledge-search-input" placeholder="🔍 输入关键词搜索知识..." autocomplete="off">
-              <button class="knowledge-search-btn adp-search" id="knowledgeADPSearchBtn">🤖 ADP搜索</button>
-              <button class="knowledge-search-btn local-search" id="knowledgeLocalSearchBtn">📚 本地搜索</button>
+              <button class="knowledge-search-btn" id="knowledgeSearchBtn">🔍 搜索</button>
             </div>
             <div class="knowledge-content">
               <!-- 智能推荐区 -->
@@ -235,25 +234,34 @@
               </div>
 
               <!-- 搜索结果区 -->
-              <div class="knowledge-section">
+              <div class="knowledge-section" id="knowledgeSearchResults" style="display: none;">
                 <div class="knowledge-section-header">
                   <div class="knowledge-section-title">
                     <span class="icon">🔎</span> 搜索结果
                   </div>
+                  <button class="knowledge-action-btn" onclick="knowledgeFollow.clearSearchResults()">✕ 关闭</button>
                 </div>
 
-                <!-- 本地知识（上方3条） -->
-                <div class="knowledge-divider">本地知识</div>
-                <div id="localSearchResults" class="knowledge-card-list">
+                <!-- 资源文件列表 -->
+                <div class="knowledge-divider">📄 资源文件</div>
+                <div id="publicSearchResults" class="knowledge-file-list">
                   <div class="knowledge-empty">
                     <div class="empty-icon">📭</div>
-                    <p>输入关键词搜索本地记忆和笔记</p>
-                    <span class="empty-hint">支持记忆库和笔记模糊搜索</span>
+                    <p>搜索中...</p>
                   </div>
                 </div>
 
-                <!-- ADP 问答（下方） -->
-                <div class="knowledge-divider">ADP 问答</div>
+                <!-- 本地记忆 -->
+                <div class="knowledge-divider">🧠 本地记忆</div>
+                <div id="localSearchResults" class="knowledge-card-list">
+                  <div class="knowledge-empty">
+                    <div class="empty-icon">📭</div>
+                    <p>搜索中...</p>
+                  </div>
+                </div>
+
+                <!-- ADP 问答 -->
+                <div class="knowledge-divider">🤖 ADP 问答</div>
                 <div class="adp-streaming-area" id="adpStreamingArea">
                   <div class="adp-streaming-header">
                     <div class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
@@ -267,8 +275,7 @@
                   <div class="adp-streaming-content" id="adpStreamingContent">
                     <div class="knowledge-empty" style="padding: 24px;">
                       <div class="empty-icon">💡</div>
-                      <p>使用 ADP 搜索获取智能知识推荐</p>
-                      <span class="empty-hint">ADP 将基于腾讯云智能体为您搜索和推荐相关知识</span>
+                      <p>搜索中...</p>
                     </div>
                   </div>
                   <div class="adp-streaming-done" id="adpStreamingDone" style="display: none;">

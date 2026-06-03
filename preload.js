@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
 
   // 知识跟随
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
   knowledgeSearchADP: (params) => ipcRenderer.invoke('knowledge:search-adp', params),
   knowledgeStopADP: () => ipcRenderer.invoke('knowledge:stop-adp'),
   knowledgeSearchLocal: (params) => ipcRenderer.invoke('knowledge:search-local', params),
