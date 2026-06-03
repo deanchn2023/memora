@@ -174,6 +174,8 @@ const App = {
         this.hideTaskModal();
         this.hideClipboardDetector();
         this.hideSettingsModal();
+        this.hidePromptEditor();
+        this.hideOptimizerDetail();
       }
     });
     
@@ -214,6 +216,36 @@ const App = {
       tab.addEventListener('click', (e) => this.switchSettingsTab(e.target.dataset.tab));
     });
     
+    // Phase 3: Prompt 优化器
+    document.getElementById('runOptimizerBtn')?.addEventListener('click', () => this.runPromptOptimizer());
+
+    // Prompt 文件管理
+    document.getElementById('closePromptEditor')?.addEventListener('click', () => this.hidePromptEditor());
+    document.getElementById('promptEditorCancel')?.addEventListener('click', () => this.hidePromptEditor());
+    document.getElementById('promptEditorSave')?.addEventListener('click', () => this.savePromptFile());
+    document.getElementById('promptFileUploadInput')?.addEventListener('change', (e) => this.handlePromptFileUpload(e));
+    document.getElementById('refreshOptimizerHistory')?.addEventListener('click', () => this.loadOptimizerHistory());
+    document.getElementById('closeOptimizerDetail')?.addEventListener('click', () => this.hideOptimizerDetail());
+    
+    // Phase 3: 用户画像
+    document.getElementById('addPersonBtn')?.addEventListener('click', () => this.addFrequentPerson());
+    document.getElementById('addProjectBtn')?.addEventListener('click', () => this.addActiveProject());
+    document.getElementById('generateProfileSuggestionsBtn')?.addEventListener('click', () => this.generateProfileSuggestions());
+    
+    // 用户画像面板 - 删除按钮事件委托
+    document.getElementById('frequentPersonsList')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('item-remove')) {
+        const idx = parseInt(e.target.dataset.index);
+        this.removeFrequentPerson(idx);
+      }
+    });
+    document.getElementById('activeProjectsList')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('item-remove')) {
+        const idx = parseInt(e.target.dataset.index);
+        this.removeActiveProject(idx);
+      }
+    });
+    
     // 记事本相关事件
     document.getElementById('notebookSearchInput').addEventListener('input', () => this.searchNotes());
     document.querySelectorAll('.category-item').forEach(item => {
@@ -241,6 +273,15 @@ const App = {
       const noteId = noteItem.dataset.id;
       console.log('[App] Notebook item clicked, noteId:', noteId);
       
+
+      // 如果点击的是分类标签，弹出分类修改
+      const categorySpan = e.target.closest('.note-category-clickable');
+      if (categorySpan) {
+        e.stopPropagation();
+        this.changeNoteCategory(noteId, categorySpan.dataset.category);
+        return;
+      }
+
       const button = e.target.closest('.note-btn');
       const previewContent = e.target.closest('.note-preview-content');
       
@@ -284,57 +325,55 @@ const App = {
     });
   },
 
+  _settingsTabLoaded: {},
+
   switchSettingsTab(tabName) {
-    // 切换标签状态
-    document.querySelectorAll('.settings-tab').forEach(tab => {
-      tab.classList.remove('active');
-    });
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    document.querySelectorAll('.settings-tab').forEach(tab => tab.classList.remove('active'));
+    document.querySelector(`[data-tab="${tabName}"]`)?.classList.add('active');
+    document.querySelectorAll('.settings-panel').forEach(panel => panel.classList.add('hidden'));
+    document.getElementById(`${tabName}Panel`)?.classList.remove('hidden');
     
-    // 切换面板显示
-    document.querySelectorAll('.settings-panel').forEach(panel => {
-      panel.classList.add('hidden');
-    });
-    document.getElementById(`${tabName}Panel`).classList.remove('hidden');
-    
-    // 如果切换到记忆面板，加载记忆列表
-    if (tabName === 'memory') {
-      this.loadMemories();
+    // 延迟加载：只在首次切换到标签时加载数据
+    if (!this._settingsTabLoaded[tabName]) {
+      this._settingsTabLoaded[tabName] = true;
+      if (tabName === 'api') this._loadApiConfig();
+      if (tabName === 'adp') this._loadAdpConfig();
+      if (tabName === 'memory') this.loadMemories();
+      if (tabName === 'profile') this.loadProfileEditor();
+      if (tabName === 'prompt') this.loadPromptFiles();
     }
+  },
+
+  _loadApiConfig() {
+    if (!window.electronAPI) return;
+    window.electronAPI.getAPIConfig().then(config => {
+      document.getElementById('apiBaseUrl').value = config.baseUrl || '';
+      document.getElementById('apiModel').value = config.model || '';
+      document.getElementById('apiDailyLimit').value = config.dailyLimit || 1000;
+      document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '自定义密钥' : '内置密钥'}`;
+      document.getElementById('currentDailyLimit').textContent = `每日限制: ${config.dailyLimit}次`;
+    });
+  },
+
+  _loadAdpConfig() {
+    if (!window.electronAPI) return;
+    window.electronAPI.getADPConfig().then(config => {
+      document.getElementById('adpAppKey').value = config.appKey || '';
+      document.getElementById('adpUrl').value = config.url || '';
+      document.getElementById('adpAgentName').value = config.agentName || '';
+      document.getElementById('adpConfigStatus').textContent = `当前状态: ${config.appKey ? '已配置' : '未配置'}`;
+    });
   },
 
   showSettingsModal() {
     const modal = document.getElementById('settingsModal');
     modal.classList.remove('hidden');
     
-    // 加载当前设置
+    // 只加载当前活跃标签页的数据（延迟加载其他标签）
     if (window.electronAPI) {
-      // 加载API配置
-      window.electronAPI.getAPIConfig().then(config => {
-        document.getElementById('apiBaseUrl').value = config.baseUrl || '';
-        document.getElementById('apiModel').value = config.model || '';
-        document.getElementById('apiDailyLimit').value = config.dailyLimit || 1000;
-        document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '自定义密钥' : '内置密钥'}`;
-        document.getElementById('currentDailyLimit').textContent = `每日限制: ${config.dailyLimit}次`;
-      });
-      
-      // 加载ADP配置
-      window.electronAPI.getADPConfig().then(config => {
-        document.getElementById('adpAppKey').value = config.appKey || '';
-        document.getElementById('adpUrl').value = config.url || '';
-        document.getElementById('adpAgentName').value = config.agentName || '';
-        document.getElementById('adpConfigStatus').textContent = `当前状态: ${config.appKey ? '已配置' : '未配置'}`;
-      });
-      
-      // 加载Prompt配置
-      window.electronAPI.getAIPrompt().then(prompt => {
-        document.getElementById('aiPromptEditor').value = prompt;
-      });
-      
-      // 加载记忆提取Prompt配置
-      window.electronAPI.getMemoryPrompt().then(prompt => {
-        document.getElementById('memoryPromptEditor').value = prompt;
-      });
+      const activeTab = document.querySelector('.settings-tab.active');
+      const tabName = activeTab?.dataset.tab || 'api';
+      this.switchSettingsTab(tabName);
     }
   },
 
@@ -432,6 +471,25 @@ const App = {
               feedbackDiv.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
             });
           }
+          
+          // 绑定 Agent 操作按钮事件
+          messageContent.querySelectorAll('.agent-action-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const action = e.currentTarget.dataset.action;
+              this.handleAgentAction(action, result.result, agentType);
+            });
+          });
+          
+          // 绑定可点击任务卡片
+          messageContent.querySelectorAll('.agent-task-card').forEach(card => {
+            card.addEventListener('click', () => {
+              const title = card.dataset.title;
+              const schedule = card.dataset.schedule;
+              if (title) {
+                this.showTaskModal({ title, description: `排程时间：${schedule || ''}`, estimatedDuration: 60, priority: 'high' });
+              }
+            });
+          });
         } else {
           throw new Error(result.error || 'Agent 调用失败');
         }
@@ -474,19 +532,28 @@ const App = {
     if (result.today_top5?.length) {
       html += '<div class="agent-task-list"><h4>🎯 今日 Top 5</h4>';
       result.today_top5.forEach((item, i) => {
-        html += `<div class="agent-task-item">
+        html += `<div class="agent-task-card" data-action="create-task" data-title="${this.escapeHtml(item.reason || '')}" data-schedule="${this.escapeHtml(item.scheduled_at || '')}">
           <span class="task-rank">${i + 1}</span>
-          <div class="task-detail">
-            <span class="task-schedule">${this.escapeHtml(item.scheduled_at || '')}</span>
-            <span class="task-reason">${this.escapeHtml(item.reason || '')}</span>
+          <div class="task-info">
+            <div class="task-title">${this.escapeHtml(item.reason || item.task_id || '')}</div>
+            <div class="task-meta">${this.escapeHtml(item.scheduled_at || '')}</div>
           </div>
+          <span class="create-task-icon">➕</span>
         </div>`;
       });
       html += '</div>';
     }
+    if (result.deferred?.length) {
+      html += `<div class="agent-tips"><h4>⏸ 可延后</h4><ul>${result.deferred.map(d => `<li>${this.escapeHtml(typeof d === 'string' ? d : d.task_id || JSON.stringify(d))}</li>`).join('')}</ul></div>`;
+    }
     if (result.tips?.length) {
       html += `<div class="agent-tips"><h4>💡 提示</h4><ul>${result.tips.map(t => `<li>${this.escapeHtml(t)}</li>`).join('')}</ul></div>`;
     }
+    // 可操作按钮
+    html += `<div class="agent-actions">
+      <button class="agent-action-btn primary" data-action="create-all-tasks">📋 一键创建排程任务</button>
+      <button class="agent-action-btn" data-action="copy-result">📋 复制结果</button>
+    </div>`;
     return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
   },
 
@@ -499,8 +566,19 @@ const App = {
       });
       html += '</div>';
     }
+    if (result.duplicates?.length) {
+      html += `<div class="agent-insights"><h4>🔄 重复笔记</h4><ul>${result.duplicates.map(d => `<li>笔记 ${d.indices?.join(' 和 ')} 可能重复：${this.escapeHtml(d.reason || '')}</li>`).join('')}</ul></div>`;
+    }
     if (result.insights?.length) {
       html += `<div class="agent-insights"><h4>💡 洞察</h4><ul>${result.insights.map(i => `<li>${this.escapeHtml(i)}</li>`).join('')}</ul></div>`;
+    }
+    if (result.actions?.length) {
+      html += '<div class="agent-actions"><h4 style="width:100%">🎬 建议操作</h4>';
+      result.actions.forEach(a => {
+        const typeIcon = { merge: '🔄', tag: '🏷️', create_task: '➕', save_memory: '🧠' }[a.type] || '📌';
+        html += `<button class="agent-action-btn" data-action="agent-action" data-type="${a.type}" data-detail="${this.escapeHtml(a.description)}">${typeIcon} ${this.escapeHtml(a.description)}</button>`;
+      });
+      html += '</div>';
     }
     return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
   },
@@ -510,13 +588,39 @@ const App = {
     if (result.promote?.length) {
       html += '<div class="agent-promote"><h4>⬆️ 建议晋升</h4>';
       result.promote.forEach(p => {
-        html += `<div class="promote-item">${this.escapeHtml(p.from)} → ${this.escapeHtml(p.to)}：${this.escapeHtml(p.reason || '')}</div>`;
+        html += `<div class="promote-item">${this.escapeHtml(p.from || '?')} → ${this.escapeHtml(p.to || '?')}：${this.escapeHtml(p.reason || '')}</div>`;
+      });
+      html += '</div>';
+    }
+    if (result.demote?.length) {
+      html += '<div class="agent-promote"><h4>⬇️ 建议降级</h4>';
+      result.demote.forEach(p => {
+        html += `<div class="promote-item">${this.escapeHtml(p.from || '?')} → ${this.escapeHtml(p.to || '?')}：${this.escapeHtml(p.reason || '')}</div>`;
+      });
+      html += '</div>';
+    }
+    if (result.expire?.length) {
+      html += '<div class="agent-promote"><h4>🗑️ 建议淘汰</h4>';
+      result.expire.forEach(p => {
+        html += `<div class="promote-item" style="color: var(--text-secondary);">${this.escapeHtml(p.reason || '')}</div>`;
+      });
+      html += '</div>';
+    }
+    if (result.merge?.length) {
+      html += '<div class="agent-promote"><h4>🔄 建议合并</h4>';
+      result.merge.forEach(m => {
+        html += `<div class="promote-item">记忆 ${m.source_indices?.join(' + ')}：${this.escapeHtml(m.reason || '')}</div>`;
       });
       html += '</div>';
     }
     if (result.insights?.length) {
       html += `<div class="agent-insights"><h4>💡 记忆洞察</h4><ul>${result.insights.map(i => `<li>${this.escapeHtml(i)}</li>`).join('')}</ul></div>`;
     }
+    // 可操作按钮
+    html += `<div class="agent-actions">
+      <button class="agent-action-btn success" data-action="apply-memory-changes">✅ 应用变更</button>
+      <button class="agent-action-btn" data-action="copy-result">📋 复制结果</button>
+    </div>`;
     return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
   },
 
@@ -530,6 +634,12 @@ const App = {
         html += `<div class="report-section"><h4>${this.escapeHtml(section.title || key)}</h4><ul>${section.items.map(i => `<li>${this.escapeHtml(typeof i === 'string' ? i : JSON.stringify(i))}</li>`).join('')}</ul></div>`;
       }
     });
+    if (result.highlight) html += `<div class="agent-highlight">${this.escapeHtml(result.highlight)}</div>`;
+    // 可操作按钮
+    html += `<div class="agent-actions">
+      <button class="agent-action-btn primary" data-action="save-to-note">📝 保存为笔记</button>
+      <button class="agent-action-btn" data-action="copy-result">📋 复制报告</button>
+    </div>`;
     return html || `<p>${this.escapeHtml(JSON.stringify(result, null, 2))}</p>`;
   },
 
@@ -592,14 +702,6 @@ const App = {
         dailyLimit: dailyLimit || null
       });
       
-      // 保存Prompt
-      const prompt = document.getElementById('aiPromptEditor').value;
-      await window.electronAPI.setAIPrompt(prompt);
-      
-      // 保存记忆提取Prompt
-      const memoryPrompt = document.getElementById('memoryPromptEditor').value;
-      await window.electronAPI.setMemoryPrompt(memoryPrompt);
-      
       // 保存ADP配置
       const adpAppKey = document.getElementById('adpAppKey').value;
       const adpUrl = document.getElementById('adpUrl').value;
@@ -610,6 +712,9 @@ const App = {
         url: adpUrl || null,
         agentName: adpAgentName || null
       });
+      
+      // Phase 3: 保存用户画像
+      await this.saveProfileFromEditor();
     }
     
     this.hideSettingsModal();
@@ -617,11 +722,15 @@ const App = {
   },
 
   async resetAIPrompt() {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.resetAIPrompt();
-      document.getElementById('aiPromptEditor').value = result.prompt;
+    if (window.electronAPI?.promptFiles?.reset) {
+      const result = await window.electronAPI.promptFiles.reset('task_recognition_v2.0.md');
+      if (result.success) {
+        this.loadPromptFiles();
+        this.showToast('任务识别 Prompt 已恢复');
+      } else {
+        this.showToast('恢复失败：' + (result.error || '无备份'), 'error');
+      }
     }
-    this.showToast('Prompt已重置为默认');
   },
 
   async clearClipboardHashes() {
@@ -681,13 +790,19 @@ const App = {
               </div>
               <span class="memory-date">${new Date(memory.createdAt).toLocaleString()}</span>
             </div>
-            <button class="memory-delete" onclick="App.deleteMemory('${memory.id}')">删除</button>
+            <button class="memory-delete" data-memory-id="${memory.id}">删除</button>
           </div>
         `;
       }).join('');
     } else {
       memoryList.innerHTML = '<div class="empty-state">暂无记忆记录</div>';
     }
+
+    // 事件委托：删除按钮
+    memoryList.onclick = (e) => {
+      const delBtn = e.target.closest('.memory-delete');
+      if (delBtn) this.deleteMemory(delBtn.dataset.memoryId);
+    };
   },
 
   getMemoryCategoryLabel(category) {
@@ -825,7 +940,7 @@ const App = {
         <div class="note-item" data-id="${note.id}">
           <div class="note-header">
             <h3 class="note-title">${note.title}</h3>
-            <span class="note-category">${this.getNoteCategoryLabel(note.category)}</span>
+            <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
           </div>
           <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
           <div class="note-preview hidden" id="note-preview-${note.id}">
@@ -954,6 +1069,82 @@ const App = {
   },
   
   // 增加新笔记角标计数（不在记事本页时调用）
+
+  // 修改笔记分类
+  // 修改笔记分类（浮层菜单）
+  async changeNoteCategory(noteId, currentCategory) {
+    // 移除已存在的旧弹出菜单
+    const oldPopup = document.querySelector('.category-popup');
+    if (oldPopup) oldPopup.remove();
+
+    const categories = [
+      { key: 'meeting', label: '会议记录' },
+      { key: 'feedback', label: '问题反馈' },
+      { key: 'task', label: '待办任务' },
+      { key: 'idea', label: '想法创意' },
+      { key: 'general', label: '其他' }
+    ];
+
+    // 创建浮层菜单
+    const popup = document.createElement('div');
+    popup.className = 'category-popup';
+    popup.innerHTML = categories.map(cat => {
+      const isActive = cat.key === currentCategory;
+      return `<button class="category-popup-item ${isActive ? 'active' : ''}" data-key="${cat.key}">${cat.label}${isActive ? ' ✓' : ''}</button>`;
+    }).join('');
+
+    // 定位到分类标签下方
+    const target = document.querySelector(`.note-category-clickable[data-id="${noteId}"]`);
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.top = (rect.bottom + 6) + 'px';
+    const popupLeft = Math.max(0, Math.min(rect.left, window.innerWidth - 180));
+    popup.style.left = popupLeft + 'px';
+    popup.style.width = '160px';
+
+    document.body.appendChild(popup);
+
+    // 点击外部关闭
+    const closePopup = (e) => {
+      if (!popup.contains(e.target) && e.target !== target) {
+        popup.remove();
+        document.removeEventListener('click', closePopup);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closePopup), 0);
+
+    // 处理分类选择
+    popup.querySelectorAll('.category-popup-item').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        popup.remove();
+        document.removeEventListener('click', closePopup);
+
+        const newCategory = btn.dataset.key;
+        if (newCategory === currentCategory) {
+          this.showToast('分类未变更');
+          return;
+        }
+
+        try {
+          if (window.electronAPI) {
+            const result = await window.electronAPI.notebookUpdateNote(noteId, {
+              category: newCategory
+            });
+            if (result.success) {
+              this.showToast(`分类已修改为「${this.getNoteCategoryLabel(newCategory)}」`);
+              const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+              this.loadNotes(activeCat);
+            }
+          }
+        } catch (error) {
+          console.error('修改分类失败:', error);
+          this.showToast('修改分类失败', 'error');
+        }
+      });
+    });
+  },
   incrementNewNoteCount() {
     const currentView = Calendar.currentView;
     if (currentView === 'notebook') {
@@ -1200,7 +1391,7 @@ const App = {
         <div class="note-item" data-id="${note.id}">
           <div class="note-header">
             <h3 class="note-title">${note.title}</h3>
-            <span class="note-category">${this.getNoteCategoryLabel(note.category)}</span>
+            <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
           </div>
           <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
           <div class="note-preview hidden" id="note-preview-${note.id}">
@@ -1221,31 +1412,6 @@ const App = {
     } else {
       noteList.innerHTML = '<div class="empty-state">未找到匹配的笔记</div>';
     }
-  },
-
-  // ========== 记忆提取Prompt配置方法 ==========
-  
-  async loadMemoryPrompt() {
-    if (window.electronAPI) {
-      const prompt = await window.electronAPI.getMemoryPrompt();
-      document.getElementById('memoryPromptEditor').value = prompt;
-    }
-  },
-
-  async saveMemoryPrompt() {
-    const prompt = document.getElementById('memoryPromptEditor').value;
-    if (window.electronAPI) {
-      await window.electronAPI.setMemoryPrompt(prompt);
-      this.showToast('记忆提取Prompt已保存');
-    }
-  },
-
-  async resetMemoryPrompt() {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.resetMemoryPrompt();
-      document.getElementById('memoryPromptEditor').value = result.prompt;
-    }
-    this.showToast('记忆提取Prompt已重置');
   },
 
   setupClipboardListener() {
@@ -1893,6 +2059,699 @@ const App = {
       toast.style.animation = 'fadeOut 0.3s ease';
       setTimeout(() => toast.remove(), 300);
     }, 2000);
+  },
+
+  // === Phase 2: Agent 操作按钮处理 ===
+  handleAgentAction(action, result, agentType) {
+    switch (action) {
+      case 'create-all-tasks':
+        if (result?.today_top5?.length) {
+          result.today_top5.forEach(item => {
+            const title = item.reason || item.task_id || '排程任务';
+            const task = Store.addTask({
+              title: title.substring(0, 50),
+              description: `排程时间：${item.scheduled_at || ''}`,
+              estimatedDuration: 60, priority: 'high',
+              dueDate: this.getDefaultDueDate().toISOString(),
+              source: 'agent_priority'
+            });
+            task.reminders = Reminder.calculateReminders(task);
+            Store.updateTask(task.id, { reminders: task.reminders });
+          });
+          this.renderTaskList(); Calendar.render();
+          this.showToast(`已创建 ${result.today_top5.length} 个排程任务`);
+        }
+        break;
+      case 'save-to-note':
+        if (result && window.electronAPI) {
+          window.electronAPI.notebookAddNote({ content: JSON.stringify(result, null, 2), category: 'general' }).then(r => {
+            if (r.success) this.showToast('已保存到笔记');
+          });
+        }
+        break;
+      case 'copy-result':
+        if (result) navigator.clipboard.writeText(JSON.stringify(result, null, 2)).then(() => this.showToast('已复制到剪贴板'));
+        break;
+      case 'apply-memory-changes':
+        if (result?.promote?.length && window.electronAPI) {
+          result.promote.forEach(p => {
+            window.electronAPI.feedback.record({ trace_id: 'memory_agent', action: 'promote', reason: `${p.from} → ${p.to}: ${p.reason || ''}` });
+          });
+          this.showToast('记忆变更已记录');
+        }
+        break;
+      default: this.showToast(`操作：${action}`);
+    }
+  },
+
+  // === Phase 3: Prompt 优化器 ===
+  async runPromptOptimizer() {
+    const module = document.getElementById('optimizerModule')?.value || 'task_recognition';
+    const statusEl = document.getElementById('optimizerStatus');
+    const resultsEl = document.getElementById('optimizerResults');
+    if (!window.electronAPI?.optimizer?.run) { this.showToast('优化器功能不可用', 'error'); return; }
+
+    statusEl.style.display = 'flex';
+    resultsEl.innerHTML = '<p style="color: var(--text-secondary);">正在运行优化器...</p>';
+    try {
+      const result = await window.electronAPI.optimizer.run({ module, badCases: 30 });
+      statusEl.style.display = 'none';
+      if (result.success) { await this.loadOptimizerCandidates(); this.showToast('优化器运行完成'); }
+      else { resultsEl.innerHTML = `<p class="error-text">优化器运行失败：${this.escapeHtml(result.error || '')}</p><pre style="font-size:11px; max-height:200px; overflow:auto; background:#f5f5f7; padding:10px; border-radius:8px;">${this.escapeHtml(result.output || '')}</pre>`; }
+    } catch (error) {
+      statusEl.style.display = 'none';
+      resultsEl.innerHTML = `<p class="error-text">错误：${this.escapeHtml(error.message)}</p>`;
+    }
+  },
+
+  async loadOptimizerCandidates() {
+    if (!window.electronAPI?.optimizer?.listCandidates) return;
+    const resultsEl = document.getElementById('optimizerResults');
+    const result = await window.electronAPI.optimizer.listCandidates();
+    if (!result.candidates?.length) {
+      resultsEl.innerHTML = '<p style="color: var(--text-secondary); font-size: 13px;">暂无候选 Prompt。运行优化器后，改进版 Prompt 将出现在这里。</p>';
+      return;
+    }
+    resultsEl.innerHTML = result.candidates.map(c => {
+      const report = c.report || {};
+      const improvement = report.improvement || 0;
+      const badge = improvement >= 0.05 ? 'improved' : improvement >= 0 ? '' : 'declined';
+      const badgeText = improvement >= 0.05 ? '✅ 建议启用' : improvement >= 0 ? '⚡ 提升不显著' : '❌ 表现下降';
+      return `<div class="optimizer-candidate">
+        <div class="candidate-header">
+          <span class="candidate-name">${this.escapeHtml(c.name)}</span>
+          <span class="candidate-badge ${badge}">${badgeText}</span>
+        </div>
+        <div class="candidate-stats">
+          <span>旧版本：${((report.old_pass_rate || 0) * 100).toFixed(1)}%</span>
+          <span>新版本：${((report.new_pass_rate || 0) * 100).toFixed(1)}%</span>
+          <span>提升：${(improvement * 100).toFixed(1)}%</span>
+        </div>
+        <div class="candidate-actions">
+          <button class="btn primary small apply-candidate-btn" data-candidate-filename="${this.escapeHtml(c.filename)}">启用此版本</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    // 事件委托
+    resultsEl.onclick = (e) => {
+      const btn = e.target.closest('.apply-candidate-btn');
+      if (btn) this.applyOptimizerCandidate(btn.dataset.candidateFilename);
+    };
+  },
+
+  async applyOptimizerCandidate(filename) {
+    if (!window.electronAPI?.optimizer?.applyCandidate) return;
+    const result = await window.electronAPI.optimizer.applyCandidate(filename);
+    if (result.success) { this.showToast(`已启用候选 Prompt：${filename}`); await this.loadOptimizerCandidates(); }
+    else this.showToast('启用失败：' + (result.error || ''), 'error');
+  },
+
+  // === Phase 3: 用户画像编辑 ===
+  async loadProfileEditor() {
+    if (!window.electronAPI?.profile?.get) return;
+    const profile = await window.electronAPI.profile.get();
+    document.getElementById('profileName').value = profile.user?.name || '';
+    document.getElementById('profileEnglishName').value = profile.user?.english_name || '';
+    document.getElementById('profileRole').value = profile.user?.role || '';
+    document.getElementById('profileIndustries').value = (profile.user?.industries || []).join(', ');
+    document.getElementById('prioritySignals').value = (profile.preferences?.priority_signals || []).join(', ');
+    document.getElementById('lowPrioritySignals').value = (profile.preferences?.low_priority_signals || []).join(', ');
+
+    const personsList = document.getElementById('frequentPersonsList');
+    personsList.innerHTML = (profile.frequent_persons || []).map((p, i) =>
+      `<div class="profile-item"><span class="item-name">${this.escapeHtml(p.name)}</span><span class="item-detail">${this.escapeHtml(p.relation || '')}${p.company ? ' @ ' + this.escapeHtml(p.company) : ''}</span><button class="item-remove" data-index="${i}">×</button></div>`
+    ).join('') || '<p style="color:var(--text-secondary); font-size:13px;">暂无高频人物</p>';
+
+    const projectsList = document.getElementById('activeProjectsList');
+    projectsList.innerHTML = (profile.active_projects || []).map((p, i) =>
+      `<div class="profile-item"><span class="item-name">${this.escapeHtml(p.name)}</span><span class="item-detail">${this.escapeHtml(p.status || 'active')}${p.alias?.length ? ' (' + p.alias.join('/') + ')' : ''}</span><button class="item-remove" data-index="${i}">×</button></div>`
+    ).join('') || '<p style="color:var(--text-secondary); font-size:13px;">暂无活跃项目</p>';
+  },
+
+  async addFrequentPerson() {
+    const name = document.getElementById('newPersonName').value.trim();
+    const relation = document.getElementById('newPersonRelation').value.trim();
+    const company = document.getElementById('newPersonCompany').value.trim();
+    if (!name) { this.showToast('请输入姓名', 'error'); return; }
+    const profile = await window.electronAPI.profile.get();
+    profile.frequent_persons = profile.frequent_persons || [];
+    profile.frequent_persons.push({ name, relation, company, freq: 1 });
+    await window.electronAPI.profile.update(profile);
+    document.getElementById('newPersonName').value = '';
+    document.getElementById('newPersonRelation').value = '';
+    document.getElementById('newPersonCompany').value = '';
+    this.loadProfileEditor(); this.showToast('人物已添加');
+  },
+
+  async removeFrequentPerson(index) {
+    const profile = await window.electronAPI.profile.get();
+    profile.frequent_persons?.splice(index, 1);
+    await window.electronAPI.profile.update(profile);
+    this.loadProfileEditor(); this.showToast('人物已移除');
+  },
+
+  async addActiveProject() {
+    const name = document.getElementById('newProjectName').value.trim();
+    const alias = document.getElementById('newProjectAlias').value.trim().split(',').map(a => a.trim()).filter(Boolean);
+    const status = document.getElementById('newProjectStatus').value;
+    if (!name) { this.showToast('请输入项目名', 'error'); return; }
+    const profile = await window.electronAPI.profile.get();
+    profile.active_projects = profile.active_projects || [];
+    profile.active_projects.push({ name, alias, status });
+    await window.electronAPI.profile.update(profile);
+    document.getElementById('newProjectName').value = '';
+    document.getElementById('newProjectAlias').value = '';
+    this.loadProfileEditor(); this.showToast('项目已添加');
+  },
+
+  async removeActiveProject(index) {
+    const profile = await window.electronAPI.profile.get();
+    profile.active_projects?.splice(index, 1);
+    await window.electronAPI.profile.update(profile);
+    this.loadProfileEditor(); this.showToast('项目已移除');
+  },
+
+  async saveProfileFromEditor() {
+    if (!window.electronAPI?.profile?.update) return;
+    const profile = await window.electronAPI.profile.get();
+    profile.user = profile.user || {};
+    profile.user.name = document.getElementById('profileName').value.trim() || profile.user.name;
+    profile.user.english_name = document.getElementById('profileEnglishName').value.trim() || profile.user.english_name;
+    profile.user.role = document.getElementById('profileRole').value.trim() || profile.user.role;
+    profile.user.industries = document.getElementById('profileIndustries').value.split(',').map(s => s.trim()).filter(Boolean);
+    profile.preferences = profile.preferences || {};
+    profile.preferences.priority_signals = document.getElementById('prioritySignals').value.split(',').map(s => s.trim()).filter(Boolean);
+    profile.preferences.low_priority_signals = document.getElementById('lowPrioritySignals').value.split(',').map(s => s.trim()).filter(Boolean);
+    await window.electronAPI.profile.update(profile);
+  },
+
+  async generateProfileSuggestions() {
+    console.log('[ProfileSuggestions] generateProfileSuggestions called');
+    const btn = document.getElementById('generateProfileSuggestionsBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 分析中...'; }
+    try {
+      if (!window.electronAPI?.profileSuggestions) {
+        console.error('[ProfileSuggestions] electronAPI.profileSuggestions not available');
+        this.showToast('画像建议功能不可用', 'error');
+        return;
+      }
+      const suggestionsEl = document.getElementById('profileSuggestions');
+      if (!suggestionsEl) {
+        console.error('[ProfileSuggestions] profileSuggestions element not found');
+        return;
+      }
+      suggestionsEl.innerHTML = '<p style="color: var(--text-secondary);">正在分析使用数据...</p>';
+      const result = await window.electronAPI.profileSuggestions();
+      console.log('[ProfileSuggestions] IPC result:', result);
+      const suggestions = result.suggestions || [];
+      if (!suggestions.length) {
+        suggestionsEl.innerHTML = '<p style="color: var(--text-secondary); font-size: 13px;">暂无建议，继续使用系统后将生成更多洞察。</p>';
+        return;
+      }
+      suggestionsEl.innerHTML = suggestions.map(s => {
+        const icon = { add_person: '👤', add_project: '📂', add_priority_signal: '⚡' }[s.type] || '💡';
+        return `<div class="suggestion-item">
+          <span class="suggestion-icon">${icon}</span>
+          <span class="suggestion-text">${this.escapeHtml(s.reason || s.suggestion || '')}</span>
+          ${s.name ? `<button class="suggestion-action" data-suggest-type="${this.escapeHtml(s.type)}" data-suggest-name="${this.escapeHtml(s.name)}">添加</button>` : ''}
+        </div>`;
+      }).join('');
+
+      // 使用事件委托代替 inline onclick
+      suggestionsEl.onclick = (e) => {
+        const actionBtn = e.target.closest('.suggestion-action');
+        if (!actionBtn) return;
+        const type = actionBtn.dataset.suggestType;
+        const name = actionBtn.dataset.suggestName;
+        if (type && name) this.applySuggestion(type, name);
+      };
+    } catch (error) {
+      console.error('[ProfileSuggestions] Error:', error);
+      const suggestionsEl = document.getElementById('profileSuggestions');
+      if (suggestionsEl) suggestionsEl.innerHTML = `<p class="error-text">生成建议失败：${this.escapeHtml(error.message)}</p>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 生成建议'; }
+    }
+  },
+
+  async applySuggestion(type, name) {
+    const profile = await window.electronAPI.profile.get();
+    if (type === 'add_person') {
+      profile.frequent_persons = profile.frequent_persons || [];
+      if (!profile.frequent_persons.find(p => p.name === name)) profile.frequent_persons.push({ name, relation: '自动识别', freq: 3 });
+    } else if (type === 'add_project') {
+      profile.active_projects = profile.active_projects || [];
+      if (!profile.active_projects.find(p => p.name === name)) profile.active_projects.push({ name, alias: [], status: 'active' });
+    } else if (type === 'add_priority_signal') {
+      profile.preferences = profile.preferences || {};
+      profile.preferences.priority_signals = profile.preferences.priority_signals || [];
+      if (!profile.preferences.priority_signals.includes(name)) profile.preferences.priority_signals.push(name);
+    }
+    await window.electronAPI.profile.update(profile);
+    this.loadProfileEditor();
+    const typeLabel = { add_person: '人物', add_project: '项目', add_priority_signal: '优先级触发词' }[type] || '项';
+    this.showToast(`已添加${typeLabel}：${name}`);
+  },
+
+  // === Prompt 文件管理 ===
+  _currentPromptFile: null,
+
+  async loadPromptFiles() {
+    if (!window.electronAPI?.promptFiles?.list) {
+      console.error('[PromptFiles] electronAPI.promptFiles.list not available');
+      return;
+    }
+    const listEl = document.getElementById('promptFileList');
+    if (!listEl) {
+      console.error('[PromptFiles] promptFileList element not found');
+      return;
+    }
+
+    try {
+      const files = await window.electronAPI.promptFiles.list();
+      console.log('[PromptFiles] Loaded', files?.length, 'files');
+      if (!files || files.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">暂无 Prompt 模板文件</div>';
+        return;
+      }
+
+      listEl.innerHTML = files.map(f => {
+        const sizeStr = f.exists ? `${(f.size / 1024).toFixed(1)} KB` : '未创建';
+        const modStr = f.modifiedAt ? `修改于 ${new Date(f.modifiedAt).toLocaleString('zh-CN')}` : '';
+        return `
+          <div class="prompt-file-card" data-filename="${this.escapeHtml(f.file)}">
+            <div class="prompt-file-icon">${f.icon}</div>
+            <div class="prompt-file-info">
+              <div class="prompt-file-name">${this.escapeHtml(f.name)}</div>
+              <div class="prompt-file-filename">${this.escapeHtml(f.file)}</div>
+              <div class="prompt-file-desc">${this.escapeHtml(f.desc)}</div>
+              <span class="prompt-file-used">用于：${this.escapeHtml(f.used_in)}</span>
+              <div class="prompt-file-meta">${sizeStr}${modStr ? ' · ' + modStr : ''}</div>
+            </div>
+            <div class="prompt-file-actions">
+              <button class="prompt-action-btn primary" data-action="edit-prompt" data-filename="${this.escapeHtml(f.file)}" title="在线编辑">✏️ 编辑</button>
+              <button class="prompt-action-btn" data-action="view-vars" data-filename="${this.escapeHtml(f.file)}" title="查看变量映射">🔖 变量</button>
+              <button class="prompt-action-btn" data-action="download-prompt" data-filename="${this.escapeHtml(f.file)}" title="下载文件">⬇️ 下载</button>
+              <button class="prompt-action-btn" data-action="upload-prompt" data-filename="${this.escapeHtml(f.file)}" title="上传替换">⬆️ 上传</button>
+              <button class="prompt-action-btn danger" data-action="reset-prompt" data-filename="${this.escapeHtml(f.file)}" title="恢复备份">🔄 恢复</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // 事件委托
+      listEl.onclick = (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const filename = btn.dataset.filename;
+        console.log('[PromptFiles] Action clicked:', action, filename);
+        switch (action) {
+          case 'edit-prompt': this.openPromptEditor(filename); break;
+          case 'view-vars': this.loadPromptVariables(filename); break;
+          case 'download-prompt': this.downloadPromptFile(filename); break;
+          case 'upload-prompt': this.triggerPromptUpload(filename); break;
+          case 'reset-prompt': this.resetPromptFile(filename); break;
+        }
+      };
+
+      // 同时加载优化器历史
+      this.loadOptimizerHistory();
+    } catch (error) {
+      listEl.innerHTML = `<div class="empty-state">加载失败：${this.escapeHtml(error.message)}</div>`;
+    }
+  },
+
+  async openPromptEditor(filename) {
+    if (!window.electronAPI?.promptFiles?.read) return;
+    this._currentPromptFile = filename;
+
+    const result = await window.electronAPI.promptFiles.read(filename);
+    if (!result.success) {
+      this.showToast('读取文件失败：' + result.error, 'error');
+      return;
+    }
+
+    // 找到对应的 meta 信息
+    const meta = await window.electronAPI.promptFiles.list();
+    const fileMeta = meta.find(m => m.file === filename) || {};
+
+    document.getElementById('promptEditorTitle').textContent = `${fileMeta.icon || '📝'} ${fileMeta.name || filename}`;
+    document.getElementById('promptEditorInfo').innerHTML = `
+      <strong>文件：</strong>${filename} · <strong>用途：</strong>${this.escapeHtml(fileMeta.desc || '')} · <strong>使用场景：</strong>${this.escapeHtml(fileMeta.used_in || '')}
+    `;
+    document.getElementById('promptFileContent').value = result.content;
+    document.getElementById('promptEditorOverlay').classList.remove('hidden');
+  },
+
+  hidePromptEditor() {
+    document.getElementById('promptEditorOverlay').classList.add('hidden');
+    this._currentPromptFile = null;
+  },
+
+  async savePromptFile() {
+    if (!this._currentPromptFile || !window.electronAPI?.promptFiles?.write) return;
+    const content = document.getElementById('promptFileContent').value;
+
+    const result = await window.electronAPI.promptFiles.write(this._currentPromptFile, content);
+    if (result.success) {
+      this.showToast('Prompt 已保存（已自动备份旧版本）');
+      this.hidePromptEditor();
+      this.loadPromptFiles();
+    } else {
+      this.showToast('保存失败：' + result.error, 'error');
+    }
+  },
+
+  async downloadPromptFile(filename) {
+    if (!window.electronAPI?.promptFiles?.download) return;
+    const result = await window.electronAPI.promptFiles.download(filename);
+    if (result.success) {
+      // 创建下载链接
+      const blob = new Blob([result.content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.showToast(`已下载 ${filename}`);
+    } else {
+      this.showToast('下载失败：' + result.error, 'error');
+    }
+  },
+
+  triggerPromptUpload(filename) {
+    this._currentPromptFile = filename;
+    const input = document.getElementById('promptFileUploadInput');
+    input.value = '';
+    input.click();
+  },
+
+  async handlePromptFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file || !this._currentPromptFile) return;
+
+    try {
+      const content = await file.text();
+      const result = await window.electronAPI.promptFiles.upload(this._currentPromptFile, content);
+      if (result.success) {
+        this.showToast(`已上传替换 ${this._currentPromptFile}（已自动备份）`);
+        this.loadPromptFiles();
+      } else {
+        this.showToast('上传失败：' + result.error, 'error');
+      }
+    } catch (error) {
+      this.showToast('读取文件失败：' + error.message, 'error');
+    }
+    this._currentPromptFile = null;
+  },
+
+  async resetPromptFile(filename) {
+    if (!confirm(`确定要恢复 ${filename} 到最近的备份版本吗？`)) return;
+    if (!window.electronAPI?.promptFiles?.reset) return;
+
+    const result = await window.electronAPI.promptFiles.reset(filename);
+    if (result.success) {
+      this.showToast(`已从备份恢复 ${filename}`);
+      this.loadPromptFiles();
+    } else {
+      this.showToast('恢复失败：' + (result.error || '无备份文件'), 'error');
+    }
+  },
+
+  // === Prompt 变量预览 ===
+  async loadPromptVariables(filename) {
+    console.log('[PromptVars] loadPromptVariables called for:', filename);
+    if (!window.electronAPI?.promptFiles?.getVariables) {
+      console.error('[PromptVars] electronAPI.promptFiles.getVariables not available');
+      return;
+    }
+    const section = document.getElementById('promptVarsSection');
+    const listEl = document.getElementById('promptVarsList');
+    if (!section || !listEl) {
+      console.error('[PromptVars] DOM elements not found:', { section: !!section, listEl: !!listEl });
+      return;
+    }
+
+    section.classList.remove('hidden');
+    listEl.innerHTML = '<div style="color: var(--text-tertiary); font-size: 12px;">加载变量中...</div>';
+
+    try {
+      const result = await window.electronAPI.promptFiles.getVariables(filename);
+      console.log('[PromptVars] IPC result:', result);
+      if (!result.success) {
+        listEl.innerHTML = `<div style="color: var(--danger-color); font-size: 12px;">加载失败：${this.escapeHtml(result.error)}</div>`;
+        return;
+      }
+
+      const vars = result.variables || [];
+      if (vars.length === 0) {
+        listEl.innerHTML = '<div style="color: var(--text-tertiary); font-size: 12px;">此模板不包含变量</div>';
+        return;
+      }
+
+      const profileVars = vars.filter(v => v.source === 'profile');
+      const autoVars = vars.filter(v => v.source === 'auto');
+
+      let html = '';
+      if (profileVars.length > 0) {
+        html += `<div style="grid-column: 1/-1; font-size:12px; font-weight:600; color: var(--text-primary); margin-top:4px;">
+          👤 来自用户画像 <span style="font-weight:400; color: var(--text-tertiary);">（在「用户画像」标签页修改）</span>
+        </div>`;
+        profileVars.forEach(v => {
+          const displayVal = Array.isArray(v.currentValue) ? v.currentValue.join(', ') || '(空)' :
+            (v.currentValue === null ? '(未设置)' : String(v.currentValue));
+          html += `
+            <div class="prompt-var-item">
+              <span class="prompt-var-name">${this.escapeHtml(v.name)}</span>
+              <span class="prompt-var-label">${this.escapeHtml(v.label)}</span>
+              <span class="var-badge profile">画像</span>
+              <span class="prompt-var-value">${this.escapeHtml(displayVal)}</span>
+            </div>`;
+        });
+      }
+      if (autoVars.length > 0) {
+        html += `<div style="grid-column: 1/-1; font-size:12px; font-weight:600; color: var(--text-primary); margin-top:8px;">
+          ⚙️ 自动填充 <span style="font-weight:400; color: var(--text-tertiary);">（运行时从系统数据生成）</span>
+        </div>`;
+        autoVars.forEach(v => {
+          const displayVal = Array.isArray(v.currentValue) ? v.currentValue.join(', ') || '(空)' :
+            (v.currentValue === null ? '(运行时填充)' : String(v.currentValue));
+          html += `
+            <div class="prompt-var-item">
+              <span class="prompt-var-name">${this.escapeHtml(v.name)}</span>
+              <span class="prompt-var-label">${this.escapeHtml(v.label)}</span>
+              <span class="var-badge auto">自动</span>
+              <span class="prompt-var-value">${this.escapeHtml(displayVal)}</span>
+            </div>`;
+        });
+      }
+      listEl.innerHTML = html;
+    } catch (error) {
+      listEl.innerHTML = `<div style="color: var(--danger-color); font-size: 12px;">加载失败：${this.escapeHtml(error.message)}</div>`;
+    }
+  },
+
+  // === 优化器历史记录 ===
+  async loadOptimizerHistory() {
+    if (!window.electronAPI?.optimizer?.history) return;
+    const listEl = document.getElementById('optimizerHistoryList');
+    if (!listEl) return;
+
+    try {
+      const result = await window.electronAPI.optimizer.history();
+      const history = result.history || [];
+      if (history.length === 0) {
+        listEl.innerHTML = '<p style="color: var(--text-secondary); font-size: 13px;">暂无优化记录。运行优化器后，历史记录将出现在这里。</p>';
+        return;
+      }
+
+      listEl.innerHTML = history.map(h => {
+        const improvement = h.improvement || 0;
+        const impClass = improvement >= 0.05 ? 'improved' : improvement >= 0 ? '' : 'declined';
+        const impSign = improvement >= 0 ? '+' : '';
+        const moduleLabel = { task_recognition: '任务识别', memory_extraction: '记忆提取' }[h.module] || h.module;
+        const timeStr = h.timestamp ? new Date(h.timestamp).toLocaleString('zh-CN') : '';
+        const failCount = (h.failure_patterns || []).length;
+        const impCount = (h.improvements || []).length;
+        const changeSummary = (h.improvements || []).slice(0, 2).map(i =>
+          `<div class="change-item">→ [${this.escapeHtml(i.target_section || '')}] ${this.escapeHtml(i.rationale || '')}</div>`
+        ).join('');
+
+        return `
+          <div class="optimizer-history-card" data-report="${this.escapeHtml(h.reportFile)}" data-prompt="${this.escapeHtml(h.promptFile)}">
+            <div class="opt-history-top">
+              <span class="opt-history-module">${moduleLabel} · ${this.escapeHtml(h.old_version || '')} → ${this.escapeHtml(h.new_version || '')}</span>
+              <span class="opt-history-time">${timeStr}</span>
+            </div>
+            <div class="opt-history-stats">
+              <span class="opt-stat"><span class="opt-stat-label">训练/测试：</span><span class="opt-stat-value">${h.train_size || 0}/${h.test_size || 0}</span></span>
+              <span class="opt-stat"><span class="opt-stat-label">旧通过率：</span><span class="opt-stat-value">${((h.old_pass_rate || 0) * 100).toFixed(1)}%</span></span>
+              <span class="opt-stat"><span class="opt-stat-label">新通过率：</span><span class="opt-stat-value ${impClass}">${((h.new_pass_rate || 0) * 100).toFixed(1)}%</span></span>
+              <span class="opt-stat"><span class="opt-stat-label">提升：</span><span class="opt-stat-value ${impClass}">${impSign}${(improvement * 100).toFixed(1)}%</span></span>
+              <span class="opt-stat"><span class="opt-stat-label">失败模式：</span><span class="opt-stat-value">${failCount}个</span></span>
+              <span class="opt-stat"><span class="opt-stat-label">改进项：</span><span class="opt-stat-value">${impCount}项</span></span>
+            </div>
+            ${changeSummary ? `<div class="opt-history-changes">${changeSummary}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      listEl.onclick = (e) => {
+        const card = e.target.closest('.optimizer-history-card');
+        if (!card) return;
+        this.showOptimizerDetail(card.dataset.report, card.dataset.prompt);
+      };
+    } catch (error) {
+      listEl.innerHTML = `<p style="color: var(--danger-color); font-size: 13px;">加载历史失败：${this.escapeHtml(error.message)}</p>`;
+    }
+  },
+
+  // === 优化器详情 ===
+  _currentOptCandidate: null,
+
+  async showOptimizerDetail(reportFile, promptFile) {
+    if (!window.electronAPI?.optimizer) return;
+    this._currentOptCandidate = promptFile;
+
+    try {
+      const [reportResult, candidateResult] = await Promise.all([
+        window.electronAPI.optimizer.readReport(reportFile),
+        promptFile ? window.electronAPI.optimizer.readCandidate(promptFile) : Promise.resolve({ success: false })
+      ]);
+
+      const report = reportResult.report || {};
+      const candidateContent = candidateResult.content || '';
+      const moduleLabel = { task_recognition: '任务识别', memory_extraction: '记忆提取' }[report.module] || report.module;
+      const improvement = report.improvement || 0;
+
+      document.getElementById('optimizerDetailTitle').textContent = `🧬 优化详情 · ${moduleLabel}`;
+
+      let bodyHtml = '';
+
+      // 输入信息
+      bodyHtml += `<div class="opt-detail-section">
+        <h5>📥 输入信息</h5>
+        <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.8;">
+          <div><strong>模块：</strong>${moduleLabel}</div>
+          <div><strong>旧版本：</strong>${this.escapeHtml(report.old_version || '')}</div>
+          <div><strong>新版本：</strong>${this.escapeHtml(report.new_version || '')}</div>
+          <div><strong>Bad Case 数量：</strong>${report.bad_cases_used || 0}（训练 ${report.train_size || 0} / 测试 ${report.test_size || 0}）</div>
+          <div><strong>运行时间：</strong>${report.timestamp ? new Date(report.timestamp).toLocaleString('zh-CN') : ''}</div>
+        </div>
+      </div>`;
+
+      // 失败模式
+      if (report.failure_patterns?.length) {
+        bodyHtml += `<div class="opt-detail-section">
+          <h5>🔍 识别的失败模式</h5>
+          ${report.failure_patterns.map((p, i) => `
+            <div class="opt-detail-failure">
+              <strong>${i + 1}. ${this.escapeHtml(p.pattern || '')}</strong>
+              <div style="margin-top: 4px;">根因：${this.escapeHtml(p.root_cause || '')}</div>
+            </div>
+          `).join('')}
+        </div>`;
+      }
+
+      // 改进项
+      if (report.improvements?.length) {
+        bodyHtml += `<div class="opt-detail-section">
+          <h5>🔧 优化改进项</h5>
+          ${report.improvements.map((imp, i) => `
+            <div class="opt-detail-improvement">
+              <div class="imp-section">${i + 1}. [${this.escapeHtml(imp.target_section || '')}]</div>
+              <div style="margin-top: 2px;">${this.escapeHtml(imp.rationale || '')}</div>
+              ${imp.old_text ? `<div style="margin-top:4px; font-size:11px; color: var(--text-tertiary);">旧：<code style="background: rgba(255,59,48,0.06); padding: 1px 4px; border-radius:3px;">${this.escapeHtml(imp.old_text.substring(0, 100))}</code></div>` : ''}
+              ${imp.new_text ? `<div style="margin-top:2px; font-size:11px; color: var(--text-tertiary);">新：<code style="background: rgba(52,199,89,0.06); padding: 1px 4px; border-radius:3px;">${this.escapeHtml(imp.new_text.substring(0, 100))}</code></div>` : ''}
+            </div>
+          `).join('')}
+        </div>`;
+      }
+
+      // 评测结果
+      bodyHtml += `<div class="opt-detail-section">
+        <h5>📊 评测对比</h5>
+        <div style="font-size: 12px; display: flex; gap: 20px;">
+          <div><strong>旧版通过率：</strong>${((report.old_pass_rate || 0) * 100).toFixed(1)}%</div>
+          <div><strong>新版通过率：</strong><span style="color: ${improvement >= 0.05 ? '#34C759' : improvement >= 0 ? 'var(--text-primary)' : '#FF3B30'}">${((report.new_pass_rate || 0) * 100).toFixed(1)}%</span></div>
+          <div><strong>提升：</strong><span style="color: ${improvement >= 0.05 ? '#34C759' : improvement >= 0 ? 'var(--text-primary)' : '#FF3B30'}">${improvement >= 0 ? '+' : ''}${(improvement * 100).toFixed(1)}%</span></div>
+        </div>
+        ${report.expected_improvements ? `<div style="margin-top: 6px; font-size: 12px; color: var(--text-secondary);"><strong>预期改进：</strong>${this.escapeHtml(report.expected_improvements)}</div>` : ''}
+      </div>`;
+
+      // 新版 Prompt（可编辑）
+      if (candidateContent) {
+        bodyHtml += `<div class="opt-detail-section">
+          <h5>📝 优化后的 Prompt <span style="font-weight: 400; color: var(--text-tertiary); font-size: 12px;">（可直接编辑调整后应用）</span></h5>
+          <textarea id="optimizerCandidateContent" style="width:100%; min-height:200px; padding:10px; border-radius:8px; border:1px solid var(--border-color); font-family:'SF Mono','Menlo',monospace; font-size:12px; line-height:1.5; resize:vertical;">${this.escapeHtml(candidateContent)}</textarea>
+        </div>`;
+      }
+
+      document.getElementById('optimizerDetailBody').innerHTML = bodyHtml;
+
+      // Footer 按钮
+      const footerEl = document.getElementById('optimizerDetailFooter');
+      footerEl.innerHTML = '';
+      if (candidateContent) {
+        const applyBtn = document.createElement('button');
+        applyBtn.className = 'btn primary';
+        applyBtn.textContent = '✅ 应用到主模板';
+        applyBtn.onclick = () => this.applyOptimizerToMain(promptFile);
+        footerEl.appendChild(applyBtn);
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn secondary';
+        saveBtn.textContent = '💾 保存修改到候选';
+        saveBtn.onclick = () => this.saveOptimizerCandidateEdits(promptFile);
+        footerEl.appendChild(saveBtn);
+      }
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'btn secondary';
+      cancelBtn.textContent = '关闭';
+      cancelBtn.onclick = () => this.hideOptimizerDetail();
+      footerEl.appendChild(cancelBtn);
+
+      document.getElementById('optimizerDetailOverlay').classList.remove('hidden');
+    } catch (error) {
+      this.showToast('加载优化详情失败：' + error.message, 'error');
+    }
+  },
+
+  hideOptimizerDetail() {
+    document.getElementById('optimizerDetailOverlay')?.classList.add('hidden');
+    this._currentOptCandidate = null;
+  },
+
+  async applyOptimizerToMain(candidateFilename) {
+    if (!window.electronAPI?.optimizer?.applyToMain) return;
+    if (!confirm('确定要将此优化版本应用到主模板文件吗？主文件将被替换（旧版本自动备份）。')) return;
+
+    const result = await window.electronAPI.optimizer.applyToMain(candidateFilename);
+    if (result.success) {
+      this.showToast(`已应用到主模板 ${result.targetFile}（旧版本已备份）`);
+      this.hideOptimizerDetail();
+      this.loadPromptFiles();
+    } else {
+      this.showToast('应用失败：' + (result.error || ''), 'error');
+    }
+  },
+
+  async saveOptimizerCandidateEdits(candidateFilename) {
+    if (!window.electronAPI?.promptFiles?.write) return;
+    const textarea = document.getElementById('optimizerCandidateContent');
+    if (!textarea) return;
+    const content = textarea.value;
+
+    // 写入候选文件
+    const result = await window.electronAPI.promptFiles.write(candidateFilename, content);
+    if (result.success) {
+      this.showToast('候选 Prompt 已保存');
+    } else {
+      this.showToast('保存失败：' + (result.error || ''), 'error');
+    }
   }
 };
 

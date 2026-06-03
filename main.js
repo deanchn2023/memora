@@ -1,4 +1,11 @@
 const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage } = require('electron');
+
+// 单实例锁：防止多个 Electron 实例同时运行（避免疯狂开窗口）
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  // 如果已有实例在运行，直接退出
+  app.quit();
+}
 const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
@@ -12,7 +19,7 @@ let isAnalyzing = false; // 防止并发分析
 let processedClipboardHashes = new Set();
 const MAX_CLIPBOARD_HASHES = 500; // 限制哈希记录数量防止内存膨胀
 
-// 数据库层（lowdb）
+// 数据库层（JSON文件存储）
 const { Database } = require('./src/scripts/database');
 let db;
 
@@ -46,6 +53,109 @@ let notebook;
 // Prompt 引擎
 const PromptEngine = require('./src/scripts/promptEngine');
 const promptEngine = new PromptEngine();
+
+// 打包后 prompts 需要可写，使用 userData 目录
+const PROMPT_DIR = path.join(app.getPath('userData'), 'prompts');
+
+// 初始化 prompts 目录：首次运行时从内置 prompts 复制到 userData
+function initPrompts() {
+  if (!fs.existsSync(PROMPT_DIR)) {
+    fs.mkdirSync(PROMPT_DIR, { recursive: true });
+    console.log('[Prompts] Created prompt directory:', PROMPT_DIR);
+  }
+  // 从内置 prompts 复制默认文件（不覆盖已有文件）
+  const builtinDir = path.join(__dirname, 'prompts');
+  if (fs.existsSync(builtinDir)) {
+    const files = fs.readdirSync(builtinDir);
+    for (const file of files) {
+      const src = path.join(builtinDir, file);
+      const dest = path.join(PROMPT_DIR, file);
+      if (!fs.existsSync(dest) && fs.statSync(src).isFile()) {
+        fs.copyFileSync(src, dest);
+        console.log('[Prompts] Copied default:', file);
+      }
+    }
+    // 复制子目录（如 backups, candidates）
+    for (const subdir of ['backups', 'candidates']) {
+      const srcSub = path.join(builtinDir, subdir);
+      const destSub = path.join(PROMPT_DIR, subdir);
+      if (fs.existsSync(srcSub) && !fs.existsSync(destSub)) {
+        fs.mkdirSync(destSub, { recursive: true });
+        const subFiles = fs.readdirSync(srcSub);
+        for (const f of subFiles) {
+          const sf = path.join(srcSub, f);
+          const df = path.join(destSub, f);
+          if (fs.statSync(sf).isFile() && !fs.existsSync(df)) {
+            fs.copyFileSync(sf, df);
+          }
+        }
+        console.log('[Prompts] Copied subdir:', subdir);
+      }
+    }
+  }
+}
+
+// 获取 scripts 目录的正确路径（打包后需要从 asar.unpacked 读取）
+function getScriptPath(relativePath) {
+  if (app.isPackaged) {
+    const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', relativePath);
+    if (fs.existsSync(unpackedPath)) return unpackedPath;
+  }
+  return path.join(__dirname, relativePath);
+}
+
+// 获取资源文件路径（图标等，打包后需要从 asar.unpacked 读取）
+function getResourcePath(relativePath) {
+  if (app.isPackaged) {
+    const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', relativePath);
+    if (fs.existsSync(unpackedPath)) return unpackedPath;
+  }
+  return path.join(__dirname, relativePath);
+}
+
+// 初始化 memory/notebook 数据目录（打包后从 ASAR 内迁移已有数据到 userData）
+function initDataDirectories() {
+  if (!app.isPackaged) return; // 开发模式不需要迁移
+  
+  const userData = app.getPath('userData');
+  const asarSrc = __dirname; // ASAR 内部路径（只读）
+  
+  // 迁移 memory 目录
+  const memoryDest = path.join(userData, 'memory');
+  const memorySrc = path.join(asarSrc, 'src', 'scripts', 'memory');
+  if (!fs.existsSync(memoryDest) && fs.existsSync(memorySrc)) {
+    try {
+      fs.mkdirSync(memoryDest, { recursive: true });
+      const files = fs.readdirSync(memorySrc);
+      for (const file of files) {
+        const srcFile = path.join(memorySrc, file);
+        const destFile = path.join(memoryDest, file);
+        if (fs.statSync(srcFile).isFile() && !fs.existsSync(destFile)) {
+          fs.copyFileSync(srcFile, destFile);
+          console.log('[Data] Migrated memory file:', file);
+        }
+      }
+    } catch (e) { console.error('[Data] Failed to migrate memory:', e); }
+  }
+  
+  // 迁移 notebook 目录
+  const notebookDest = path.join(userData, 'notebook');
+  const notebookSrc = path.join(asarSrc, 'src', 'scripts', 'notebook');
+  if (!fs.existsSync(notebookDest) && fs.existsSync(notebookSrc)) {
+    try {
+      fs.mkdirSync(notebookDest, { recursive: true });
+      const files = fs.readdirSync(notebookSrc);
+      for (const file of files) {
+        const srcFile = path.join(notebookSrc, file);
+        const destFile = path.join(notebookDest, file);
+        if (fs.statSync(srcFile).isFile() && !fs.existsSync(destFile)) {
+          fs.copyFileSync(srcFile, destFile);
+          console.log('[Data] Migrated notebook file:', file);
+        }
+      }
+    } catch (e) { console.error('[Data] Failed to migrate notebook:', e); }
+  }
+}
 
 // === FeedbackLogger 反馈闭环系统 ===
 class FeedbackLogger {
@@ -268,10 +378,20 @@ function getAPIConfig() {
 const DEFAULT_AI_PROMPT = `你是一个任务识别AI。
 你的目标：从用户复制到剪切板的文本中，判断用户是否是在表达一个"未来需要执行的事项"。
 
-只有满足以下条件才识别为任务：
-1. 存在明确行动（如：发送、完成、回复、处理、联系等）
-2. 存在未来时间或隐含待办
+识别为任务的强信号（命中任一即优先判定为任务）：
+- @提及 + 行动要求（如"@XX 你收集一下"、"@XX 安排"）
+- 编号列表 + 行动描述（如"1）报价审批流程太重... 2）标前评审..."）
+
+满足以下条件也识别为任务：
+1. 存在明确或隐含行动（如：发送、完成、回复、处理、联系、收集、反馈、整理、梳理、简化、评审、确认、跟进等）
+2. 存在未来时间或隐含待办（需要、记得、看看怎么、想想怎么等）
 3. 用户可能希望被提醒
+
+间接待办也必须识别：
+- "我们需要整理一下" → 是待办
+- "大家有问题反馈到XX这里" → 是待办
+- "看看怎么简化" → 是待办
+- "找大家收集一下" → 是待办
 
 不要把以下内容识别成任务：
 - 普通聊天
@@ -294,6 +414,7 @@ const DEFAULT_AI_PROMPT = `你是一个任务识别AI。
   },
   "priority": "medium",
   "tags": ["工作","客户"],
+  "is_valid_info": true,
   "reason": "包含明确行动和时间"
 }
 
@@ -301,6 +422,7 @@ const DEFAULT_AI_PROMPT = `你是一个任务识别AI。
 {
   "is_task": false,
   "confidence": 0.95,
+  "is_valid_info": false,
   "reason": "只是普通聊天"
 }
 
@@ -310,27 +432,47 @@ const DEFAULT_AI_PROMPT = `你是一个任务识别AI。
 - 时间不明确时normalized为null
 - confidence必须0~1之间
 - 只输出JSON，不要有其他内容
+- @提及 + 行动要求 → is_task=true, confidence >= 0.9
+- 编号列表 + 行动描述 → is_task=true, confidence >= 0.85
 
 示例1（输入）：明天下午三点提醒我给客户发合同
-示例1（输出）：{"is_task":true,"confidence":0.98,"title":"给客户发合同","description":"提醒用户给客户发送合同","time":{"raw":"明天下午三点","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"reason":"存在明确行动与具体时间"}
+示例1（输出）：{"is_task":true,"confidence":0.98,"title":"给客户发合同","description":"提醒用户给客户发送合同","time":{"raw":"明天下午三点","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"is_valid_info":true,"reason":"存在明确行动与具体时间"}
 
 示例2（输入）：下周找房东续租
-示例2（输出）：{"is_task":true,"confidence":0.91,"title":"联系房东续租","description":"用户需要处理续租事项","time":{"raw":"下周","normalized":null,"is_all_day":false},"priority":"medium","tags":["生活"],"reason":"存在未来待办事项"}
+示例2（输出）：{"is_task":true,"confidence":0.91,"title":"联系房东续租","description":"用户需要处理续租事项","time":{"raw":"下周","normalized":null,"is_all_day":false},"priority":"medium","tags":["生活"],"is_valid_info":true,"reason":"存在未来待办事项"}
 
 示例3（输入）：特朗普访问中国可能利好稀土板块
-示例3（输出）：{"is_task":false,"confidence":0.96,"reason":"新闻观点，不是用户待办"}
+示例3（输出）：{"is_task":false,"confidence":0.96,"is_valid_info":false,"reason":"新闻观点，不是用户待办"}
 
 示例4（输入）：周五之前把PPT做完
-示例4（输出）：{"is_task":true,"confidence":0.97,"title":"完成PPT","description":"用户需要在周五前完成PPT","time":{"raw":"周五之前","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"reason":"明确待办和截止时间"}
+示例4（输出）：{"is_task":true,"confidence":0.97,"title":"完成PPT","description":"用户需要在周五前完成PPT","time":{"raw":"周五之前","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"is_valid_info":true,"reason":"明确待办和截止时间"}
 
-示例5（输入）：下午有2份PPT：1、我们专场：ADP 4.0升级+demo+跨行业案例 2、katy行业专场：ADP 4.0升级+demo+零售+四部案例
-示例5（输出）：{"is_task":true,"confidence":0.95,"title":"准备2份PPT材料","description":"下午需要准备两份PPT：我们专场和katy行业专场","time":{"raw":"下午","normalized":null,"is_all_day":false},"priority":"high","tags":["工作","PPT"],"reason":"包含明确待办事项"}
+示例5（输入）：另外昨天跟强总反馈了流程问题，我们需要整理一下，@Dean 你找大家收集一下流程上的问题，我们看看怎么简化。比如 1）报价审批流程太重，每个价格都要审批 2）标前评审流程重，标品也要评审 3）进入中标后的项目，架构师还要花很多精力跟进
+示例5（输出）：{"is_task":true,"confidence":0.95,"title":"收集整理流程问题并简化","description":"@Dean找大家收集流程问题，看看怎么简化：1）报价审批流程太重 2）标前评审流程重 3）架构师跟进精力大","time":{"raw":null,"normalized":null,"is_all_day":false},"priority":"high","tags":["工作","流程"],"is_valid_info":true,"reason":"@提及+行动要求+编号列表，强待办信号"}
 
-示例6（输入）：【工作流】代码节点图片URL无法传递到大模型节点视觉输入
-示例6（输出）：{"is_task":true,"confidence":0.93,"title":"处理工作流图片URL问题","description":"工作流问题：代码节点图片URL无法传递到大模型节点视觉输入","time":{"raw":null,"normalized":null,"is_all_day":false},"priority":"high","tags":["工作","技术"],"reason":"问题反馈类待办事项"}`;
+示例6（输入）：下午有2份PPT：1、我们专场：ADP 4.0升级+demo+跨行业案例 2、katy行业专场：ADP 4.0升级+demo+零售+四部案例
+示例6（输出）：{"is_task":true,"confidence":0.95,"title":"准备2份PPT材料","description":"下午需要准备两份PPT：我们专场和katy行业专场","time":{"raw":"下午","normalized":null,"is_all_day":false},"priority":"high","tags":["工作","PPT"],"is_valid_info":true,"reason":"包含明确待办事项"}`;
 
-// 获取当前使用的Prompt（从设置或默认）
+// 获取当前使用的Prompt（优先读取 .md 模板文件，回退到设置或默认）
 function getCurrentAIPrompt() {
+  // 优先读取模板文件
+  const templatePath = path.join(PROMPT_DIR, 'task_recognition_v2.0.md');
+  if (fs.existsSync(templatePath)) {
+    try {
+      let content = fs.readFileSync(templatePath, 'utf8');
+      // 移除模板变量标记，替换为实际值（剪贴板分析场景没有完整上下文）
+      const profile = loadProfile();
+      content = content.replace(/\{\{user_profile\.name\}\}/g, profile.user?.name || '用户')
+                       .replace(/\{\{user_profile\.english_name\}\}/g, profile.user?.english_name || '')
+                       .replace(/\{\{user_profile\.role\}\}/g, profile.user?.role || '')
+                       .replace(/\{\{current_time\}\}/g, new Date().toLocaleString('zh-CN'))
+                       .replace(/\{\{#each user_profile\.industries\}\}\{\{this\}\}\{\{#unless @last\}\}、\{\{\/unless\}\}\{\{\/each\}\}/g, (profile.user?.industries || []).join('、'));
+      return content;
+    } catch (e) {
+      console.error('[Prompt] Failed to read task_recognition_v2.0.md:', e);
+    }
+  }
+  // 回退到设置或默认
   if (db) {
     const settings = db.getSettings();
     return settings.ai_prompt || DEFAULT_AI_PROMPT;
@@ -338,8 +480,23 @@ function getCurrentAIPrompt() {
   return getSetting('ai_prompt') || DEFAULT_AI_PROMPT;
 }
 
-// 获取当前使用的记忆提取Prompt（从设置或默认）
+// 获取当前使用的记忆提取Prompt（优先读取 .md 模板文件，回退到设置或默认）
 function getCurrentMemoryPrompt() {
+  const templatePath = path.join(PROMPT_DIR, 'memory_extraction_v2.0.md');
+  if (fs.existsSync(templatePath)) {
+    try {
+      let content = fs.readFileSync(templatePath, 'utf8');
+      const profile = loadProfile();
+      content = content.replace(/\{\{user_profile\.name\}\}/g, profile.user?.name || '用户')
+                       .replace(/\{\{user_profile\.english_name\}\}/g, profile.user?.english_name || '')
+                       .replace(/\{\{user_profile\.role\}\}/g, profile.user?.role || '')
+                       .replace(/\{\{current_time\}\}/g, new Date().toLocaleString('zh-CN'))
+                       .replace(/\{\{#each user_profile\.industries\}\}\{\{this\}\}\{\{#unless @last\}\}、\{\{\/unless\}\}\{\{\/each\}\}/g, (profile.user?.industries || []).join('、'));
+      return content;
+    } catch (e) {
+      console.error('[Prompt] Failed to read memory_extraction_v2.0.md:', e);
+    }
+  }
   if (db) {
     const settings = db.getSettings();
     return settings.memory_prompt || DEFAULT_MEMORY_EXTRACTION_PROMPT;
@@ -379,6 +536,7 @@ const FILTER_CONFIG = {
   
   // 白名单关键词（更可能是任务）
   whitelistPatterns: [
+    // 行动动词
     /提醒/i,
     /记得/i,
     /需要/i,
@@ -402,15 +560,50 @@ const FILTER_CONFIG = {
     /汇报/i,
     /开会/i,
     /会议/i,
+    /收集/i,
+    /反馈/i,
+    /简化/i,
+    /评审/i,
+    /确认/i,
+    /讨论/i,
+    /沟通/i,
+    /梳理/i,
+    /优化/i,
+    /推动/i,
+    /落实/i,
+    /执行/i,
+    /部署/i,
+    /上线/i,
+    /推动/i,
+    /推进/i,
+    /协调/i,
+    /汇总/i,
+    /统计/i,
+    /分析/i,
+    /调研/i,
+    // 时间词
     /周五之前/i,
     /明天/i,
     /今天/i,
     /下周/i,
     /月底/i,
     /年底/i,
+    /之前/i,
+    /之前完成/i,
+    /尽快/i,
+    /尽早/i,
+    /来得及/i,
+    // 标签
     /【工作流】/i,
     /【任务】/i,
-    /【待办】/i
+    /【待办】/i,
+    // @提及（强待办信号）
+    /@\S+/,
+    // 编号列表（1）2）3）等格式，典型任务列表）
+    /\d+[）\).]\s*/,
+    // 看看怎么/想想怎么（隐含待办）
+    /看看怎么/i,
+    /想想怎么/i
   ]
 };
 
@@ -435,10 +628,18 @@ function preClassify(text) {
   
   // 4. 检查是否看起来像任务（白名单匹配）
   let hasWhitelistMatch = false;
+  let matchedPatterns = [];
+  let hasAtMention = false;
+  let hasNumberedList = false;
+  
   for (const pattern of FILTER_CONFIG.whitelistPatterns) {
     if (pattern.test(text)) {
       hasWhitelistMatch = true;
-      break;
+      matchedPatterns.push(pattern.toString());
+      // 检测 @提及（强信号）
+      if (pattern.source === /@\S+/.source) hasAtMention = true;
+      // 检测编号列表（强信号）
+      if (pattern.source === /\d+[）\).]\s*/.source) hasNumberedList = true;
     }
   }
   
@@ -450,11 +651,19 @@ function preClassify(text) {
     };
   }
   
-  return { shouldAnalyze: true, reason: '通过预分类' };
+  const matchInfo = hasAtMention ? '含@提及' : hasNumberedList ? '含编号列表' : '关键词匹配';
+  console.log('[PreClassify] Whitelist matched:', matchedPatterns.join(', '), '- Signal:', matchInfo);
+  
+  return { 
+    shouldAnalyze: true, 
+    reason: `通过预分类（${matchInfo}）`,
+    hasAtMention,
+    hasNumberedList
+  };
 }
 
 function createWindow() {
-  const iconPath = path.join(__dirname, 'resources', 'icon.png');
+  const iconPath = getResourcePath('resources/icon.png');
   let icon;
   try {
     icon = nativeImage.createFromPath(iconPath);
@@ -482,6 +691,8 @@ function createWindow() {
   });
   
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
+  // DevTools: 使用 Ctrl+Shift+I 打开，或取消下面这行自动打开
+  // mainWindow.webContents.openDevTools({ mode: 'detach' });
   
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -502,7 +713,7 @@ function createWindow() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'resources', 'icon.png');
+  const iconPath = getResourcePath('resources/icon.png');
   let trayIcon;
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
@@ -651,6 +862,11 @@ function saveSettings() {
   }
 }
 
+function deleteSetting(key) {
+  delete settingsCache[key];
+  saveSettings();
+}
+
 // 设置AI每日调用限制
 function setAIDailyLimit(limit) {
   AI_DAILY_LIMIT = limit;
@@ -734,6 +950,15 @@ async function analyzeClipboardText(text) {
     // 获取API配置
     const apiConfig = getAPIConfig();
     
+    // 构建用户提示词，附带预分类信号
+    let userPrompt = `分析以下文本是否包含待办事项：\n\n${text}`;
+    if (preResult.hasAtMention) {
+      userPrompt += '\n\n[预分类信号：检测到@提及，这通常是强待办信号]';
+    }
+    if (preResult.hasNumberedList) {
+      userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
+    }
+    
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -749,7 +974,7 @@ async function analyzeClipboardText(text) {
           },
           {
             role: 'user',
-            content: `分析以下文本是否包含待办事项：\n\n${text}`
+            content: userPrompt
           }
         ]
       })
@@ -1022,7 +1247,7 @@ function showNotification(title, body) {
     const notification = new Notification({
       title: title,
       body: body,
-      icon: path.join(__dirname, 'resources', 'icon.png'),
+      icon: getResourcePath('resources/icon.png'),
       sound: 'default'
     });
     notification.show();
@@ -1042,6 +1267,15 @@ ipcMain.handle('analyze-task', async (event, text) => {
       return { success: false, error: '每日调用次数已达上限' };
     }
     
+    const preResult = preClassify(text);
+    let userPrompt = `分析以下文本是否包含待办事项：\n\n${text}`;
+    if (preResult.hasAtMention) {
+      userPrompt += '\n\n[预分类信号：检测到@提及，这通常是强待办信号]';
+    }
+    if (preResult.hasNumberedList) {
+      userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
+    }
+    
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -1057,7 +1291,7 @@ ipcMain.handle('analyze-task', async (event, text) => {
           },
           {
             role: 'user',
-            content: `分析以下文本是否包含待办事项：\n\n${text}`
+            content: userPrompt
           }
         ]
       })
@@ -1124,10 +1358,21 @@ ipcMain.handle('analyze-clipboard', async (event, text) => {
 - 普通聊天、感慨、纯新闻资讯、广告、灌水内容
 
 ## 三、待办任务判定（is_task=true）
-必须**同时满足**：
-1. 有**明确行动动词**：发送、完成、回复、处理、联系、准备、提交、修复、跟进等
-2. 有**未来时间 / 隐含待办**（明天、下周、周五之前、后续、需要、记得等）
+
+满足以下**任一强信号**即可判定为待办：
+- **@提及 + 行动要求**：如"@Dean 你收集一下"、"@XX 安排" → **强制 is_task=true**
+- **编号列表 + 行动描述**：如"1）报价审批流程太重... 2）标前评审..." → **强制 is_task=true**
+
+或**同时满足**以下条件：
+1. 有**明确或隐含行动动词**：发送、完成、回复、处理、联系、准备、提交、修复、跟进、收集、反馈、整理、梳理、简化、评审、确认、讨论、沟通、优化、推动、落实、执行、部署、汇总、调研、安排等
+2. 有**未来时间 / 隐含待办**（明天、下周、周五之前、后续、需要、记得、看看怎么、想想怎么等）
 3. 属于**需要执行/跟进/提醒**的事项
+
+**间接待办识别**（重要！）：
+- "我们需要整理" → 是待办（隐含"要去做"）
+- "大家有问题反馈到XX这里" → 是待办（隐含行动指令）
+- "看看怎么简化" → 是待办（隐含需要做简化这件事）
+- "找大家收集" → 是待办（明确行动动词+对象）
 
 **不视为任务**：
 - 普通聊天、文章段落、感慨评论、新闻资讯
@@ -1197,7 +1442,9 @@ ipcMain.handle('analyze-clipboard', async (event, text) => {
 - **title 严格 ≤20 字**，能短则短
 - **时间不绝对明确时，normalized 强制为 null，禁止编造**
 - confidence 必须在 **0–1** 之间，保留 2 位小数
-- 遇到 **@朱从坤 / @Dean** → **is_valid_info=true**，并优先视为待办`;
+- 遇到 **@朱从坤 / @Dean** → **is_valid_info=true**，并优先视为待办
+- 遇到 **@任何人 + 行动要求** → **is_task=true, confidence >= 0.9**
+- 遇到 **编号列表（1）2）3）等）+ 行动描述** → **is_task=true, confidence >= 0.85**`;
 
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -1664,7 +1911,7 @@ ipcMain.handle('extract-memory', async (event, content) => {
       return { success: false, error: '每日调用次数已达上限' };
     }
     
-    const prompt = getSetting('memory_prompt', DEFAULT_MEMORY_EXTRACTION_PROMPT);
+    const prompt = getCurrentMemoryPrompt();
     
     console.log('[Memory] Calling API with content length:', content.length);
     
@@ -1865,6 +2112,15 @@ ipcMain.on('window-close', () => {
   mainWindow.hide();
 });
 
+// 当第二个实例尝试启动时，聚焦已有窗口
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 app.whenReady().then(() => {
   console.log('[App] Starting 忆境 Memora...');
   
@@ -1872,6 +2128,14 @@ app.whenReady().then(() => {
   db = new Database(app.getPath('userData'));
   db.init();
   console.log('[Database] Database initialized');
+  
+  // 初始化 prompts 目录（从内置目录复制到 userData，确保可写）
+  initPrompts();
+  console.log('[Prompts] Prompt directory initialized:', PROMPT_DIR);
+  
+  // 初始化 memory/notebook 数据目录（打包后需要从 ASAR 内迁移已有数据到 userData）
+  initDataDirectories();
+  console.log('[Data] Data directories initialized');
   
   // 初始化 i18n
   const savedLocale = db.getSettings().locale || 'zh-CN';
@@ -1901,6 +2165,11 @@ app.whenReady().then(() => {
   startAutoBackup();
   console.log('[App] Auto backup scheduled');
 
+  // Phase 3: 每周优化器检查
+  checkWeeklyOptimizer();
+  // 每小时检查一次是否需要运行优化器
+  setInterval(checkWeeklyOptimizer, 60 * 60 * 1000);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -1924,7 +2193,7 @@ app.on('before-quit', () => {
   }
   // 保存数据库
   if (db) {
-    db.save().catch(e => console.error('[Database] Save on quit failed:', e));
+    try { db.save(); } catch (e) { console.error('[Database] Save on quit failed:', e); }
   }
 });
 
@@ -1989,7 +2258,7 @@ ipcMain.handle('db-import-data', async (event, jsonString) => {
 let childWindows = new Map();
 
 function createChildWindow(type, options = {}) {
-  const iconPath = path.join(__dirname, 'resources', 'icon.png');
+  const iconPath = getResourcePath('resources/icon.png');
   let icon;
   try {
     icon = nativeImage.createFromPath(iconPath);
@@ -2105,19 +2374,16 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType }) => {
     const apiConfig = getAPIConfig();
     if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
 
-    const profilePath = path.join(app.getPath('userData'), 'profile.json');
-    let profile = getDefaultProfile();
-    try { if (fs.existsSync(profilePath)) profile = JSON.parse(fs.readFileSync(profilePath, 'utf8')); } catch (e) {}
-
-    let intent = agentType || await classifyIntent(query);
-    const context = await retrieveContext(query, intent);
-
-    const promptBuilders = { priority: buildPriorityPrompt, knowledge: buildKnowledgePrompt, memory: buildMemoryPrompt, report: buildReportPrompt };
-    const systemPrompt = (promptBuilders[intent] || buildChatPrompt)(profile, context);
+    const profile = loadProfile();
+    let intent = agentType || classifyIntent(query);
+    const context = await retrieveContext(query, intent, profile);
+    const positiveExamples = getFeedbackExamples(intent, 'accept', 3);
+    const negativeExamples = getFeedbackExamples(intent, 'reject', 2);
 
     const traceId = feedbackLogger.newTraceId();
-    const startTs = Date.now();
+    const systemPrompt = buildAgentPrompt(intent, profile, context, positiveExamples, negativeExamples, traceId);
 
+    const startTs = Date.now();
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -2130,52 +2396,647 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType }) => {
     const data = await response.json();
     let aiContent = data.choices?.[0]?.message?.content || '';
 
-    feedbackLogger.recordTrace({ trace_id: traceId, ts: new Date(startTs).toISOString(), module: `agent_${intent}`, model: apiConfig.model, input: { text: query }, output: aiContent, latency_ms: Date.now() - startTs });
+    feedbackLogger.recordTrace({
+      trace_id: traceId, ts: new Date(startTs).toISOString(),
+      module: `agent_${intent}`, prompt_version: `${intent}_v2.0`,
+      model: apiConfig.model,
+      input: { text: query, injected_vars: { positive_ids: positiveExamples.map(p => p.fb_id), negative_ids: negativeExamples.map(n => n.fb_id) } },
+      output: aiContent, latency_ms: Date.now() - startTs,
+      tokens: data.usage || null
+    });
 
     let parsed; try { parsed = JSON.parse(aiContent); } catch { parsed = null; }
     return { success: true, agentType: intent, traceId, result: parsed || { text: aiContent } };
   } catch (error) { return { success: false, error: error.message }; }
 });
 
-async function classifyIntent(query) {
-  const q = query.toLowerCase();
-  if (/今天|今日|重点|优先|排程|日程|先做|重要/.test(q)) return 'priority';
-  if (/整理|梳理|归类|合并|笔记|知识/.test(q)) return 'knowledge';
-  if (/记忆|记住|忘了|回忆|提取/.test(q)) return 'memory';
-  if (/日报|周报|总结|汇报|完成/.test(q)) return 'report';
-  return 'chat';
+// === 加载用户画像 ===
+function loadProfile() {
+  const profilePath = path.join(app.getPath('userData'), 'profile.json');
+  try {
+    if (fs.existsSync(profilePath)) return JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+  } catch (e) {}
+  return getDefaultProfile();
 }
 
-async function retrieveContext(query) {
-  const ctx = { tasks: null, memories: [], notes: [] };
-  try { if (db?.db?.data?.tasks) { const t = db.db.data.tasks; ctx.tasks = { pending: t.filter(x => x.status !== 'completed').slice(0,20), completed: t.filter(x => x.status === 'completed').slice(0,10), total: t.length }; } } catch (e) {}
-  try { if (memoryStore) ctx.memories = memoryStore.searchRelated(query, 5).map(m => ({ content: m.content, type: m.type, category: m.category })); } catch (e) {}
-  try { if (notebook) ctx.notes = notebook.searchNotes(query).slice(0,5).map(n => ({ title: n.title, content: n.content.substring(0,200), category: n.category })); } catch (e) {}
+// === 增强意图识别（关键词加权评分） ===
+function classifyIntent(query) {
+  const q = query.toLowerCase();
+  const scores = { priority: 0, knowledge: 0, memory: 0, report: 0, chat: 0 };
+
+  // 优先级规划关键词
+  const priorityKW = { '今天': 2, '今日': 2, '重点': 3, '优先': 3, '排程': 3, '日程': 2, '先做': 3, '重要': 2, '紧急': 2, '安排': 1, '做什么': 2 };
+  // 知识梳理关键词
+  const knowledgeKW = { '整理': 2, '梳理': 3, '归类': 3, '合并': 2, '笔记': 2, '知识': 2, '聚类': 3, '主题': 1, '分类': 2 };
+  // 记忆整理关键词
+  const memoryKW = { '记忆': 3, '记住': 2, '忘了': 2, '回忆': 2, '提取': 2, '保留': 2, '过期': 2, '晋升': 2, '降级': 2 };
+  // 日报/周报关键词
+  const reportKW = { '日报': 3, '周报': 3, '总结': 2, '汇报': 2, '完成情况': 2, '进度': 1, '工作汇报': 3 };
+
+  for (const [kw, score] of Object.entries(priorityKW)) { if (q.includes(kw)) scores.priority += score; }
+  for (const [kw, score] of Object.entries(knowledgeKW)) { if (q.includes(kw)) scores.knowledge += score; }
+  for (const [kw, score] of Object.entries(memoryKW)) { if (q.includes(kw)) scores.memory += score; }
+  for (const [kw, score] of Object.entries(reportKW)) { if (q.includes(kw)) scores.report += score; }
+
+  const maxScore = Math.max(...Object.values(scores));
+  if (maxScore < 2) return 'chat';
+  return Object.entries(scores).find(([_, s]) => s === maxScore)[0];
+}
+
+// === 增强 RAG 检索 ===
+async function retrieveContext(query, intent, profile) {
+  const ctx = { tasks: null, memories: [], notes: [], entities: [] };
+
+  try {
+    if (db?.data?.tasks) {
+      const t = db.data.tasks;
+      ctx.tasks = {
+        pending: t.filter(x => x.status !== 'completed').slice(0, 20).map(t => ({
+          id: t.id, title: t.title, priority: t.priority,
+          due: t.dueDate ? new Date(t.dueDate).toLocaleString('zh-CN') : '无',
+          dueDate: t.dueDate, duration: t.estimatedDuration || 60,
+          linked_persons: [], linked_projects: []
+        })),
+        completed: t.filter(x => x.status === 'completed').slice(0, 10).map(t => ({
+          id: t.id, title: t.title, priority: t.priority,
+          completed_at: t.completedAt ? new Date(t.completedAt).toLocaleString('zh-CN') : ''
+        })),
+        total: t.length
+      };
+    }
+  } catch (e) {}
+
+  try {
+    if (memoryStore) {
+      const limit = intent === 'memory' ? 20 : 5;
+      ctx.memories = memoryStore.searchRelated(query, limit).map(m => ({
+        content: m.content, type: m.type, type_label: { instant: '瞬时', short: '短期', long: '长期' }[m.type] || m.type,
+        category: m.category, importance: m.importance || 'normal',
+        created_at: m.createdAt, last_accessed: m.lastAccessed || m.createdAt
+      }));
+      // 附加实体图谱
+      const graph = memoryStore.getEntityGraph();
+      ctx.entities = Object.entries(graph || {}).slice(0, 20).map(([name, info]) => ({
+        name, type: info.type, count: info.count, last_seen: info.lastSeen
+      }));
+    }
+  } catch (e) {}
+
+  try {
+    if (notebook) {
+      const noteLimit = intent === 'knowledge' ? 20 : 5;
+      ctx.notes = notebook.searchNotes(query).slice(0, noteLimit).map(n => ({
+        title: n.title, content: (n.content || '').substring(0, 300), category: n.category
+      }));
+    }
+  } catch (e) {}
+
   return ctx;
 }
 
-function buildChatPrompt(profile, ctx) {
+// === 获取反馈样本（正/负） ===
+function getFeedbackExamples(module, action, limit) {
+  try {
+    return feedbackLogger.queryFeedback({ module: `agent_${module}`, action, limit }) || [];
+  } catch { return []; }
+}
+
+// === 用 PromptEngine 模板渲染 Agent Prompt ===
+function buildAgentPrompt(intent, profile, ctx, positiveExamples, negativeExamples, traceId) {
+  const templateMap = {
+    priority: 'priority_agent',
+    knowledge: 'knowledge_agent',
+    memory: 'memory_agent',
+    report: 'report_agent',
+    chat: 'chat_agent'
+  };
+
+  const templateName = templateMap[intent] || 'chat_agent';
+  const templatePath = path.join(PROMPT_DIR, `${templateName}.md`);
+
+  // 如果模板文件存在，使用模板引擎渲染
+  if (fs.existsSync(templatePath)) {
+    try {
+      const templateText = fs.readFileSync(templatePath, 'utf8');
+      const vars = buildTemplateVars(intent, profile, ctx, positiveExamples, negativeExamples);
+      let rendered = promptEngine.render(templateText, vars);
+      rendered = rendered.replace(/__TRACE_ID__/g, traceId);
+      return rendered;
+    } catch (e) {
+      console.error('[Agent] Template render error:', e);
+      // fallback 到内联 prompt
+    }
+  }
+
+  // Fallback：内联 prompt
+  return buildInlinePrompt(intent, profile, ctx);
+}
+
+// === 构建模板变量 ===
+function buildTemplateVars(intent, profile, ctx, positiveExamples, negativeExamples) {
+  const vars = {
+    user_profile: profile.user || {},
+    frequent_persons: profile.frequent_persons || [],
+    active_projects: profile.active_projects || [],
+    priority_signals: profile.preferences?.priority_signals || [],
+    low_priority_signals: profile.preferences?.low_priority_signals || [],
+    current_time: new Date().toLocaleString('zh-CN'),
+    positive_examples: positiveExamples.map(p => ({
+      input_text: p.context?.source_input || '',
+      user_final: typeof p.user_final === 'string' ? p.user_final : JSON.stringify(p.user_final),
+      note: p.reason || ''
+    })),
+    negative_examples: negativeExamples.map(n => ({
+      input_text: n.context?.source_input || '',
+      ai_output: typeof n.ai_output === 'string' ? n.ai_output : JSON.stringify(n.ai_output),
+      reject_reason: n.reason || ''
+    }))
+  };
+
+  // 根据意图注入特定变量
+  switch (intent) {
+    case 'priority':
+      vars.tasks = (ctx.tasks?.pending || []).map((t, i) => ({
+        id: t.id || i + 1, title: t.title, priority: t.priority,
+        due: t.due || '无', linked_persons: (t.linked_persons || []).join(', '),
+        duration: t.duration || 60
+      }));
+      vars.tasks_count = (ctx.tasks?.pending || []).length;
+      vars.user_profile.work_patterns = profile.work_patterns || {};
+      vars.memories = ctx.memories || [];
+      break;
+    case 'knowledge':
+      vars.notes = (ctx.notes || []).map((n, i) => ({
+        index: i, category: n.category, title: n.title, content: n.content
+      }));
+      vars.memories = ctx.memories || [];
+      vars.known_entities = ctx.entities || [];
+      break;
+    case 'memory':
+      vars.memories = (ctx.memories || []).map((m, i) => ({
+        index: i, type: m.type, type_label: m.type_label, category: m.category,
+        content: m.content, created_at: m.created_at, last_accessed: m.last_accessed,
+        importance: m.importance
+      }));
+      vars.entities = ctx.entities || [];
+      break;
+    case 'report':
+      vars.report_type = '日报';
+      vars.completed_tasks = ctx.tasks?.completed || [];
+      vars.completed_count = (ctx.tasks?.completed || []).length;
+      vars.pending_tasks = ctx.tasks?.pending || [];
+      vars.pending_count = (ctx.tasks?.pending || []).length;
+      vars.new_memories = ctx.memories || [];
+      vars.new_memories_count = (ctx.memories || []).length;
+      vars.feedback_entries = [];
+      vars.weekly_completed = 0;
+      vars.pomodoro_count = 0;
+      vars.ai_calls = 0;
+      break;
+    case 'chat':
+      vars.memories = (ctx.memories || []).slice(0, 5);
+      vars.pending_tasks = (ctx.tasks?.pending || []).slice(0, 10).map(t => ({
+        title: t.title, priority: t.priority, due_date: t.due || '无'
+      }));
+      vars.pending_count = (ctx.tasks?.pending || []).length;
+      vars.notes = (ctx.notes || []).slice(0, 5);
+      break;
+  }
+
+  return vars;
+}
+
+// === Fallback 内联 Prompt ===
+function buildInlinePrompt(intent, profile, ctx) {
   const name = profile.user?.name || '用户';
-  let extra = '';
-  if (ctx.memories?.length) extra += `\n# 相关记忆\n${ctx.memories.map(m => `- [${m.type}] ${m.content}`).join('\n')}`;
-  if (ctx.tasks?.pending?.length) extra += `\n# 待办(${ctx.tasks.pending.length}条)\n${ctx.tasks.pending.slice(0,10).map(t => `- ${t.title}(${t.priority})`).join('\n')}`;
-  return `你是「忆境 Memora」AI助手，服务${name}。简洁实用、可操作、中文回答。${extra}`;
+  switch (intent) {
+    case 'priority': {
+      const tasks = ctx.tasks?.pending || [];
+      return `你是${name}的优先级规划Agent。\n时间：${new Date().toLocaleString('zh-CN')}\n# 待排程(${tasks.length}条)\n${tasks.slice(0,20).map((t,i) => `[${i+1}] ${t.title}|${t.priority}|截止:${t.due||'无'}`).join('\n')||'暂无'}\n输出JSON：{today_top5:[{task_id:"...",scheduled_at:"09:30-10:30",reason:"..."}],highlight:"...",deferred:[],tips:["..."]}`;
+    }
+    case 'knowledge': {
+      return `你是${name}的知识梳理Agent。\n# 近期笔记\n${(ctx.notes||[]).map((n,i)=>`[${i+1}][${n.category}]${n.title}:${n.content}`).join('\n')||'暂无'}\n输出JSON：{clusters:[{theme:"...",note_indices:[],summary:"..."}],duplicates:[],insights:["..."],actions:[]}`;
+    }
+    case 'memory': {
+      return `你是${name}的记忆整理Agent。\n# 相关记忆\n${(ctx.memories||[]).map((m,i)=>`[${i+1}][${m.type}]${m.content}`).join('\n')||'暂无'}\n输出JSON：{promote:[{memory_index:0,from:"short",to:"long",reason:"..."}],demote:[],expire:[],merge:[],insights:["..."]}`;
+    }
+    case 'report': {
+      const c = ctx.tasks?.completed||[], p = ctx.tasks?.pending||[];
+      return `你是${name}的日报Agent。\n已完成(${c.length}): ${c.slice(0,10).map(t=>t.title).join('、')||'无'}\n待办(${p.length}): ${p.slice(0,10).map(t=>t.title+'('+t.priority+')').join('、')||'无'}\n输出JSON：{title:"📅 日报",completed_section:{items:[...]},pending_section:{items:[...]},insights:{items:[...]},tomorrow_plan:{items:[...]},summary:"..."}`;
+    }
+    default: {
+      let extra = '';
+      if (ctx.memories?.length) extra += `\n# 相关记忆\n${ctx.memories.map(m => `- [${m.type}] ${m.content}`).join('\n')}`;
+      if (ctx.tasks?.pending?.length) extra += `\n# 待办(${ctx.tasks.pending.length}条)\n${ctx.tasks.pending.slice(0,10).map(t => `- ${t.title}(${t.priority})`).join('\n')}`;
+      return `你是「忆境 Memora」AI助手，服务${name}。简洁实用、可操作、中文回答。输出JSON：{text:"回答",suggestions:[],related_tasks:[],reasoning_steps:[]}${extra}`;
+    }
+  }
 }
 
-function buildPriorityPrompt(profile, ctx) {
-  const tasks = ctx.tasks?.pending || [];
-  return `你是${profile.user?.name}的优先级规划Agent。\n时间：${new Date().toLocaleString('zh-CN')}\n# 待排程(${tasks.length}条)\n${tasks.slice(0,20).map((t,i) => `[${i+1}] ${t.title}|${t.priority}|截止:${t.dueDate||'无'}`).join('\n')||'暂无'}\n输出JSON：{today_top5:[{task_index:1,scheduled_at:"09:30-10:30",reason:"..."}],highlight:"...",deferred:[],tips:["..."]}`;
-}
+// === Prompt 文件管理 IPC ===
+const PROMPT_META = [
+  { file: 'task_recognition_v2.0.md', name: '任务识别 v2.0', icon: '📋', desc: '从剪贴板/输入文本识别待办事项，用于智能任务分析和剪贴板检测', used_in: '剪贴板检测 + AI任务分析 + Agent系统' },
+  { file: 'memory_extraction_v2.0.md', name: '记忆提取 v2.0', icon: '🧠', desc: '从文本中提取结构化记忆（人物/主题/关键观点/实体等）', used_in: '记忆提炼 + 剪贴板记忆提取' },
+  { file: 'priority_agent.md', name: '优先级规划 Agent', icon: '🎯', desc: '今日排程和任务优先级排序，生成 Top 5 和时间分配建议', used_in: 'Agent 对话（今日排程/优先级）' },
+  { file: 'knowledge_agent.md', name: '知识梳理 Agent', icon: '📚', desc: '笔记聚类、重复检测和知识整理，发现主题和关联', used_in: 'Agent 对话（整理笔记/知识梳理）' },
+  { file: 'memory_agent.md', name: '记忆整理 Agent', icon: '🔄', desc: '记忆晋升/降级/淘汰/合并建议，保持记忆系统健康', used_in: 'Agent 对话（整理记忆/记忆管理）' },
+  { file: 'report_agent.md', name: '日报周报 Agent', icon: '📊', desc: '生成工作日报和周报，总结完成/待办/洞察和明日计划', used_in: 'Agent 对话（生成日报/周报）' },
+  { file: 'chat_agent.md', name: '通用对话 Agent', icon: '💬', desc: '日常聊天和通用问答，作为其他 Agent 的兜底', used_in: 'Agent 对话（通用聊天）' },
+];
 
-function buildKnowledgePrompt(profile, ctx) {
-  return `你是${profile.user?.name}的知识梳理Agent。\n# 近期笔记\n${(ctx.notes||[]).map((n,i)=>`[${i+1}][${n.category}]${n.title}:${n.content}`).join('\n')||'暂无'}\n输出JSON：{clusters:[{theme:"...",note_indices:[],summary:"..."}],duplicates:[],insights:["..."],actions:[]}`;
-}
+ipcMain.handle('prompt:list-files', async () => {
+  return PROMPT_META.map(m => {
+    const filePath = path.join(PROMPT_DIR, m.file);
+    let exists = false, size = 0, modifiedAt = null;
+    try {
+      const stat = fs.statSync(filePath);
+      exists = true; size = stat.size; modifiedAt = stat.mtime.toISOString();
+    } catch {}
+    return { ...m, exists, size, modifiedAt };
+  });
+});
 
-function buildMemoryPrompt(profile, ctx) {
-  return `你是${profile.user?.name}的记忆整理Agent。\n# 相关记忆\n${(ctx.memories||[]).map((m,i)=>`[${i+1}][${m.type}]${m.content}`).join('\n')||'暂无'}\n输出JSON：{promote:[],demote:[],expire:[],merge:[],insights:["..."]}`;
-}
+ipcMain.handle('prompt:read-file', async (_, filename) => {
+  // 安全检查：只允许读取 prompts/ 目录下的 .md 文件
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许读取 .md 文件' };
+  const filePath = path.join(PROMPT_DIR, safeName);
+  if (!filePath.startsWith(PROMPT_DIR)) return { success: false, error: '路径非法' };
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return { success: true, content, filename: safeName };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
 
-function buildReportPrompt(profile, ctx) {
-  const c = ctx.tasks?.completed||[], p = ctx.tasks?.pending||[];
-  return `你是${profile.user?.name}的日报Agent。\n已完成(${c.length}): ${c.slice(0,10).map(t=>t.title).join('、')||'无'}\n待办(${p.length}): ${p.slice(0,10).map(t=>t.title+'('+t.priority+')').join('、')||'无'}\n输出JSON：{title:"📅 日报",completed_section:{items:[...]},pending_section:{items:[...]},insights:{items:[...]},tomorrow_plan:{items:[...]},summary:"..."}`;
+ipcMain.handle('prompt:write-file', async (_, filename, content) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许写入 .md 文件' };
+  // 支持主目录和 candidates 子目录
+  let filePath = path.join(PROMPT_DIR, safeName);
+  if (!fs.existsSync(filePath)) {
+    const candPath = path.join(PROMPT_DIR, 'candidates', safeName);
+    if (fs.existsSync(candPath)) filePath = candPath;
+  }
+  if (!filePath.startsWith(PROMPT_DIR)) return { success: false, error: '路径非法' };
+  try {
+    // 先备份
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    if (fs.existsSync(filePath)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(filePath, path.join(backupDir, `${safeName}.${ts}.bak`));
+    }
+    fs.writeFileSync(filePath, content, 'utf8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('prompt:reset-file', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许重置 .md 文件' };
+  const filePath = path.join(PROMPT_DIR, safeName);
+  try {
+    // 从备份恢复，或者删除文件让系统重新生成
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (fs.existsSync(backupDir)) {
+      const backups = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith(safeName) && f.endsWith('.bak'))
+        .sort();
+      if (backups.length > 0) {
+        fs.copyFileSync(path.join(backupDir, backups[0]), filePath);
+        return { success: true, method: 'backup', backupFile: backups[0] };
+      }
+    }
+    return { success: false, error: '无备份文件可恢复，请手动编辑或重新下载' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('prompt:download-file', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许下载 .md 文件' };
+  const filePath = path.join(PROMPT_DIR, safeName);
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return { success: true, content, filename: safeName };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('prompt:upload-file', async (_, filename, content) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许上传 .md 文件' };
+  const filePath = path.join(PROMPT_DIR, safeName);
+  if (!filePath.startsWith(PROMPT_DIR)) return { success: false, error: '路径非法' };
+  try {
+    // 备份旧文件
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    if (fs.existsSync(filePath)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(filePath, path.join(backupDir, `${safeName}.${ts}.bak`));
+    }
+    fs.writeFileSync(filePath, content, 'utf8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// === Prompt 变量预览 IPC ===
+ipcMain.handle('prompt:get-variables', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许读取 .md 文件' };
+  const filePath = path.join(PROMPT_DIR, safeName);
+  if (!fs.existsSync(filePath)) return { success: false, error: '文件不存在' };
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const profile = loadProfile();
+    // 提取模板中用到的变量
+    const varRegex = /\{\{(#each\s+)?(#if\s+)?([a-zA-Z0-9_.]+)\}\}/g;
+    const vars = new Set();
+    let match;
+    while ((match = varRegex.exec(content)) !== null) {
+      if (match[3] && !match[3].startsWith('@') && match[3] !== 'this' && match[3] !== 'else') {
+        vars.add(match[3]);
+      }
+    }
+    // 每个变量标记来源
+    const varInfo = [...vars].map(v => {
+      let source = 'auto'; // auto = 自动填充, profile = 来自画像, custom = 可自定义
+      let currentValue = null;
+      let label = v;
+      if (v.startsWith('user_profile.')) {
+        source = 'profile';
+        const key = v.replace('user_profile.', '');
+        currentValue = profile.user?.[key] ?? null;
+        const labels = { name: '姓名', english_name: '英文名', role: '角色', industries: '行业' };
+        label = labels[key] || key;
+      } else if (v === 'current_time') {
+        source = 'auto';
+        currentValue = new Date().toLocaleString('zh-CN');
+        label = '当前时间';
+      } else if (v === 'source_meta.app' || v === 'source_meta.type') {
+        source = 'auto';
+        label = v === 'source_meta.app' ? '来源应用' : '来源类型';
+        currentValue = '运行时自动填充';
+      } else if (v === 'input_text') {
+        source = 'auto';
+        label = '输入文本';
+        currentValue = '运行时自动填充';
+      } else if (['frequent_persons', 'active_projects', 'priority_signals', 'low_priority_signals'].includes(v)) {
+        source = 'profile';
+        const map = { frequent_persons: '高频人物', active_projects: '活跃项目', priority_signals: '高优先级触发词', low_priority_signals: '低优先级触发词' };
+        label = map[v];
+        currentValue = profile[v] || profile.preferences?.[v] || [];
+      } else if (['positive_examples', 'negative_examples'].includes(v)) {
+        source = 'auto';
+        label = v === 'positive_examples' ? '正样本（历史）' : '负样本（历史）';
+        currentValue = '运行时从反馈日志加载';
+      } else if (['tasks', 'tasks_count', 'memories', 'notes', 'entities', 'known_entities'].includes(v)) {
+        source = 'auto';
+        const map = { tasks: '任务列表', tasks_count: '任务数量', memories: '记忆列表', notes: '笔记列表', entities: '实体列表', known_entities: '已知实体' };
+        label = map[v] || v;
+        currentValue = '运行时从数据库加载';
+      } else if (['report_type', 'completed_tasks', 'completed_count', 'pending_tasks', 'pending_count', 'new_memories', 'new_memories_count', 'feedback_entries', 'weekly_completed', 'pomodoro_count', 'ai_calls'].includes(v)) {
+        source = 'auto';
+        const map = { report_type: '报告类型', completed_tasks: '已完成任务', completed_count: '完成数量', pending_tasks: '待办任务', pending_count: '待办数量', new_memories: '新记忆', new_memories_count: '新记忆数量', feedback_entries: '反馈日志', weekly_completed: '本周完成', pomodoro_count: '番茄钟数', ai_calls: 'AI调用数' };
+        label = map[v] || v;
+        currentValue = '运行时自动填充';
+      }
+      return { name: v, label, source, currentValue };
+    });
+    return { success: true, variables: varInfo };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// === 优化器历史记录 IPC ===
+ipcMain.handle('optimizer:history', async () => {
+  const candidatesDir = path.join(PROMPT_DIR, 'candidates');
+  if (!fs.existsSync(candidatesDir)) return { history: [] };
+  try {
+    const files = fs.readdirSync(candidatesDir);
+    const reports = files.filter(f => f.endsWith('.report.json'));
+    const history = reports.map(f => {
+      try {
+        const report = JSON.parse(fs.readFileSync(path.join(candidatesDir, f), 'utf8'));
+        report.reportFile = f;
+        report.promptFile = f.replace('.report.json', '.md');
+        return report;
+      } catch { return null; }
+    }).filter(Boolean).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return { history };
+  } catch (e) {
+    return { history: [], error: e.message };
+  }
+});
+
+ipcMain.handle('optimizer:read-report', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.report.json')) return { success: false, error: '只允许读取 .report.json 文件' };
+  const filePath = path.join(PROMPT_DIR, 'candidates', safeName);
+  try {
+    const report = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return { success: true, report };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('optimizer:read-candidate', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许读取 .md 文件' };
+  const filePath = path.join(PROMPT_DIR, 'candidates', safeName);
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return { success: true, content };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('optimizer:apply-to-main', async (_, candidateFilename) => {
+  const safeName = path.basename(candidateFilename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许 .md 文件' };
+  const candidatePath = path.join(PROMPT_DIR, 'candidates', safeName);
+  if (!fs.existsSync(candidatePath)) return { success: false, error: '候选文件不存在' };
+  try {
+    // 从文件名提取模块名
+    const moduleName = safeName.split('_').slice(0, -1).join('_') || 'task_recognition';
+    const targetPath = path.join(PROMPT_DIR, `${moduleName}_v2.0.md`);
+    // 备份
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    if (fs.existsSync(targetPath)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(targetPath, path.join(backupDir, `${moduleName}_v2.0.md.${ts}.bak`));
+    }
+    // 复制候选到主文件
+    fs.copyFileSync(candidatePath, targetPath);
+    return { success: true, module: moduleName, targetFile: `${moduleName}_v2.0.md` };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// === Phase 3: Prompt 优化器 IPC ===
+ipcMain.handle('optimizer:list-candidates', async () => {
+  const candidatesDir = path.join(PROMPT_DIR, 'candidates');
+  if (!fs.existsSync(candidatesDir)) return { candidates: [] };
+  try {
+    const files = fs.readdirSync(candidatesDir).filter(f => f.endsWith('.md'));
+    const reports = fs.readdirSync(candidatesDir).filter(f => f.endsWith('.report.json'));
+    return {
+      candidates: files.map(f => {
+        const name = f.replace('.md', '');
+        const reportFile = reports.find(r => r.startsWith(name));
+        let report = null;
+        if (reportFile) {
+          try { report = JSON.parse(fs.readFileSync(path.join(candidatesDir, reportFile), 'utf8')); } catch {}
+        }
+        return { name, filename: f, report };
+      })
+    };
+  } catch { return { candidates: [] }; }
+});
+
+ipcMain.handle('optimizer:apply-candidate', async (_, filename) => {
+  try {
+    const candidatesDir = path.join(PROMPT_DIR, 'candidates');
+    const candidatePath = path.join(candidatesDir, filename);
+    if (!fs.existsSync(candidatePath)) return { success: false, error: '候选文件不存在' };
+
+    // 从文件名提取模块名
+    const moduleName = filename.split('_').slice(0, -1).join('_') || 'task_recognition';
+    const activeLink = path.join(PROMPT_DIR, `${moduleName}_active.md`);
+    if (fs.existsSync(activeLink)) fs.unlinkSync(activeLink);
+    fs.symlinkSync(candidatePath, activeLink);
+    console.log(`[Optimizer] Active prompt switched to: ${filename}`);
+    return { success: true, module: moduleName };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('optimizer:run', async (_, options = {}) => {
+  try {
+    const module = options.module || 'task_recognition';
+    const badCases = options.badCases || 30;
+    const { spawn } = require('child_process');
+    const apiKey = getAPIConfig().apiKey;
+
+    return new Promise((resolve) => {
+      // 使用 ELECTRON_RUN_AS_NODE=1 让 Electron 以 Node.js 模式运行，避免启动新窗口
+      const nodeBin = process.execPath;
+      const scriptPath = getScriptPath('scripts/prompt_optimizer.js');
+      const proc = spawn(nodeBin, [
+        scriptPath,
+        '--module', module,
+        '--bad-cases', String(badCases)
+      ], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1',
+          DEEPSEEK_API_KEY: apiKey,
+          MEMORA_DATA_DIR: path.join(app.getPath('userData'), 'feedback'),
+          MEMORA_PROMPT_DIR: PROMPT_DIR }
+      });
+
+      let output = '';
+      proc.stdout.on('data', d => { output += d.toString(); console.log('[Optimizer]', d.toString().trim()); });
+      proc.stderr.on('data', d => { output += d.toString(); });
+      proc.on('close', (code) => {
+        resolve({ success: code === 0, output: output.substring(output.length - 2000) });
+      });
+      proc.on('error', (err) => { resolve({ success: false, error: err.message }); });
+    });
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+// === Phase 3: 用户画像更新建议 ===
+ipcMain.handle('profile:suggestions', async () => {
+  try {
+    const profile = loadProfile();
+    const suggestions = [];
+
+    // 从记忆和任务中提取可能遗漏的人物
+    if (memoryStore) {
+      const graph = memoryStore.getEntityGraph();
+      const knownPersons = (profile.frequent_persons || []).map(p => p.name);
+      for (const [name, info] of Object.entries(graph || {})) {
+        if (info.type === 'person' && !knownPersons.includes(name) && info.count >= 3) {
+          suggestions.push({ type: 'add_person', name, count: info.count, reason: `实体图中出现${info.count}次，建议添加为高频人物` });
+        }
+      }
+    }
+
+    // 从任务中提取可能遗漏的项目
+    if (db?.data?.tasks) {
+      const tasks = db.data.tasks;
+      const projectKeywords = {};
+      tasks.forEach(t => {
+        if (t.tags) t.tags.forEach(tag => {
+          if (['工作', '客户', '技术', '生活'].includes(tag)) return;
+          projectKeywords[tag] = (projectKeywords[tag] || 0) + 1;
+        });
+      });
+      const knownProjects = (profile.active_projects || []).map(p => p.name);
+      for (const [keyword, count] of Object.entries(projectKeywords)) {
+        if (count >= 3 && !knownProjects.some(p => keyword.includes(p) || p.includes(keyword))) {
+          suggestions.push({ type: 'add_project', name: keyword, count, reason: `任务标签中出现${count}次，可能是活跃项目` });
+        }
+      }
+    }
+
+    // 检查优先级触发词覆盖度
+    const recentFeedback = feedbackLogger.queryFeedback({ action: 'reject', limit: 10 });
+    const commonRejectReasons = {};
+    recentFeedback.forEach(f => {
+      if (f.reason) { const r = f.reason.substring(0, 20); commonRejectReasons[r] = (commonRejectReasons[r] || 0) + 1; }
+    });
+    for (const [reason, count] of Object.entries(commonRejectReasons)) {
+      if (count >= 3) {
+        suggestions.push({ type: 'add_priority_signal', reason, count, suggestion: `多次出现拒绝原因"${reason}"，建议调整优先级触发词` });
+      }
+    }
+
+    return { suggestions, generatedAt: new Date().toISOString() };
+  } catch (error) { return { suggestions: [], error: error.message }; }
+});
+
+// === Phase 3: 每周定时优化（cron 替代方案：启动时检查） ===
+let lastOptimizerRun = null;
+function checkWeeklyOptimizer() {
+  const now = new Date();
+  // 每周日 03:00 执行（或启动时如果上次运行超过7天）
+  if (lastOptimizerRun && (now - new Date(lastOptimizerRun)) < 7 * 24 * 60 * 60 * 1000) return;
+  if (now.getDay() !== 0 && now.getHours() !== 3) {
+    // 不是周日3点，但如果是首次运行或超7天，也执行
+    if (lastOptimizerRun) return;
+  }
+  console.log('[Optimizer] Weekly check triggered');
+  lastOptimizerRun = now.toISOString();
+
+  // 异步运行，不阻塞
+  const apiKey = getAPIConfig().apiKey;
+  if (!apiKey) return;
+  const { spawn } = require('child_process');
+  // 使用 ELECTRON_RUN_AS_NODE=1 让 Electron 以 Node.js 模式运行，避免启动新窗口
+  const nodeBin = process.execPath;
+  const scriptPath = getScriptPath('scripts/prompt_optimizer.js');
+  const proc = spawn(nodeBin, [
+    scriptPath,
+    '--module', 'task_recognition', '--bad-cases', '30'
+  ], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1',
+      DEEPSEEK_API_KEY: apiKey,
+      MEMORA_DATA_DIR: path.join(app.getPath('userData'), 'feedback'),
+      MEMORA_PROMPT_DIR: PROMPT_DIR },
+    stdio: 'ignore', detached: true
+  });
+  proc.unref();
 }

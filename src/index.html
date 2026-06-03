@@ -369,6 +369,7 @@
           <button class="settings-tab active" data-tab="api">API配置</button>
           <button class="settings-tab" data-tab="adp">ADP配置</button>
           <button class="settings-tab" data-tab="prompt">Prompt配置</button>
+          <button class="settings-tab" data-tab="profile">用户画像</button>
           <button class="settings-tab" data-tab="memory">记忆管理</button>
         </div>
         
@@ -431,19 +432,164 @@
         
         <!-- Prompt配置 -->
         <div class="settings-panel hidden" id="promptPanel">
-          <div class="form-group">
-            <label for="aiPromptEditor">AI任务识别Prompt</label>
-            <textarea id="aiPromptEditor" rows="10" placeholder="输入AI Prompt..."></textarea>
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              修改Prompt可以调整AI识别待办事项的规则。满足"时间+事项"或明确的任务描述都会创建任务。
+          <div class="prompt-manager-header">
+            <h4>📝 Prompt 模板管理</h4>
+            <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+              管理 AI 系统使用的所有 Prompt 模板文件。支持在线编辑、上传下载。变量自动从用户画像和运行时数据填充。
             </small>
           </div>
-          <div class="form-group">
-            <label for="memoryPromptEditor">记忆提取Prompt</label>
-            <textarea id="memoryPromptEditor" rows="10" placeholder="输入记忆提取Prompt..."></textarea>
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              用于从文本中提取结构化记忆，包括人物、主题、关键观点等。
-            </small>
+          <div id="promptFileList" class="prompt-file-list">
+            <div class="empty-state">加载中...</div>
+          </div>
+
+          <!-- Prompt 变量预览面板 -->
+          <div class="prompt-vars-section hidden" id="promptVarsSection">
+            <div class="prompt-vars-header">
+              <h4>🔖 变量映射预览</h4>
+              <small style="color: var(--text-secondary); display: block; margin-top: 2px;">
+                模板中使用的变量及其当前值。标记为 <span class="var-badge profile">画像</span> 的变量可在「用户画像」标签页修改；
+                <span class="var-badge auto">自动</span> 的变量由系统运行时自动填充。
+              </small>
+            </div>
+            <div id="promptVarsList" class="prompt-vars-list"></div>
+          </div>
+
+          <!-- Prompt 编辑模态框（内嵌） -->
+          <div class="prompt-editor-overlay hidden" id="promptEditorOverlay">
+            <div class="prompt-editor-modal">
+              <div class="prompt-editor-header">
+                <h4 id="promptEditorTitle">编辑 Prompt</h4>
+                <button class="modal-close" id="closePromptEditor">×</button>
+              </div>
+              <div class="prompt-editor-info" id="promptEditorInfo"></div>
+              <div class="prompt-editor-body">
+                <textarea id="promptFileContent" rows="20" placeholder="Prompt 模板内容..."></textarea>
+              </div>
+              <div class="prompt-editor-footer">
+                <button class="btn secondary" id="promptEditorCancel">取消</button>
+                <button class="btn primary" id="promptEditorSave">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Phase 3: Prompt 优化器面板 -->
+          <div class="optimizer-section">
+            <div class="optimizer-header">
+              <h4>🧬 Prompt 自动优化器</h4>
+              <div class="optimizer-actions">
+                <select id="optimizerModule" style="padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-primary);">
+                  <option value="task_recognition">任务识别</option>
+                  <option value="memory_extraction">记忆提取</option>
+                </select>
+                <button class="btn primary small" id="runOptimizerBtn">▶ 运行优化</button>
+              </div>
+            </div>
+            <div class="optimizer-status" id="optimizerStatus" style="display: none;">
+              <div class="optimizer-spinner"></div>
+              <span>优化器运行中，请稍候...</span>
+            </div>
+            <div class="optimizer-results" id="optimizerResults">
+              <p style="color: var(--text-secondary); font-size: 13px;">运行优化器将分析历史反馈数据，自动生成改进版 Prompt 并进行回归测试。</p>
+            </div>
+
+            <!-- 优化器历史记录 -->
+            <div class="optimizer-history-section">
+              <div class="optimizer-history-header">
+                <h5>📋 优化历史</h5>
+                <button class="prompt-action-btn" id="refreshOptimizerHistory">🔄 刷新</button>
+              </div>
+              <div id="optimizerHistoryList" class="optimizer-history-list">
+                <p style="color: var(--text-secondary); font-size: 13px;">暂无优化记录</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 优化详情模态框 -->
+          <div class="prompt-editor-overlay hidden" id="optimizerDetailOverlay">
+            <div class="prompt-editor-modal">
+              <div class="prompt-editor-header">
+                <h4 id="optimizerDetailTitle">优化详情</h4>
+                <button class="modal-close" id="closeOptimizerDetail">×</button>
+              </div>
+              <div class="prompt-editor-body" id="optimizerDetailBody" style="overflow: auto;">
+              </div>
+              <div class="prompt-editor-footer" id="optimizerDetailFooter">
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 用户画像 -->
+        <div class="settings-panel hidden" id="profilePanel">
+          <div class="profile-section">
+            <h4>👤 基本信息</h4>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="profileName">姓名</label>
+                <input type="text" id="profileName" placeholder="你的姓名">
+              </div>
+              <div class="form-group">
+                <label for="profileEnglishName">英文名</label>
+                <input type="text" id="profileEnglishName" placeholder="English Name">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="profileRole">角色</label>
+                <input type="text" id="profileRole" placeholder="如：产品经理 & 全栈开发者">
+              </div>
+              <div class="form-group">
+                <label for="profileIndustries">行业（逗号分隔）</label>
+                <input type="text" id="profileIndustries" placeholder="AI, SaaS, 企业服务">
+              </div>
+            </div>
+          </div>
+          
+          <div class="profile-section">
+            <h4>👥 高频接触人物</h4>
+            <div id="frequentPersonsList" class="profile-list"></div>
+            <div class="profile-add-row">
+              <input type="text" id="newPersonName" placeholder="姓名" style="flex:1">
+              <input type="text" id="newPersonRelation" placeholder="关系（如：老板、同事）" style="flex:1">
+              <input type="text" id="newPersonCompany" placeholder="公司（可选）" style="flex:1">
+              <button class="btn small" id="addPersonBtn">+ 添加</button>
+            </div>
+          </div>
+          
+          <div class="profile-section">
+            <h4>📂 活跃项目</h4>
+            <div id="activeProjectsList" class="profile-list"></div>
+            <div class="profile-add-row">
+              <input type="text" id="newProjectName" placeholder="项目名" style="flex:1">
+              <input type="text" id="newProjectAlias" placeholder="别名（逗号分隔）" style="flex:1">
+              <select id="newProjectStatus" style="flex:0.5">
+                <option value="active">进行中</option>
+                <option value="paused">暂停</option>
+                <option value="completed">已完成</option>
+              </select>
+              <button class="btn small" id="addProjectBtn">+ 添加</button>
+            </div>
+          </div>
+          
+          <div class="profile-section">
+            <h4>⚡ 优先级偏好</h4>
+            <div class="form-group">
+              <label for="prioritySignals">高优先级触发词（逗号分隔）</label>
+              <input type="text" id="prioritySignals" placeholder="老板, 紧急, ASAP, 立即">
+            </div>
+            <div class="form-group">
+              <label for="lowPrioritySignals">低优先级触发词（逗号分隔）</label>
+              <input type="text" id="lowPrioritySignals" placeholder="FYI, 有空, 可选, 参考">
+            </div>
+          </div>
+          
+          <!-- Phase 3: 画像更新建议 -->
+          <div class="profile-section">
+            <h4>💡 智能建议</h4>
+            <div id="profileSuggestions" class="profile-suggestions">
+              <p style="color: var(--text-secondary); font-size: 13px;">点击下方按钮，系统将分析你的使用数据并给出画像更新建议。</p>
+            </div>
+            <button class="btn secondary small" id="generateProfileSuggestionsBtn" style="margin-top: 8px;">🔍 生成建议</button>
           </div>
         </div>
         
@@ -511,6 +657,8 @@
   };
   console.log('[HTML] Script error handlers registered');
 </script>
+<!-- 隐藏的文件上传 input -->
+<input type="file" id="promptFileUploadInput" accept=".md" style="display:none">
 <script src="scripts/store.js"></script>
 <script src="scripts/pomodoro.js"></script>
 <script src="scripts/calendar.js"></script>

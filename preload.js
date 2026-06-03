@@ -79,6 +79,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agent: {
     invoke: (query, agentType) => ipcRenderer.invoke('agent:invoke', { query, agentType }),
   },
+
+  // v1.2 Phase 3: Prompt 优化器 + 历史记录
+  optimizer: {
+    listCandidates: () => ipcRenderer.invoke('optimizer:list-candidates'),
+    applyCandidate: (filename) => ipcRenderer.invoke('optimizer:apply-candidate', filename),
+    run: (options) => ipcRenderer.invoke('optimizer:run', options),
+    history: () => ipcRenderer.invoke('optimizer:history'),
+    readReport: (filename) => ipcRenderer.invoke('optimizer:read-report', filename),
+    readCandidate: (filename) => ipcRenderer.invoke('optimizer:read-candidate', filename),
+    applyToMain: (filename) => ipcRenderer.invoke('optimizer:apply-to-main', filename),
+  },
+
+  // Prompt 文件管理
+  promptFiles: {
+    list: () => ipcRenderer.invoke('prompt:list-files'),
+    read: (filename) => ipcRenderer.invoke('prompt:read-file', filename),
+    write: (filename, content) => ipcRenderer.invoke('prompt:write-file', filename, content),
+    reset: (filename) => ipcRenderer.invoke('prompt:reset-file', filename),
+    download: (filename) => ipcRenderer.invoke('prompt:download-file', filename),
+    upload: (filename, content) => ipcRenderer.invoke('prompt:upload-file', filename, content),
+    getVariables: (filename) => ipcRenderer.invoke('prompt:get-variables', filename),
+  },
+
+  // v1.2 Phase 3: 用户画像建议
+  profileSuggestions: () => ipcRenderer.invoke('profile:suggestions'),
   
   // 剪切板去重管理
   clearClipboardHashes: () => ipcRenderer.invoke('clear-clipboard-hashes'),

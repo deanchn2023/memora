@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const { app } = require('electron');
 
-const NOTEBOOK_PATH = path.join(__dirname, 'notebook');
+// 记事本存储路径：打包后必须使用 userData 目录（ASAR 内只读）
+const NOTEBOOK_PATH = app.isPackaged
+  ? path.join(app.getPath('userData'), 'notebook')
+  : path.join(__dirname, 'notebook');
 
 // 确保目录存在
 if (!fs.existsSync(NOTEBOOK_PATH)) {

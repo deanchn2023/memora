@@ -1,5 +1,6 @@
 // 记忆系统存储模块
 const path = require('path');
+const { app } = require('electron');
 
 // 记忆类型
 const MEMORY_TYPES = {
@@ -20,8 +21,10 @@ const MEMORY_CATEGORIES = {
   CLIPBOARD: 'clipboard' // 剪贴板日志
 };
 
-// 记忆存储路径
-const MEMORY_PATH = path.join(__dirname, 'memory');
+// 记忆存储路径：打包后必须使用 userData 目录（ASAR 内只读）
+const MEMORY_PATH = app.isPackaged
+  ? path.join(app.getPath('userData'), 'memory')
+  : path.join(__dirname, 'memory');
 
 class MemoryStore {
   constructor() {
