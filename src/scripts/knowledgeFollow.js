@@ -15,7 +15,12 @@ class KnowledgeFollow {
     this.searchResults = [];
     this.publicResults = [];
     this.initialized = false;
-    this._panelOrder = ['public', 'local', 'adp']; // 面板顺序
+    this._panelOrder = ['adp', 'local', 'public']; // 面板顺序：ADP优先
+    this._expandedPanel = null; // 当前展开的面板
+
+    // 提前注册 IPC 事件监听（不依赖 init()，避免切换到知识视图前丢失事件）
+    this.setupADPChunkListener();
+    this.setupRecommendationListener();
   }
 
   /**
@@ -25,11 +30,19 @@ class KnowledgeFollow {
     if (this.initialized) return;
     this.bindEvents();
     this.loadRecommendations();
-    this.setupADPChunkListener();
-    this.setupRecommendationListener();
     this.initPanelResizers();
+    this.initPanelExpand();
+    this.initRecommendationCardEvents();
+    this.initLocalCardEvents();
     this.initialized = true;
     console.log('[KnowledgeFollow] Initialized');
+  }
+
+  /**
+   * 显示知识视图时调用（每次切换都刷新推荐）
+   */
+  onShow() {
+    this.loadRecommendations();
   }
 
   /**
@@ -56,14 +69,72 @@ class KnowledgeFollow {
       refreshBtn.addEventListener('click', () => this.loadRecommendations());
     }
 
-    // 设置按钮
-    const settingsBtn = document.getElementById('knowledgeSettingsBtn');
-    if (settingsBtn) {
-      settingsBtn.addEventListener('click', () => this.openSettings());
-    }
+    // 设置按钮（已移除，共用全局设置）
   }
 
   // ============ 面板拖拽调整大小 ============
+
+  initPanelExpand() {
+    // 点击面板头部展开/收起
+    document.querySelectorAll('.search-panel-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        // 不影响按钮点击
+        if (e.target.closest('.adp-stream-control') || e.target.closest('.adp-streaming-status')) return;
+        const panel = header.closest('.search-panel');
+        if (!panel) return;
+        const panelName = panel.dataset.panel;
+        this.togglePanelExpand(panelName);
+      });
+    });
+
+    // 点击面板 body 区域也展开
+    document.querySelectorAll('.search-panel-body').forEach(body => {
+      body.addEventListener('click', (e) => {
+        const panel = body.closest('.search-panel');
+        if (!panel) return;
+        const panelName = panel.dataset.panel;
+        if (this._expandedPanel !== panelName) {
+          this.togglePanelExpand(panelName);
+        }
+      });
+    });
+
+    // 点击其他区域恢复默认
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.search-panels') && this._expandedPanel) {
+        this.resetPanelExpand();
+      }
+    });
+  }
+
+  togglePanelExpand(panelName) {
+    const panels = document.querySelectorAll('.search-panel');
+    if (this._expandedPanel === panelName) {
+      // 再次点击同一个面板 -> 收起
+      this.resetPanelExpand();
+      return;
+    }
+    // 展开当前面板，收起其他
+    this._expandedPanel = panelName;
+    panels.forEach(p => {
+      if (p.dataset.panel === panelName) {
+        p.classList.add('expanded');
+        p.classList.remove('collapsed');
+      } else {
+        p.classList.add('collapsed');
+        p.classList.remove('expanded');
+      }
+    });
+  }
+
+  resetPanelExpand() {
+    this._expandedPanel = null;
+    const panels = document.querySelectorAll('.search-panel');
+    panels.forEach(p => {
+      p.classList.remove('expanded');
+      p.classList.remove('collapsed');
+    });
+  }
 
   initPanelResizers() {
     const resizers = document.querySelectorAll('.search-panel-resizer');
@@ -117,20 +188,19 @@ class KnowledgeFollow {
     const query = input ? input.value.trim() : '';
     if (!query) return;
 
-    // 显示搜索结果区，隐藏推荐区
+    // 显示搜索结果区
     const resultsSection = document.getElementById('knowledgeSearchResults');
-    const recommendSection = document.getElementById('knowledgeRecommendSection');
     if (resultsSection) resultsSection.style.display = 'block';
-    if (recommendSection) recommendSection.style.display = 'none';
+    this.expandSearchSection();
 
     // 重置面板为均分
     const panels = document.querySelectorAll('.search-panel');
     panels.forEach(p => { p.style.flex = '1 1 0%'; });
 
-    // 并行搜索三个来源
-    this.handlePublicSearch(query);
-    this.handleLocalSearch(query);
+    // 并行搜索三个来源，ADP 优先发起
     this.handleADPSearch(intent);
+    this.handleLocalSearch(query);
+    this.handlePublicSearch(query);
   }
 
   /**
@@ -140,7 +210,38 @@ class KnowledgeFollow {
     const resultsSection = document.getElementById('knowledgeSearchResults');
     const recommendSection = document.getElementById('knowledgeRecommendSection');
     if (resultsSection) resultsSection.style.display = 'none';
-    if (recommendSection) recommendSection.style.display = 'block';
+    if (recommendSection) {
+      recommendSection.style.maxHeight = '';
+      recommendSection.style.flex = '';
+    }
+  }
+
+  // 推荐区扩大，搜索区收起（点击推荐卡片时调用）
+  expandRecommendSection() {
+    const resultsSection = document.getElementById('knowledgeSearchResults');
+    const recommendSection = document.getElementById('knowledgeRecommendSection');
+    if (recommendSection) {
+      recommendSection.style.maxHeight = '80%';
+      recommendSection.style.flex = '1 1 auto';
+    }
+    if (resultsSection) {
+      resultsSection.style.maxHeight = '20%';
+      resultsSection.style.overflow = 'hidden';
+    }
+  }
+
+  // 搜索区扩大，推荐区缩小（点击搜索结果时调用）
+  expandSearchSection() {
+    const resultsSection = document.getElementById('knowledgeSearchResults');
+    const recommendSection = document.getElementById('knowledgeRecommendSection');
+    if (resultsSection) {
+      resultsSection.style.maxHeight = '';
+      resultsSection.style.overflow = '';
+    }
+    if (recommendSection) {
+      recommendSection.style.maxHeight = '25%';
+      recommendSection.style.flex = '0 0 auto';
+    }
   }
 
   // ============ 公开资源搜索 ============
@@ -331,7 +432,7 @@ class KnowledgeFollow {
     const timeAgo = this.formatTimeAgo(item.createdAt);
 
     return `
-      <div class="knowledge-card ${sourceClass}" data-id="${item.id}" data-type="${item.type}">
+      <div class="knowledge-card ${sourceClass}" data-id="${item.id}" data-type="${item.type}" data-content="${this.escapeAttr(item.content)}">
         <div class="knowledge-card-header">
           <span class="knowledge-card-source source-${sourceClass}">
             ${this.searchEngine.getSourceIcon(item.source)} ${sourceLabel}
@@ -344,10 +445,11 @@ class KnowledgeFollow {
           <div class="knowledge-card-meta">
             <span>📅 ${timeAgo}</span>
             <span>📂 ${item.category || '通用'}</span>
+            <span class="copy-hint" style="opacity:0;transition:opacity 0.2s;">双击复制</span>
           </div>
           <div class="knowledge-card-actions">
-            <button class="knowledge-card-action" onclick="knowledgeFollow.viewDetail('${item.id}', '${item.type}')">查看</button>
-            <button class="knowledge-card-action save-action" onclick="knowledgeFollow.saveToLocal('${item.id}', '${item.type}')">💾 保存</button>
+            <button class="knowledge-card-action" onclick="event.stopPropagation(); knowledgeFollow.viewDetail('${item.id}', '${item.type}')">查看</button>
+            <button class="knowledge-card-action save-action" onclick="event.stopPropagation(); knowledgeFollow.saveToLocal('${item.id}', '${item.type}')">💾 保存</button>
           </div>
         </div>
       </div>
@@ -572,23 +674,25 @@ class KnowledgeFollow {
   renderRecommendationCard(item) {
     const intentTag = item.intent ? this.getIntentTagHtml(item.intent) : '';
     const timeAgo = this.formatTimeAgo(item.created_at);
+    const fullContent = item.content || '';
 
     return `
-      <div class="knowledge-card adp-recommend ${item.is_read ? '' : 'unread'}" data-id="${item.id}">
+      <div class="knowledge-card adp-recommend ${item.is_read ? '' : 'unread'}" data-id="${item.id}" data-content="${this.escapeAttr(fullContent)}">
         <div class="knowledge-card-header">
           <span class="knowledge-card-source source-adp-recommend">🔵 ADP推荐</span>
           ${intentTag}
         </div>
         <div class="knowledge-card-title">${this.escapeHtml(item.title || '知识推荐')}</div>
-        <div class="knowledge-card-content">${this.escapeHtml((item.content || '').substring(0, 200))}${(item.content || '').length > 200 ? '...' : ''}</div>
+        <div class="knowledge-card-content">${this.renderSimpleMarkdown(fullContent)}</div>
         <div class="knowledge-card-footer">
           <div class="knowledge-card-meta">
             <span>📅 ${timeAgo}</span>
             <span>来源: ADP</span>
+            <span class="copy-hint" style="opacity:0;transition:opacity 0.2s;">双击复制</span>
           </div>
           <div class="knowledge-card-actions">
-            <button class="knowledge-card-action save-action" onclick="knowledgeFollow.saveRecommendation('${item.id}')">💾 保存</button>
-            <button class="knowledge-card-action delete-action" onclick="knowledgeFollow.deleteRecommendation('${item.id}')">🗑️ 删除</button>
+            <button class="knowledge-card-action save-action" onclick="event.stopPropagation(); knowledgeFollow.saveRecommendation('${item.id}')">💾 保存</button>
+            <button class="knowledge-card-action delete-action" onclick="event.stopPropagation(); knowledgeFollow.deleteRecommendation('${item.id}')">🗑️ 删除</button>
           </div>
         </div>
       </div>
@@ -630,6 +734,103 @@ class KnowledgeFollow {
       const content = card.querySelector('.knowledge-card-content');
       if (content) content.classList.toggle('expanded');
     }
+  }
+
+  // ============ 推荐卡片交互 ============
+
+  initRecommendationCardEvents() {
+    const container = document.getElementById('recommendationList');
+    if (!container) return;
+
+    // 点击卡片展开/收起内容，同时推荐区扩大、搜索区收起
+    container.addEventListener('click', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (!card) return;
+      if (e.target.closest('.knowledge-card-action')) return;
+      const content = card.querySelector('.knowledge-card-content');
+      if (content) {
+        const isExpanding = !content.classList.contains('expanded');
+        content.classList.toggle('expanded');
+        // 展开时：推荐区扩大，搜索区收起
+        if (isExpanding) {
+          this.expandRecommendSection();
+        }
+      }
+    });
+
+    // 双击复制内容
+    container.addEventListener('dblclick', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (!card) return;
+      const rawContent = card.dataset.content || card.querySelector('.knowledge-card-content')?.textContent || '';
+      if (rawContent) {
+        navigator.clipboard.writeText(rawContent).then(() => {
+          this.showToast('已复制到剪贴板', 'success');
+        }).catch(() => {
+          this.showToast('复制失败', 'error');
+        });
+      }
+    });
+
+    // hover 显示"双击复制"提示
+    container.addEventListener('mouseenter', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (card) {
+        const hint = card.querySelector('.copy-hint');
+        if (hint) hint.style.opacity = '1';
+      }
+    }, true);
+    container.addEventListener('mouseleave', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (card) {
+        const hint = card.querySelector('.copy-hint');
+        if (hint) hint.style.opacity = '0';
+      }
+    }, true);
+  }
+
+  initLocalCardEvents() {
+    const container = document.getElementById('localSearchResults');
+    if (!container) return;
+
+    // 点击卡片展开/收起
+    container.addEventListener('click', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (!card) return;
+      if (e.target.closest('.knowledge-card-action')) return;
+      const content = card.querySelector('.knowledge-card-content');
+      if (content) content.classList.toggle('expanded');
+    });
+
+    // 双击复制
+    container.addEventListener('dblclick', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (!card) return;
+      const rawContent = card.dataset.content || card.querySelector('.knowledge-card-content')?.textContent || '';
+      if (rawContent) {
+        navigator.clipboard.writeText(rawContent).then(() => {
+          this.showToast('已复制到剪贴板', 'success');
+        }).catch(() => {
+          this.showToast('复制失败', 'error');
+        });
+      }
+    });
+
+    // hover 提示
+    container.addEventListener('mouseenter', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (card) {
+        const hint = card.querySelector('.copy-hint');
+        if (hint) hint.style.opacity = '1';
+      }
+    }, true);
+    container.addEventListener('mouseleave', (e) => {
+      const card = e.target.closest('.knowledge-card');
+      if (card) {
+        const hint = card.querySelector('.copy-hint');
+        if (hint) hint.style.opacity = '0';
+      }
+    }, true);
   }
 
   async saveToLocal(id, type) {
@@ -726,6 +927,11 @@ class KnowledgeFollow {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  escapeAttr(text) {
+    if (!text) return '';
+    return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   showToast(message, type = 'info') {

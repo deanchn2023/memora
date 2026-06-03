@@ -107,28 +107,8 @@
               <div class="notebook-sidebar">
                 <div class="sidebar-section">
                   <h4>分类</h4>
-                  <div class="category-list">
-                    <button class="category-item active" data-category="all">全部</button>
-                    <div class="category-item-wrapper">
-                      <button class="category-item" data-category="meeting">会议记录</button>
-                      <button class="category-delete" data-category="meeting" title="删除所有会议记录">🗑️</button>
-                    </div>
-                    <div class="category-item-wrapper">
-                      <button class="category-item" data-category="feedback">问题反馈</button>
-                      <button class="category-delete" data-category="feedback" title="删除所有问题反馈">🗑️</button>
-                    </div>
-                    <div class="category-item-wrapper">
-                      <button class="category-item" data-category="task">待办任务</button>
-                      <button class="category-delete" data-category="task" title="删除所有待办任务">🗑️</button>
-                    </div>
-                    <div class="category-item-wrapper">
-                      <button class="category-item" data-category="idea">想法创意</button>
-                      <button class="category-delete" data-category="idea" title="删除所有想法创意">🗑️</button>
-                    </div>
-                    <div class="category-item-wrapper">
-                      <button class="category-item" data-category="general">其他</button>
-                      <button class="category-delete" data-category="general" title="删除所有其他笔记">🗑️</button>
-                    </div>
+                  <div class="category-list" id="categoryList">
+                    <!-- 动态渲染，由 renderCategoryList() 控制 -->
                   </div>
                 </div>
                 <div class="sidebar-section">
@@ -221,7 +201,6 @@
                   </div>
                   <div class="knowledge-section-actions">
                     <button class="knowledge-action-btn" id="knowledgeRefreshBtn">🔄 刷新</button>
-                    <button class="knowledge-action-btn" id="knowledgeSettingsBtn">⚙️ 设置</button>
                   </div>
                 </div>
                 <div id="recommendationList" class="knowledge-card-list">
@@ -243,35 +222,7 @@
                 </div>
 
                 <div class="search-panels" id="searchPanels">
-                  <!-- 面板1: 资源文件 -->
-                  <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
-                    <div class="search-panel-header" data-drag="public">
-                      <span class="search-panel-title">📄 资源文件</span>
-                      <span class="search-panel-count" id="publicCount">0</span>
-                    </div>
-                    <div class="search-panel-body" id="publicSearchResults">
-                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
-                    </div>
-                  </div>
-
-                  <!-- 拖拽分割条 -->
-                  <div class="search-panel-resizer" data-resizer="0"></div>
-
-                  <!-- 面板2: 本地记忆 -->
-                  <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
-                    <div class="search-panel-header" data-drag="local">
-                      <span class="search-panel-title">🧠 本地记忆</span>
-                      <span class="search-panel-count" id="localCount">0</span>
-                    </div>
-                    <div class="search-panel-body" id="localSearchResults">
-                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
-                    </div>
-                  </div>
-
-                  <!-- 拖拽分割条 -->
-                  <div class="search-panel-resizer" data-resizer="1"></div>
-
-                  <!-- 面板3: ADP 问答 -->
+                  <!-- 面板1: ADP 问答（优先展示流式输出） -->
                   <div class="search-panel" id="panelADP" data-panel="adp" style="flex: 1 1 0%;">
                     <div class="search-panel-header" data-drag="adp">
                       <span class="search-panel-title">🤖 ADP 问答</span>
@@ -292,6 +243,34 @@
                         <button class="adp-done-btn" onclick="knowledgeFollow.copyADPResult()">📋 复制</button>
                         <button class="adp-done-btn" onclick="knowledgeFollow.dismissADPResult()">❌ 忽略</button>
                       </div>
+                    </div>
+                  </div>
+
+                  <!-- 拖拽分割条 -->
+                  <div class="search-panel-resizer" data-resizer="0"></div>
+
+                  <!-- 面板2: 本地记忆 -->
+                  <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
+                    <div class="search-panel-header" data-drag="local">
+                      <span class="search-panel-title">🧠 本地记忆</span>
+                      <span class="search-panel-count" id="localCount">0</span>
+                    </div>
+                    <div class="search-panel-body" id="localSearchResults">
+                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
+                    </div>
+                  </div>
+
+                  <!-- 拖拽分割条 -->
+                  <div class="search-panel-resizer" data-resizer="1"></div>
+
+                  <!-- 面板3: 资源文件 -->
+                  <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
+                    <div class="search-panel-header" data-drag="public">
+                      <span class="search-panel-title">📄 资源文件</span>
+                      <span class="search-panel-count" id="publicCount">0</span>
+                    </div>
+                    <div class="search-panel-body" id="publicSearchResults">
+                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
                     </div>
                   </div>
                 </div>

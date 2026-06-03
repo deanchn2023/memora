@@ -65,9 +65,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notebookGetNotes: (category) => ipcRenderer.invoke('notebook-get-notes', category),
   notebookGetNote: (id) => ipcRenderer.invoke('notebook-get-note', id),
   notebookUpdateNote: (id, updates) => ipcRenderer.invoke('notebook-update-note', id, updates),
-  notebookDeleteNote: (id) => ipcRenderer.invoke('notebook-delete-note', id),
+  notebookDeleteNote: (id, reason) => ipcRenderer.invoke('notebook-delete-note', id, reason),
   notebookDeleteNotesByCategory: (category) => ipcRenderer.invoke('notebook-delete-notes-by-category', category),
   notebookGetStats: () => ipcRenderer.invoke('notebook-get-stats'),
+  notebookGetCategories: () => ipcRenderer.invoke('notebook-get-categories'),
+  notebookSaveCategories: (categories) => ipcRenderer.invoke('notebook-save-categories', categories),
   
   // 反馈系统（用于持续优化）
   recordFeedback: (feedback) => ipcRenderer.invoke('record-feedback', feedback),

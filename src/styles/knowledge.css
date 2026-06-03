@@ -289,11 +289,27 @@
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+  transition: max-height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .knowledge-card-content.expanded {
   display: block;
   -webkit-line-clamp: unset;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.knowledge-card-content.expanded::-webkit-scrollbar {
+  width: 4px;
+}
+
+.knowledge-card-content.expanded::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.knowledge-card-content.expanded::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 2px;
 }
 
 .knowledge-card-footer {
@@ -489,8 +505,24 @@
   display: flex;
   flex-direction: column;
   min-height: 80px;
+  max-height: calc(100% - 12px);
   overflow: hidden;
   border-radius: 0;
+  transition: flex 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ADP 面板点击展开 */
+.search-panel.expanded {
+  flex: 3 1 0% !important;
+}
+
+.search-panel.collapsed {
+  flex: 0.5 1 0% !important;
+  min-height: 40px;
+}
+
+.search-panel.collapsed .search-panel-body {
+  display: none;
 }
 
 .search-panel-header {

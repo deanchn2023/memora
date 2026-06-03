@@ -286,25 +286,11 @@ const App = {
     
     // 记事本相关事件
     document.getElementById('notebookSearchInput').addEventListener('input', () => this.searchNotes());
-    document.querySelectorAll('.category-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        document.querySelectorAll('.category-item').forEach(i => i.classList.remove('active'));
-        e.target.classList.add('active');
-        this.loadNotes(e.target.dataset.category);
-      });
-    });
     
-    // 类别删除按钮事件
-    document.querySelectorAll('.category-delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const category = e.target.dataset.category;
-        this.deleteNotesByCategory(category);
-      });
+    // 加载自定义分类并渲染侧边栏
+    this.loadCustomCategories().then(() => {
+      this.renderCategoryList();
     });
-    
-    // 侧边栏分类作为拖拽目标
-    this.bindCategoryDropTargets();
     
     // 记事本列表事件委托（处理动态生成的按钮）
     document.getElementById('notebookList').addEventListener('click', (e) => {
@@ -451,6 +437,7 @@ const App = {
     // 初始化知识跟随模块
     if (window.knowledgeFollow) {
       window.knowledgeFollow.init();
+      window.knowledgeFollow.onShow();
     }
   },
 
@@ -909,12 +896,12 @@ const App = {
   },
   
   async clearAllMemories() {
-    if (confirm('确定要清空所有记忆吗？此操作不可撤销！')) {
-      if (window.electronAPI) {
-        await window.electronAPI.clearAllMemories();
-        this.loadMemories();
-        this.showToast('所有记忆已清空');
-      }
+    const confirmed = await this.showConfirmDialog('清空确认', '确定要清空所有记忆吗？此操作不可撤销！');
+    if (!confirmed) return;
+    if (window.electronAPI) {
+      await window.electronAPI.clearAllMemories();
+      this.loadMemories();
+      this.showToast('所有记忆已清空');
     }
   },
   
@@ -1017,6 +1004,7 @@ const App = {
             <div class="note-footer">
               <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
+              ${this.getAnalysisStatusTag(note)}
               <div class="note-actions">
                 <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
                 <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
@@ -1040,15 +1028,190 @@ const App = {
     }
   },
 
+  getAnalysisStatusTag(note) {
+    if (!note.analysis) return '';
+    const status = note.analysis.status;
+    if (!status) {
+      // 兼容旧数据：根据已有字段推断状态
+      if (note.analysis.hasRecommendation) return '<span class="note-status-tag tag-recommended">已推荐知识</span>';
+      if (note.analysis.isTask) return '<span class="note-status-tag tag-task">已创建待办</span>';
+      if (note.analyzed) return '<span class="note-status-tag tag-analyzed">已分析</span>';
+      return '';
+    }
+    const tagMap = {
+      '闲聊': 'note-status-tag tag-chat',
+      '无需推荐': 'note-status-tag tag-skip',
+      '已推荐知识': 'note-status-tag tag-recommended',
+      '已创建待办': 'note-status-tag tag-task',
+      '已提炼记忆': 'note-status-tag tag-memory'
+    };
+    const cls = tagMap[status] || 'note-status-tag tag-skip';
+    return `<span class="${cls}">${status}</span>`;
+  },
+
   getNoteCategoryLabel(category) {
-    const labels = {
+    const customCategories = this._customCategories || {};
+    if (customCategories[category]) {
+      return customCategories[category].label || category;
+    }
+    const defaultLabels = {
       meeting: '会议记录',
       feedback: '问题反馈',
       task: '待办任务',
-      idea: '想法创意',
-      general: '其他'
+      idea: '想法创意',      general: '其他'
     };
-    return labels[category] || category;
+    return defaultLabels[category] || category;
+  },
+
+  // 获取所有分类列表（合并默认 + 自定义）
+  getAllCategories() {
+    const defaults = [
+      { key: 'meeting', label: '会议记录' },
+      { key: 'feedback', label: '问题反馈' },
+      { key: 'task', label: '待办任务' },
+      { key: 'idea', label: '想法创意' },
+      { key: 'general', label: '其他' }
+    ];
+    const customCategories = this._customCategories || {};
+    // 合并：默认分类可被自定义覆盖 label，自定义分类追加
+    const merged = {};
+    defaults.forEach(cat => {
+      merged[cat.key] = { key: cat.key, label: cat.label, isDefault: true };
+    });
+    Object.entries(customCategories).forEach(([key, val]) => {
+      if (merged[key]) {
+        // 覆盖默认分类的 label
+        merged[key].label = val.label;
+      } else {
+        merged[key] = { key, label: val.label, isDefault: false };
+      }
+    });
+    // 保持默认顺序在前，自定义在后
+    const result = [];
+    defaults.forEach(cat => { result.push(merged[cat.key]); });
+    Object.values(merged).filter(c => !c.isDefault).forEach(c => result.push(c));
+    return result;
+  },
+
+  // 加载自定义分类配置
+  async loadCustomCategories() {
+    try {
+      if (window.electronAPI && window.electronAPI.notebookGetCategories) {
+        const result = await window.electronAPI.notebookGetCategories();
+        this._customCategories = result.categories || {};
+      } else {
+        this._customCategories = {};
+      }
+    } catch (e) {
+      this._customCategories = {};
+    }
+  },
+
+  // 保存自定义分类配置
+  async saveCustomCategories() {
+    try {
+      if (window.electronAPI && window.electronAPI.notebookSaveCategories) {
+        await window.electronAPI.notebookSaveCategories(this._customCategories || {});
+      }
+    } catch (e) {
+      console.error('保存分类配置失败:', e);
+    }
+  },
+
+  // 重绘侧边栏分类列表
+  renderCategoryList() {
+    const categoryListEl = document.querySelector('.category-list');
+    if (!categoryListEl) return;
+
+    const allCategories = this.getAllCategories();
+    const activeItem = document.querySelector('.category-item.active');
+    const activeCategory = activeItem ? activeItem.dataset.category : 'all';
+
+    let html = `<button class="category-item ${activeCategory === 'all' ? 'active' : ''}" data-category="all">全部</button>`;
+    allCategories.forEach(cat => {
+      html += `
+        <div class="category-item-wrapper">
+          <button class="category-item ${activeCategory === cat.key ? 'active' : ''}" data-category="${cat.key}">${cat.label}</button>
+          <button class="category-edit" data-category="${cat.key}" title="重命名">✏️</button>
+          <button class="category-delete" data-category="${cat.key}" title="删除所有${cat.label}笔记">🗑️</button>
+        </div>`;
+    });
+    html += `<button class="category-add-btn" title="新增分类">＋ 新增分类</button>`;
+    categoryListEl.innerHTML = html;
+
+    // 重新绑定事件
+    this.bindCategoryEvents();
+  },
+
+  // 绑定侧边栏分类事件（含新增、编辑、删除、拖放）
+  bindCategoryEvents() {
+    // 分类点击
+    document.querySelectorAll('.category-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        document.querySelectorAll('.category-item').forEach(i => i.classList.remove('active'));
+        e.target.classList.add('active');
+        this.loadNotes(e.target.dataset.category);
+      });
+    });
+
+    // 删除按钮
+    document.querySelectorAll('.category-delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const category = e.target.dataset.category;
+        this.deleteNotesByCategory(category);
+      });
+    });
+
+    // 编辑（重命名）按钮
+    document.querySelectorAll('.category-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const category = e.target.dataset.category;
+        this.renameCategory(category);
+      });
+    });
+
+    // 新增分类按钮
+    const addBtn = document.querySelector('.category-add-btn');
+    if (addBtn) {
+      addBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.addCustomCategory();
+      });
+    }
+
+    // 重新绑定拖放目标
+    this.bindCategoryDropTargets();
+  },
+
+  // 新增自定义分类
+  async addCustomCategory() {
+    const name = await this.showInputDialog('新增分类', '请输入新分类名称：');
+    if (!name || !name.trim()) return;
+
+    const key = 'custom_' + Date.now();
+    if (!this._customCategories) this._customCategories = {};
+    this._customCategories[key] = { label: name.trim() };
+    await this.saveCustomCategories();
+    this.renderCategoryList();
+    this.showToast(`已添加分类「${name.trim()}」`, 'success');
+  },
+
+  // 重命名分类
+  async renameCategory(category) {
+    const currentLabel = this.getNoteCategoryLabel(category);
+    const newName = await this.showInputDialog('重命名分类', '请输入新的分类名称：', currentLabel);
+    if (!newName || !newName.trim() || newName.trim() === currentLabel) return;
+
+    if (!this._customCategories) this._customCategories = {};
+    this._customCategories[category] = { label: newName.trim() };
+    await this.saveCustomCategories();
+    this.renderCategoryList();
+    this.showToast(`分类已重命名为「${newName.trim()}」`, 'success');
+    // 刷新笔记列表中的分类标签
+    const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+    this.loadNotes(activeCat);
   },
 
   async addNote() {
@@ -1104,23 +1267,74 @@ const App = {
   },
 
   async deleteNote(id) {
+    // 让用户选择删除原因，用于 AI prompt 持续优化
+    const reasons = [
+      { value: 'should_not_save', label: '不该保存（闲聊/无效内容）' },
+      { value: 'wrong_category', label: '分类错误' },
+      { value: 'duplicate', label: '重复内容' },
+      { value: 'no_longer_needed', label: '不再需要' },
+      { value: 'other', label: '其他原因' }
+    ];
+    const reasonLabels = reasons.map(r => r.label).join('\n');
+    const note = this.notesCache ? this.notesCache.find(n => n.id === id) : null;
+    const notePreview = note ? note.content?.substring(0, 30) + '...' : '';
+    
+    const selected = await this.showDeleteReasonDialog(notePreview, reasons);
+    const reason = selected || 'no_reason';
+    
     if (window.electronAPI) {
-      await window.electronAPI.notebookDeleteNote(id);
+      await window.electronAPI.notebookDeleteNote(id, reason);
       this.loadNotes();
-      this.showToast('笔记已删除');
+      this.showToast('笔记已删除，反馈已记录');
     }
   },
   
+  showDeleteReasonDialog(notePreview, reasons) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'dialog-overlay';
+      overlay.innerHTML = `
+        <div class="dialog-card delete-reason-dialog">
+          <h3>删除笔记</h3>
+          ${notePreview ? `<p class="delete-note-preview">${notePreview}</p>` : ''}
+          <p class="delete-reason-hint">选择删除原因，帮助 AI 更好地识别内容</p>
+          <div class="delete-reason-list">
+            ${reasons.map((r, i) => `
+              <button class="delete-reason-btn" data-reason="${r.value}">
+                ${r.label}
+              </button>
+            `).join('')}
+          </div>
+          <button class="delete-reason-cancel">取消</button>
+        </div>
+      `;
+      
+      overlay.querySelectorAll('.delete-reason-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          overlay.remove();
+          resolve(btn.dataset.reason);
+        });
+      });
+      
+      overlay.querySelector('.delete-reason-cancel').addEventListener('click', () => {
+        overlay.remove();
+        resolve(null);
+      });
+      
+      document.body.appendChild(overlay);
+    });
+  },
+  
   async deleteNotesByCategory(category) {
-    if (confirm(`确定要删除所有"${this.getNoteCategoryLabel(category)}"类别的笔记吗？此操作不可撤销！`)) {
-      if (window.electronAPI) {
-        const result = await window.electronAPI.notebookDeleteNotesByCategory(category);
-        if (result.success) {
-          this.loadNotes();
-          this.showToast(`已删除所有${this.getNoteCategoryLabel(category)}笔记`);
-        } else {
-          this.showToast('删除失败', 'error');
-        }
+    const confirmed = await this.showConfirmDialog('删除确认', `确定要删除所有"${this.getNoteCategoryLabel(category)}"类别的笔记吗？此操作不可撤销！`);
+    if (!confirmed) return;
+    if (window.electronAPI) {
+      const result = await window.electronAPI.notebookDeleteNotesByCategory(category);
+      if (result.success) {
+        this.loadNotes();
+        this.showToast(`已删除所有${this.getNoteCategoryLabel(category)}笔记`);
+      } else {
+        this.showToast('删除失败', 'error');
       }
     }
   },
@@ -1158,9 +1372,21 @@ const App = {
         item.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', item.dataset.id);
+
+        // 创建缩小版拖拽预览
+        const title = item.querySelector('.note-title')?.textContent || '';
+        const category = item.querySelector('.note-category')?.textContent || '';
+        const ghost = document.createElement('div');
+        ghost.className = 'note-drag-ghost';
+        ghost.innerHTML = `<span class="ghost-category">${category}</span><span class="ghost-title">${title}</span>`;
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 8, 12);
+
         // 需要延迟添加，否则拖拽预览也会半透明
         requestAnimationFrame(() => {
           item.classList.add('dragging-active');
+          // 清理 ghost 元素
+          requestAnimationFrame(() => ghost.remove());
         });
       });
 
@@ -1237,13 +1463,7 @@ const App = {
     const oldPopup = document.querySelector('.category-popup');
     if (oldPopup) oldPopup.remove();
 
-    const categories = [
-      { key: 'meeting', label: '会议记录' },
-      { key: 'feedback', label: '问题反馈' },
-      { key: 'task', label: '待办任务' },
-      { key: 'idea', label: '想法创意' },
-      { key: 'general', label: '其他' }
-    ];
+    const categories = this.getAllCategories();
 
     // 创建浮层菜单
     const popup = document.createElement('div');
@@ -1563,6 +1783,7 @@ const App = {
             <div class="note-footer">
               <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
+              ${this.getAnalysisStatusTag(note)}
               <div class="note-actions">
                 <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
                 <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
@@ -2148,12 +2369,15 @@ const App = {
         }
       });
       
-      item.querySelector('.delete-task-btn').addEventListener('click', (e) => {
+      item.querySelector('.delete-task-btn').addEventListener('click', async (e) => {
         e.stopPropagation();
         const task = Store.getTasks().find(t => t.id === taskId);
-        if (task && confirm(`确定要删除任务"${task.title}"吗？`)) {
-          Store.deleteTask(taskId);
-          this.renderTaskList();
+        if (task) {
+          const confirmed = await this.showConfirmDialog('删除确认', `确定要删除任务"${task.title}"吗？`);
+          if (confirmed) {
+            Store.deleteTask(taskId);
+            this.renderTaskList();
+          }
         }
       });
     });
@@ -2238,6 +2462,166 @@ const App = {
       toast.style.animation = 'fadeOut 0.3s ease';
       setTimeout(() => toast.remove(), 300);
     }, 2000);
+  },
+
+  // 自定义输入弹窗（替代 prompt()，在 Electron contextIsolation 下 prompt 不可用）
+  showInputDialog(title, message, defaultValue = '') {
+    return new Promise((resolve) => {
+      // 移除已有弹窗
+      const existing = document.querySelector('.input-dialog-overlay');
+      if (existing) existing.remove();
+
+      const overlay = document.createElement('div');
+      overlay.className = 'input-dialog-overlay';
+      overlay.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+        display: flex; align-items: center; justify-content: center;
+        z-index: 5000; animation: fadeIn 0.2s ease;
+      `;
+
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        width: 380px; max-width: 90%; background: white;
+        border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
+      `;
+
+      dialog.innerHTML = `
+        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: #1a1a2e;">${title}</div>
+        <div style="padding: 4px 24px 16px; font-size: 13px; color: #6b7280;">${message}</div>
+        <div style="padding: 0 24px 20px;">
+          <input type="text" class="input-dialog-field" value="${defaultValue.replace(/"/g, '&quot;')}"
+            style="width: 100%; padding: 10px 14px; border: 1.5px solid rgba(0,0,0,0.1);
+            border-radius: 10px; font-size: 14px; outline: none; font-family: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s; background: #f8f9fc;"
+            placeholder="请输入..." />
+        </div>
+        <div style="display: flex; border-top: 0.5px solid rgba(0,0,0,0.06);">
+          <button class="input-dialog-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
+            font-size: 14px; font-weight: 500; color: #6b7280; cursor: pointer;
+            border-right: 0.5px solid rgba(0,0,0,0.06); transition: background 0.15s;">取消</button>
+          <button class="input-dialog-confirm" style="flex:1; padding: 14px; border: none; background: transparent;
+            font-size: 14px; font-weight: 600; color: #4F8EF7; cursor: pointer;
+            transition: background 0.15s;">确定</button>
+        </div>
+      `;
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      const input = dialog.querySelector('.input-dialog-field');
+      const cancelBtn = dialog.querySelector('.input-dialog-cancel');
+      const confirmBtn = dialog.querySelector('.input-dialog-confirm');
+
+      // 聚焦输入框
+      setTimeout(() => { input.focus(); input.select(); }, 50);
+
+      // 输入框聚焦样式
+      input.addEventListener('focus', () => {
+        input.style.borderColor = '#4F8EF7';
+        input.style.boxShadow = '0 0 0 3px rgba(79,142,247,0.15)';
+        input.style.background = 'white';
+      });
+      input.addEventListener('blur', () => {
+        input.style.borderColor = 'rgba(0,0,0,0.1)';
+        input.style.boxShadow = 'none';
+        input.style.background = '#f8f9fc';
+      });
+
+      const cleanup = () => {
+        overlay.style.animation = 'fadeOut 0.15s ease';
+        setTimeout(() => overlay.remove(), 150);
+      };
+
+      const onConfirm = () => {
+        const val = input.value.trim();
+        cleanup();
+        resolve(val || null);
+      };
+
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      confirmBtn.addEventListener('click', onConfirm);
+      cancelBtn.addEventListener('click', onCancel);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') onConfirm();
+        if (e.key === 'Escape') onCancel();
+      });
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) onCancel();
+      });
+
+      // hover 样式
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = '#f5f5f7'; });
+      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+      confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = 'rgba(79,142,247,0.06)'; });
+      confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.background = 'transparent'; });
+    });
+  },
+
+  // 自定义确认弹窗（替代 confirm()）
+  showConfirmDialog(title, message) {
+    return new Promise((resolve) => {
+      const existing = document.querySelector('.confirm-dialog-overlay');
+      if (existing) existing.remove();
+
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-dialog-overlay';
+      overlay.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+        display: flex; align-items: center; justify-content: center;
+        z-index: 5000; animation: fadeIn 0.2s ease;
+      `;
+
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        width: 340px; max-width: 90%; background: white;
+        border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
+      `;
+
+      dialog.innerHTML = `
+        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: #1a1a2e;">${title}</div>
+        <div style="padding: 4px 24px 20px; font-size: 13px; color: #6b7280; line-height: 1.6;">${message}</div>
+        <div style="display: flex; border-top: 0.5px solid rgba(0,0,0,0.06);">
+          <button class="confirm-dialog-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
+            font-size: 14px; font-weight: 500; color: #6b7280; cursor: pointer;
+            border-right: 0.5px solid rgba(0,0,0,0.06); transition: background 0.15s;">取消</button>
+          <button class="confirm-dialog-ok" style="flex:1; padding: 14px; border: none; background: transparent;
+            font-size: 14px; font-weight: 600; color: #FF3B30; cursor: pointer;
+            transition: background 0.15s;">确定</button>
+        </div>
+      `;
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      const cancelBtn = dialog.querySelector('.confirm-dialog-cancel');
+      const okBtn = dialog.querySelector('.confirm-dialog-ok');
+
+      const cleanup = () => {
+        overlay.style.animation = 'fadeOut 0.15s ease';
+        setTimeout(() => overlay.remove(), 150);
+      };
+
+      cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
+      okBtn.addEventListener('click', () => { cleanup(); resolve(true); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) { cleanup(); resolve(false); } });
+      document.addEventListener('keydown', function handler(e) {
+        if (e.key === 'Escape') { cleanup(); resolve(false); document.removeEventListener('keydown', handler); }
+        if (e.key === 'Enter') { cleanup(); resolve(true); document.removeEventListener('keydown', handler); }
+      });
+
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = '#f5f5f7'; });
+      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+      okBtn.addEventListener('mouseenter', () => { okBtn.style.background = 'rgba(255,59,48,0.06)'; });
+      okBtn.addEventListener('mouseleave', () => { okBtn.style.background = 'transparent'; });
+    });
   },
 
   // === Phase 2: Agent 操作按钮处理 ===
@@ -2648,7 +3032,8 @@ const App = {
   },
 
   async resetPromptFile(filename) {
-    if (!confirm(`确定要恢复 ${filename} 到最近的备份版本吗？`)) return;
+    const confirmed = await this.showConfirmDialog('恢复确认', `确定要恢复 ${filename} 到最近的备份版本吗？`);
+    if (!confirmed) return;
     if (!window.electronAPI?.promptFiles?.reset) return;
 
     const result = await window.electronAPI.promptFiles.reset(filename);
@@ -2906,7 +3291,8 @@ const App = {
 
   async applyOptimizerToMain(candidateFilename) {
     if (!window.electronAPI?.optimizer?.applyToMain) return;
-    if (!confirm('确定要将此优化版本应用到主模板文件吗？主文件将被替换（旧版本自动备份）。')) return;
+    const confirmed = await this.showConfirmDialog('应用确认', '确定要将此优化版本应用到主模板文件吗？主文件将被替换（旧版本自动备份）。');
+    if (!confirmed) return;
 
     const result = await window.electronAPI.optimizer.applyToMain(candidateFilename);
     if (result.success) {

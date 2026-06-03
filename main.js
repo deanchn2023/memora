@@ -506,7 +506,7 @@ function getCurrentMemoryPrompt() {
 
 // 智能过滤配置
 const FILTER_CONFIG = {
-  maxLength: 500, // 最大字数限制
+  maxLength: 1000, // 最大字数限制（放宽，让 AI 判定是否有效信息）
   confidenceThreshold: 0.9, // 自动弹出建议的置信度阈值
   lowConfidenceThreshold: 0.7, // 静默候选的置信度阈值
   
@@ -691,9 +691,29 @@ function createWindow() {
   });
   
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
-  // DevTools: 使用 Ctrl+Shift+I 打开，或取消下面这行自动打开
-  // mainWindow.webContents.openDevTools({ mode: 'detach' });
-  
+
+  // 渲染进程崩溃恢复
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[App] Renderer process gone:', details.reason, details.exitCode);
+    if (details.reason !== 'clean-exit') {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.reload();
+          console.log('[App] Reloaded after renderer crash');
+        }
+      }, 1000);
+    }
+  });
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDesc) => {
+    console.error('[App] Failed to load:', errorCode, errorDesc);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }, 2000);
+  });
+
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     mainWindow.focus();
@@ -904,26 +924,8 @@ async function analyzeClipboardText(text) {
     
     if (!preResult.shouldAnalyze) {
       console.log('[AI] Pre-classification rejected:', preResult.reason);
-      // 保存到记事本
-      if (notebook) {
-        notebook.addNote({
-          content: text,
-          category: 'general',
-          analyzed: false,
-          analysis: {
-            reason: preResult.reason
-          }
-        });
-        console.log('[Notebook] Clipboard content saved (pre-classification rejected)');
-        
-        // 通知前端有新笔记
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('new-note-added', {
-            source: 'clipboard',
-            title: text.substring(0, 30)
-          });
-        }
-      }
+      // 闲聊/无效内容不入记事本，仅记录日志
+      console.log('[Notebook] Skipped: pre-classification rejected -', preResult.reason);
       isAnalyzing = false;
       return;
     }
@@ -950,14 +952,20 @@ async function analyzeClipboardText(text) {
     // 获取API配置
     const apiConfig = getAPIConfig();
     
+    // 生成 trace_id 用于反馈闭环
+    const traceId = feedbackLogger ? feedbackLogger.newTraceId() : `tr_${Date.now()}_local`;
+    
     // 构建用户提示词，附带预分类信号
-    let userPrompt = `分析以下文本是否包含待办事项：\n\n${text}`;
+    let userPrompt = `分析以下文本：\n\n${text}`;
     if (preResult.hasAtMention) {
       userPrompt += '\n\n[预分类信号：检测到@提及，这通常是强待办信号]';
     }
     if (preResult.hasNumberedList) {
       userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
     }
+    
+    // 构建 system prompt，注入动态数据
+    const systemPrompt = buildClipboardAnalysisPrompt(traceId);
     
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -970,7 +978,7 @@ async function analyzeClipboardText(text) {
         messages: [
           {
             role: 'system',
-            content: getCurrentAIPrompt()
+            content: systemPrompt
           },
           {
             role: 'user',
@@ -979,6 +987,18 @@ async function analyzeClipboardText(text) {
         ]
       })
     });
+    
+    // 记录 AI 调用 trace
+    const analysisStartTs = Date.now();
+    if (feedbackLogger) {
+      feedbackLogger.recordTrace({
+        trace_id: traceId, ts: new Date(analysisStartTs).toISOString(),
+        module: 'clipboard_analysis', prompt_version: 'task_recognition_v2.0',
+        model: apiConfig.model,
+        input: { text: text.substring(0, 200), pre_classify: preResult.reason },
+        output: null, latency_ms: null
+      });
+    }
 
     if (!response.ok) {
       console.error('[AI] API response not OK:', response.status);
@@ -1011,13 +1031,27 @@ async function analyzeClipboardText(text) {
     if (data.choices && data.choices[0] && data.choices[0].message) {
       let result;
       try {
-        result = JSON.parse(data.choices[0].message.content);
+        // 尝试提取 JSON（兼容 markdown 代码块包裹）
+        let contentStr = data.choices[0].message.content.trim();
+        const jsonMatch = contentStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          contentStr = jsonMatch[1].trim();
+        }
+        result = JSON.parse(contentStr);
         analysisResult = result;
         confidence = result.confidence || 0;
         isTask = result.is_task || false;
         taskTitle = result.title || null;
+        console.log('[AI] Parsed result:', JSON.stringify({
+          is_valid_info: result.is_valid_info,
+          is_task: result.is_task,
+          needs_recommendation: result.needs_recommendation,
+          recommendation_intent: result.recommendation_intent,
+          recommendation_query: result.recommendation_query,
+          confidence: result.confidence
+        }));
       } catch (e) {
-        console.error('[AI] Failed to parse response:', e);
+        console.error('[AI] Failed to parse response:', e, 'Raw:', data.choices[0].message.content?.substring(0, 200));
         // 保存到记忆系统
         if (memoryStore) {
           memoryStore.addMemory({
@@ -1038,13 +1072,53 @@ async function analyzeClipboardText(text) {
         return;
       }
       
-      // 保存到记事本（所有剪切板内容都保存）
-      if (notebook) {
-        notebook.addNote({
+      // 保存到记事本 —— 仅保存有效信息（闲聊/无效内容不入记事本）
+      // 动态匹配分类：优先使用 AI 返回的 category，再根据 tags 匹配
+      let noteCategory = result.category || null; // AI 直接返回的 category key
+      
+      if (!noteCategory) {
+        if (result.is_task) {
+          noteCategory = 'task';
+        } else if (result.tags && result.tags.length > 0) {
+          // 从自定义分类中匹配
+          const customCategories = notebook.getCustomCategories();
+          for (const tag of result.tags) {
+            const matchedKey = Object.keys(customCategories).find(key =>
+              customCategories[key].label && customCategories[key].label.includes(tag)
+            );
+            if (matchedKey) {
+              noteCategory = matchedKey;
+              break;
+            }
+          }
+          // 默认分类映射
+          if (!noteCategory) {
+            const defaultMapping = {
+              '问题': 'feedback', '反馈': 'feedback', 'bug': 'feedback', '报错': 'feedback',
+              '会议': 'meeting', '讨论': 'meeting',
+              '想法': 'idea', '创意': 'idea', '设计': 'idea',
+              '工作': 'task', '项目': 'task'
+            };
+            for (const [keyword, cat] of Object.entries(defaultMapping)) {
+              if (result.tags.some(t => t.includes(keyword))) {
+                noteCategory = cat;
+                break;
+              }
+            }
+          }
+        }
+      }
+      if (!noteCategory) noteCategory = 'general';
+
+      // 仅有效信息保存到记事本
+      let savedNoteId = null;
+      if (result.is_valid_info && notebook) {
+        const note = notebook.addNote({
           content: text,
-          category: result.is_task ? 'feedback' : 'general',
+          category: noteCategory,
           analyzed: true,
           analysis: {
+            traceId: traceId,
             isTask: result.is_task,
             taskTitle: result.title,
             taskPriority: result.priority,
@@ -1052,22 +1126,27 @@ async function analyzeClipboardText(text) {
             reason: result.reason,
             time: result.time,
             description: result.description,
-            confidence: confidence
+            confidence: confidence,
+            needsRecommendation: result.needs_recommendation || false,
+            recommendationIntent: result.recommendation_intent || null
           }
         });
-        console.log('[Notebook] Clipboard content saved to notebook');
+        savedNoteId = note ? note.id : null;
+        console.log('[Notebook] Valid info saved to notebook, category:', noteCategory);
         
-        // 通知前端有新笔记（用于角标计数）
+        // 通知前端有新笔记
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('new-note-added', {
             source: 'clipboard',
             title: result.title || text.substring(0, 30)
           });
         }
+      } else {
+        console.log('[Notebook] Skipped: not valid info -', result.reason);
       }
       
-      // 提取结构化记忆（只保存提炼后的信息）
-      if (memoryStore && (result.is_task || confidence >= 0.7)) {
+      // 提取结构化记忆（只保存提炼后的有效信息）
+      if (memoryStore && result.is_valid_info && (result.is_task || confidence >= 0.7)) {
         // 调用记忆提取Prompt
         try {
           const memoryResponse = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
@@ -1094,7 +1173,13 @@ async function analyzeClipboardText(text) {
           if (memoryResponse.ok) {
             const memoryData = await memoryResponse.json();
             if (memoryData.choices && memoryData.choices[0]) {
-              const memoryResult = JSON.parse(memoryData.choices[0].message.content);
+              // 兼容 markdown 代码块包裹的 JSON
+              let memoryContent = memoryData.choices[0].message.content.trim();
+              const memoryJsonMatch = memoryContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+              if (memoryJsonMatch) {
+                memoryContent = memoryJsonMatch[1].trim();
+              }
+              const memoryResult = JSON.parse(memoryContent);
               
               // 根据提取的信息类型保存到记忆系统
               const memoryType = memoryResult.memory_type === 'instant' ? MEMORY_TYPES.INSTANT :
@@ -1110,7 +1195,7 @@ async function analyzeClipboardText(text) {
                   keyPoints: memoryResult.key_points || [],
                   sentiment: memoryResult.sentiment || 'neutral',
                   entities: memoryResult.entities || [],
-                  originalNoteId: null, // 关联到记事本
+                  originalNoteId: savedNoteId,
                   extractedFrom: 'clipboard'
                 },
                 confidence: confidence,
@@ -1124,8 +1209,44 @@ async function analyzeClipboardText(text) {
         }
       }
       
-      // 知识跟随：剪贴板意图分类
-      const clipboardIntent = classifyClipboardIntent(text);
+      // 知识推荐：由 AI 判断是否需要推荐（替代原 regex 分类）
+      const needsRecommendation = result.needs_recommendation || false;
+      const recommendationIntent = result.recommendation_intent || null;
+      const recommendationQuery = result.recommendation_query || text.substring(0, 100);
+
+      // 计算分析结论标签
+      let analysisStatus = '无需推荐'; // 默认
+      if (!result.is_valid_info) {
+        analysisStatus = '闲聊';
+      } else if (needsRecommendation) {
+        analysisStatus = '已推荐知识';
+      } else if (result.is_task) {
+        analysisStatus = '已创建待办';
+      } else if (result.is_valid_info) {
+        analysisStatus = '已提炼记忆';
+      }
+
+      // 更新记事本笔记的分析状态标签
+      if (result.is_valid_info && savedNoteId && notebook) {
+        const note = notebook.notes.find(n => n.id === savedNoteId);
+        if (note && note.analysis) {
+          note.analysis.status = analysisStatus;
+          note.analysis.hasRecommendation = needsRecommendation;
+          notebook.saveNotes();
+        }
+      }
+
+      // 更新 trace 输出
+      if (feedbackLogger) {
+        feedbackLogger.recordTrace({
+          trace_id: traceId, ts: new Date().toISOString(),
+          module: 'clipboard_analysis', prompt_version: 'task_recognition_v2.0',
+          model: apiConfig.model,
+          input: { text: text.substring(0, 200) },
+          output: JSON.stringify(result),
+          latency_ms: Date.now() - analysisStartTs
+        });
+      }
 
       if (result.is_task && confidence >= FILTER_CONFIG.confidenceThreshold) {
         // 高置信度：自动弹出建议
@@ -1142,7 +1263,7 @@ async function analyzeClipboardText(text) {
             confidence: confidence,
             reason: result.reason
           },
-          knowledgeIntent: clipboardIntent
+          knowledgeIntent: recommendationIntent
         });
       } else if (result.is_task && confidence >= FILTER_CONFIG.lowConfidenceThreshold) {
         // 中等置信度：静默加入候选
@@ -1156,17 +1277,18 @@ async function analyzeClipboardText(text) {
             confidence: confidence,
             reason: result.reason
           },
-          knowledgeIntent: clipboardIntent
+          knowledgeIntent: recommendationIntent
         });
       } else {
         console.log('[AI] No task or low confidence:', result.reason || 'confidence too low');
-        // 低置信度内容只保存到记事本，不提取记忆
       }
 
-      // 知识跟随：识别到意图时，异步调用 ADP 获取知识推荐
-      if (clipboardIntent) {
-        console.log('[Knowledge] Clipboard intent detected:', clipboardIntent, '- triggering ADP recommendation');
-        triggerKnowledgeRecommendation(text, clipboardIntent);
+      // 知识跟随：AI 判断需要推荐时，异步调用 ADP
+      if (needsRecommendation && recommendationIntent) {
+        console.log('[Knowledge] AI recommends knowledge, intent:', recommendationIntent, 'query:', recommendationQuery, '- triggering ADP');
+        triggerKnowledgeRecommendation(recommendationQuery, recommendationIntent);
+      } else {
+        console.log('[Knowledge] No recommendation needed. needs_recommendation:', needsRecommendation, 'intent:', recommendationIntent);
       }
     }
   } catch (error) {
@@ -1883,11 +2005,50 @@ ipcMain.handle('notebook-get-note', async (event, id) => {
 ipcMain.handle('notebook-update-note', async (event, id, updates) => {
   if (!notebook) return { success: false };
   const result = notebook.updateNote(id, updates);
+  // 反馈闭环：分类变更记录
+  if (result && feedbackLogger && updates.category) {
+    const note = notebook.getNoteById(id);
+    if (note && note.analysis) {
+      feedbackLogger.recordFeedback({
+        module: 'clipboard_analysis',
+        action: 'edit',
+        trace_id: note.analysis.traceId || null,
+        ai_output: {
+          category: note.analysis.tags ? note.analysis.tags.join(',') : '',
+          is_task: note.analysis.isTask,
+          needs_recommendation: note.analysis.needsRecommendation
+        },
+        user_final: { category: updates.category },
+        context: { source_input: note.content?.substring(0, 100) },
+        reason: updates.category !== (note.analysis.isTask ? 'task' : 'general') ? '用户调整了分类' : '更新笔记'
+      });
+    }
+  }
   return { success: result !== null, note: result };
 });
 
-ipcMain.handle('notebook-delete-note', async (event, id) => {
+ipcMain.handle('notebook-delete-note', async (event, id, reason) => {
   if (!notebook) return { success: false };
+  // 反馈闭环：删除笔记 = AI 判定有误
+  const note = notebook.getNoteById(id);
+  if (note && feedbackLogger && note.analysis) {
+    feedbackLogger.recordFeedback({
+      module: 'clipboard_analysis',
+      action: 'reject',
+      trace_id: note.analysis.traceId || null,
+      ai_output: {
+        is_valid_info: true,
+        is_task: note.analysis.isTask,
+        category: note.category,
+        needs_recommendation: note.analysis.needsRecommendation,
+        tags: note.analysis.tags
+      },
+      user_final: { is_valid_info: false },
+      context: { source_input: note.content?.substring(0, 100) },
+      reason: reason || '用户删除了该笔记（AI 不应保存此内容）'
+    });
+    console.log('[Feedback] Note deleted - recorded as negative example');
+  }
   const result = notebook.deleteNote(id);
   return { success: result !== null };
 });
@@ -1901,6 +2062,18 @@ ipcMain.handle('notebook-delete-notes-by-category', async (event, category) => {
 ipcMain.handle('notebook-get-stats', async () => {
   if (!notebook) return {};
   return notebook.getStats();
+});
+
+// 自定义分类配置
+ipcMain.handle('notebook-get-categories', async () => {
+  if (!notebook) return { categories: {} };
+  return { categories: notebook.getCustomCategories() };
+});
+
+ipcMain.handle('notebook-save-categories', async (event, categories) => {
+  if (!notebook) return { success: false };
+  notebook.saveCustomCategories(categories);
+  return { success: true };
 });
 
 // ========== 记忆提取Prompt配置 ==========
@@ -3034,8 +3207,59 @@ function getDeviceFingerprint() {
   return cachedDeviceFingerprint;
 }
 
-// 剪贴板意图分类
-function classifyClipboardIntent(text) {
+// 构建剪贴板分析的 system prompt（注入动态数据 + 反馈样本）
+function buildClipboardAnalysisPrompt(traceId) {
+  const templatePath = path.join(PROMPT_DIR, 'task_recognition_v2.0.md');
+  if (!fs.existsSync(templatePath)) {
+    return getCurrentAIPrompt(); // 回退
+  }
+  
+  let template = fs.readFileSync(templatePath, 'utf8');
+  const profile = loadProfile();
+  
+  // 获取最近的正负样本
+  const positiveExamples = (feedbackLogger ? feedbackLogger.queryFeedback({ module: 'clipboard_analysis', action: 'accept', limit: 3 }) : [])
+    .map(p => ({
+      input_text: p.context?.source_input || '',
+      user_final: typeof p.user_final === 'string' ? p.user_final : JSON.stringify(p.user_final),
+      note: p.reason || ''
+    }));
+  const negativeExamples = (feedbackLogger ? feedbackLogger.queryFeedback({ module: 'clipboard_analysis', action: 'reject', limit: 3 }) : [])
+    .map(n => ({
+      input_text: n.context?.source_input || '',
+      ai_output: typeof n.ai_output === 'string' ? n.ai_output : JSON.stringify(n.ai_output),
+      reject_reason: n.reason || ''
+    }));
+  
+  // 获取自定义分类
+  const customCategories = notebook ? notebook.getCustomCategories() : {};
+  
+  const vars = {
+    'user_profile.name': profile.user?.name || '用户',
+    'user_profile.english_name': profile.user?.english_name || '',
+    'user_profile.role': profile.user?.role || '',
+    'user_profile.industries': profile.user?.industries || [],
+    current_time: new Date().toLocaleString('zh-CN'),
+    source_meta: { app: 'clipboard', type: '其他' },
+    frequent_persons: profile.frequent_persons || [],
+    active_projects: profile.active_projects || [],
+    priority_signals: profile.preferences?.priority_signals || [],
+    low_priority_signals: profile.preferences?.low_priority_signals || [],
+    positive_examples: positiveExamples,
+    negative_examples: negativeExamples,
+    custom_categories: customCategories,
+    input_text: '' // 由 user message 提供
+  };
+  
+  let rendered = promptEngine.render(template, vars);
+  // 注入 trace_id
+  rendered = rendered.replace(/__TRACE_ID__/g, traceId);
+  
+  return rendered;
+}
+
+// 剪贴板意图分类（作为 AI 判断的降级备选方案）
+function classifyClipboardIntent(text, aiResult) {
   if (!text || text.trim().length === 0) return null;
 
   const intentPatterns = {
@@ -3044,16 +3268,30 @@ function classifyClipboardIntent(text) {
       /怎么用|如何使用|怎么操作|教程|指南|入门/i
     ],
     get_document: [
-      /文档|API文档|使用手册|开发指南|参考文档|SDK文档/i,
+      /API文档|使用手册|开发指南|参考文档|SDK文档/i,
       /在哪找|哪里有|下载地址|仓库地址|官方文档/i
     ],
     query_question: [
+      // 故障/报错类
       /为什么|怎么解决|报错|error|异常|failed|问题/i,
-      /为什么.*不|怎么.*不行|无法|不能|失败/i
+      /为什么.*不|怎么.*不行|无法|不能|失败/i,
+      // 中文疑问词（核心扩展）
+      /是否有|有没有|能不能|会不会|可不可以|是不是/i,
+      /能否|可否|是否支持|是否可以|是否能够/i,
+      /怎么.*？|如何.*？|什么.*？|哪里.*？/i,
+      // 疑问语气词
+      /[吗呢吧嘛啊呀]？\s*$/i,
+      // 计划/打算类疑问
+      /是否有.*计划|是否有.*打算|后续.*是否|将来.*是否/i,
+      // 差异/比较类疑问
+      /有什么区别|有什么不同|哪个更好|怎么选择/i,
+      // 原因/方案类疑问
+      /原因是什么|怎么办|如何处理|怎么应对/i
     ],
     doubt: [
-      /不确定|是不是|好像|似乎|应该.*吧|？？/i,
-      /\?{2,}/
+      /不确定|好像|似乎|应该.*吧/i,
+      /\?{2,}/,
+      /还是说|或者说|不太确定|不太清楚/i
     ]
   };
 
@@ -3065,9 +3303,48 @@ function classifyClipboardIntent(text) {
     }
   }
 
+  // 通用疑问句检测：文本以问号结尾，给 query_question 额外加分
+  const trimmed = text.trim();
+  if (/[？?]\s*$/.test(trimmed)) {
+    scores.query_question += 0.5;
+    // 如果文本超过15字且以问号结尾，大概率是正式问题而非随意闲聊
+    if (trimmed.length > 15) {
+      scores.query_question += 0.5;
+    }
+  }
+
+  // 如果 AI 分析结果中有 is_valid_info，增加推荐倾向
+  if (aiResult && aiResult.is_valid_info) {
+    // 不管是不是任务，有效信息都可能需要知识推荐
+    if (!aiResult.is_task) {
+      scores.query_question += 1;
+    } else {
+      // 即使是任务，如果是关于技术/产品的提问，也值得推荐
+      scores.query_question += 0.3;
+    }
+  }
+  // 如果 AI 分析的 tags 中包含问题相关标签
+  if (aiResult && aiResult.tags) {
+    const questionTags = ['问题', '反馈', '技术', '需求', '方案', '设计', '架构', '配置', '部署', '调试', '优化', '安全', '性能', '存储', '计划', '支持'];
+    for (const tag of aiResult.tags) {
+      if (questionTags.some(qt => tag.includes(qt))) {
+        scores.query_question += 0.5;
+        break;
+      }
+    }
+  }
+
+  // 意图优先级调整：当 query_question 与其他意图同分时，问题类优先
+  // 因为"文档中出现的问题"更可能是提问而非单纯找文档
   const maxScore = Math.max(...Object.values(scores));
   if (maxScore === 0) return null;
-  return Object.entries(scores).find(([_, s]) => s === maxScore)[0];
+
+  // 如果 query_question 和其他意图同分，优先返回 query_question
+  const maxIntents = Object.entries(scores).filter(([_, s]) => s === maxScore);
+  if (maxIntents.length > 1 && scores.query_question === maxScore) {
+    return 'query_question';
+  }
+  return maxIntents[0][0];
 }
 
 // 知识跟随：基于剪贴板意图异步触发 ADP 推荐搜索
@@ -3110,6 +3387,8 @@ async function triggerKnowledgeRecommendation(text, intent) {
 
     const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
+    console.log('[Knowledge] Calling ADP for recommendation, url:', httpUrl, 'appKey:', appKey.substring(0, 8) + '...', 'query:', query.substring(0, 60));
+
     const response = await fetch(httpUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3117,9 +3396,11 @@ async function triggerKnowledgeRecommendation(text, intent) {
     });
 
     if (!response.ok) {
-      console.error('[Knowledge] Recommendation ADP failed:', response.status);
+      console.error('[Knowledge] Recommendation ADP failed:', response.status, await response.text().catch(() => ''));
       return;
     }
+
+    console.log('[Knowledge] ADP response OK, reading SSE stream...');
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -3148,17 +3429,34 @@ async function triggerKnowledgeRecommendation(text, intent) {
             const parsed = JSON.parse(data);
             const eventName = currentEvent || parsed.event || '';
 
-            if ((eventName === 'text.delta') && (parsed.payload?.content?.text || parsed.content?.text)) {
-              fullText += parsed.payload?.content?.text || parsed.content?.text;
-            } else if ((eventName === 'message.added' || eventName === 'content.added') && (parsed.payload?.content?.text || parsed.content?.text)) {
-              fullText += parsed.payload?.content?.text || parsed.content?.text;
-            } else if (eventName === 'response.completed' || eventName === 'message.done') {
+            // ADP V2 文本提取：兼容两种数据结构
+            // 格式1（嵌套）：{ payload: { content: { text: "..." } } }
+            // 格式2（扁平）：{ Text: "..." }  ← ADP V2 实际格式
+            let deltaText = '';
+            if (eventName === 'text.delta') {
+              deltaText = parsed.Text || parsed.payload?.content?.[0]?.text || parsed.payload?.content?.text || parsed.content?.text || parsed.payload?.text || '';
+            } else if (eventName === 'message.added' || eventName === 'content.added') {
+              deltaText = parsed.Content?.[0]?.Text || parsed.Text || parsed.payload?.content?.[0]?.text || parsed.payload?.content?.text || parsed.content?.text || '';
+            } else if (eventName === 'message.done') {
+              // message.done 可能包含完整消息文本
+              const doneText = parsed.Message?.Content?.[0]?.Text || parsed.Text || '';
+              if (doneText && !fullText) {
+                fullText = doneText;
+              }
+              break;
+            } else if (eventName === 'response.completed') {
               break;
             } else if (eventName === 'error' || parsed.error) {
-              console.error('[Knowledge] Recommendation ADP error:', parsed.error);
+              console.error('[Knowledge] Recommendation ADP error:', parsed.error || parsed);
               return;
             }
-          } catch {}
+            
+            if (deltaText) {
+              fullText += deltaText;
+            }
+          } catch (e) {
+            // 非 JSON 数据，跳过
+          }
         }
 
         if (line.trim() === '') {
@@ -3168,6 +3466,7 @@ async function triggerKnowledgeRecommendation(text, intent) {
     }
 
     // 保存推荐结果并通知前端
+    console.log('[Knowledge] ADP recommendation completed, fullText length:', fullText.length, 'preview:', fullText.substring(0, 100));
     if (fullText) {
       const recs = loadKnowledgeRecommendations();
       const newRec = {
@@ -3296,31 +3595,43 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
 
               try {
                 const parsed = JSON.parse(data);
-                // 合并 event: 行和 data 中的 event 字段
-                const eventName = currentEvent || parsed.event || '';
+                // V2 API: 事件名来自 event: 行 或 data 中的 Type 字段
+                const eventName = currentEvent || parsed.Type || parsed.event || '';
                 let text = '';
 
-                if ((eventName === 'text.delta') && (parsed.payload?.content?.text || parsed.content?.text)) {
-                  text = parsed.payload?.content?.text || parsed.content?.text;
-                } else if ((eventName === 'message.added' || eventName === 'content.added') && (parsed.payload?.content?.text || parsed.content?.text)) {
-                  text = parsed.payload?.content?.text || parsed.content?.text;
-                } else if (eventName === 'text.replace' && parsed.payload?.content?.text) {
-                  // text.replace 事件：用新文本替换，不追加
-                  fullText = parsed.payload.content.text;
-                  if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: false, replace: true, fullText: fullText, conversationId: convId });
+                // V2 text.delta: { Type: "text.delta", MessageId, ContentIndex, Text }
+                if (eventName === 'text.delta') {
+                  text = parsed.Text || parsed.payload?.content?.text || parsed.content?.text || '';
+                }
+                // V2 content.added: { Type: "content.added", Content: { Type: "text", Text: "..." } }
+                else if (eventName === 'content.added') {
+                  text = parsed.Content?.Text || parsed.payload?.content?.text || '';
+                }
+                // V2 text.replace: { Type: "text.replace", Text: "完整替换文本" }
+                else if (eventName === 'text.replace') {
+                  const replaceText = parsed.Text || parsed.payload?.content?.text || '';
+                  if (replaceText) {
+                    fullText = replaceText;
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                      mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: false, replace: true, fullText: fullText, conversationId: convId });
+                    }
                   }
                   currentEvent = '';
                   continue;
-                } else if (eventName === 'response.completed' || eventName === 'message.done') {
+                }
+                // V2 message.done / response.completed: 流结束
+                else if (eventName === 'response.completed' || eventName === 'message.done') {
                   if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, conversationId: convId });
                   }
                   currentEvent = '';
                   break;
-                } else if (eventName === 'error' || parsed.error) {
+                }
+                // V2 error: { Type: "error", Error: { Code, Message } }
+                else if (eventName === 'error' || parsed.Error || parsed.error) {
+                  const errMsg = parsed.Error?.Message || parsed.error?.message || (typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.Error || parsed.error));
                   if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, error: parsed.error?.message || (typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error)), conversationId: convId });
+                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, error: errMsg, conversationId: convId });
                   }
                   currentEvent = '';
                   break;

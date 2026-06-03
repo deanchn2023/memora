@@ -796,6 +796,7 @@ const Calendar = {
     // 初始化知识跟随模块
     if (window.knowledgeFollow) {
       window.knowledgeFollow.init();
+      window.knowledgeFollow.onShow();
     }
   }
 };

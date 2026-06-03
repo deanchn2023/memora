@@ -15,7 +15,9 @@ if (!fs.existsSync(NOTEBOOK_PATH)) {
 class Notebook {
   constructor() {
     this.notes = [];
+    this.customCategories = {};
     this.loadNotes();
+    this.loadCustomCategories();
   }
 
   loadNotes() {
@@ -30,6 +32,35 @@ class Notebook {
     } catch (e) {
       console.error('[Notebook] Load error:', e);
       this.notes = [];
+    }
+  }
+
+  loadCustomCategories() {
+    try {
+      const file = path.join(NOTEBOOK_PATH, 'categories.json');
+      if (fs.existsSync(file)) {
+        const data = fs.readFileSync(file, 'utf8');
+        this.customCategories = JSON.parse(data);
+      } else {
+        this.customCategories = {};
+      }
+    } catch (e) {
+      console.error('[Notebook] Load categories error:', e);
+      this.customCategories = {};
+    }
+  }
+
+  getCustomCategories() {
+    return this.customCategories || {};
+  }
+
+  saveCustomCategories(categories) {
+    this.customCategories = categories || {};
+    try {
+      const file = path.join(NOTEBOOK_PATH, 'categories.json');
+      fs.writeFileSync(file, JSON.stringify(this.customCategories, null, 2));
+    } catch (e) {
+      console.error('[Notebook] Save categories error:', e);
     }
   }
 
