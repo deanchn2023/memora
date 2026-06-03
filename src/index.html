@@ -214,7 +214,7 @@
             </div>
             <div class="knowledge-content">
               <!-- 智能推荐区 -->
-              <div class="knowledge-section">
+              <div class="knowledge-section" id="knowledgeRecommendSection">
                 <div class="knowledge-section-header">
                   <div class="knowledge-section-title">
                     <span class="icon">🤖</span> 智能推荐
@@ -233,8 +233,8 @@
                 </div>
               </div>
 
-              <!-- 搜索结果区 -->
-              <div class="knowledge-section" id="knowledgeSearchResults" style="display: none;">
+              <!-- 搜索结果区（三面板可拖拽调整） -->
+              <div class="knowledge-section knowledge-search-results" id="knowledgeSearchResults" style="display: none;">
                 <div class="knowledge-section-header">
                   <div class="knowledge-section-title">
                     <span class="icon">🔎</span> 搜索结果
@@ -242,46 +242,57 @@
                   <button class="knowledge-action-btn" onclick="knowledgeFollow.clearSearchResults()">✕ 关闭</button>
                 </div>
 
-                <!-- 资源文件列表 -->
-                <div class="knowledge-divider">📄 资源文件</div>
-                <div id="publicSearchResults" class="knowledge-file-list">
-                  <div class="knowledge-empty">
-                    <div class="empty-icon">📭</div>
-                    <p>搜索中...</p>
+                <div class="search-panels" id="searchPanels">
+                  <!-- 面板1: 资源文件 -->
+                  <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
+                    <div class="search-panel-header" data-drag="public">
+                      <span class="search-panel-title">📄 资源文件</span>
+                      <span class="search-panel-count" id="publicCount">0</span>
+                    </div>
+                    <div class="search-panel-body" id="publicSearchResults">
+                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
+                    </div>
                   </div>
-                </div>
 
-                <!-- 本地记忆 -->
-                <div class="knowledge-divider">🧠 本地记忆</div>
-                <div id="localSearchResults" class="knowledge-card-list">
-                  <div class="knowledge-empty">
-                    <div class="empty-icon">📭</div>
-                    <p>搜索中...</p>
-                  </div>
-                </div>
+                  <!-- 拖拽分割条 -->
+                  <div class="search-panel-resizer" data-resizer="0"></div>
 
-                <!-- ADP 问答 -->
-                <div class="knowledge-divider">🤖 ADP 问答</div>
-                <div class="adp-streaming-area" id="adpStreamingArea">
-                  <div class="adp-streaming-header">
-                    <div class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
-                      <div class="spinner"></div>
-                      <span>ADP 正在思考...</span>
+                  <!-- 面板2: 本地记忆 -->
+                  <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
+                    <div class="search-panel-header" data-drag="local">
+                      <span class="search-panel-title">🧠 本地记忆</span>
+                      <span class="search-panel-count" id="localCount">0</span>
                     </div>
-                    <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
-                      <button class="adp-stream-control stop" onclick="knowledgeFollow.stopADPStreaming()">⏹ 停止</button>
+                    <div class="search-panel-body" id="localSearchResults">
+                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
                     </div>
                   </div>
-                  <div class="adp-streaming-content" id="adpStreamingContent">
-                    <div class="knowledge-empty" style="padding: 24px;">
-                      <div class="empty-icon">💡</div>
-                      <p>搜索中...</p>
+
+                  <!-- 拖拽分割条 -->
+                  <div class="search-panel-resizer" data-resizer="1"></div>
+
+                  <!-- 面板3: ADP 问答 -->
+                  <div class="search-panel" id="panelADP" data-panel="adp" style="flex: 1 1 0%;">
+                    <div class="search-panel-header" data-drag="adp">
+                      <span class="search-panel-title">🤖 ADP 问答</span>
+                      <span class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>思考中</span>
+                      </span>
+                      <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
+                        <button class="adp-stream-control stop" onclick="knowledgeFollow.stopADPStreaming()">⏹</button>
+                      </div>
                     </div>
-                  </div>
-                  <div class="adp-streaming-done" id="adpStreamingDone" style="display: none;">
-                    <button class="adp-done-btn primary" onclick="knowledgeFollow.saveADPResult()">💾 保存到知识库</button>
-                    <button class="adp-done-btn" onclick="knowledgeFollow.copyADPResult()">📋 复制</button>
-                    <button class="adp-done-btn" onclick="knowledgeFollow.dismissADPResult()">❌ 忽略</button>
+                    <div class="search-panel-body" id="adpSearchResults">
+                      <div class="adp-streaming-content" id="adpStreamingContent">
+                        <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
+                      </div>
+                      <div class="adp-streaming-done" id="adpStreamingDone" style="display: none;">
+                        <button class="adp-done-btn primary" onclick="knowledgeFollow.saveADPResult()">💾 保存</button>
+                        <button class="adp-done-btn" onclick="knowledgeFollow.copyADPResult()">📋 复制</button>
+                        <button class="adp-done-btn" onclick="knowledgeFollow.dismissADPResult()">❌ 忽略</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

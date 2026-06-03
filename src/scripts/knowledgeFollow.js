@@ -1,6 +1,6 @@
 /**
  * 知识跟随 - 核心前端逻辑
- * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、公开资源搜索、意图识别展示
+ * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、公开资源搜索、意图识别展示、三面板拖拽布局
  */
 
 const TOOLKIT_BASE_URL = 'http://21.91.29.59:3000';
@@ -15,6 +15,7 @@ class KnowledgeFollow {
     this.searchResults = [];
     this.publicResults = [];
     this.initialized = false;
+    this._panelOrder = ['public', 'local', 'adp']; // 面板顺序
   }
 
   /**
@@ -26,6 +27,7 @@ class KnowledgeFollow {
     this.loadRecommendations();
     this.setupADPChunkListener();
     this.setupRecommendationListener();
+    this.initPanelResizers();
     this.initialized = true;
     console.log('[KnowledgeFollow] Initialized');
   }
@@ -38,13 +40,11 @@ class KnowledgeFollow {
     const searchInput = document.getElementById('knowledgeSearchInput');
     if (searchInput) {
       searchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          this.handleSearch();
-        }
+        if (e.key === 'Enter') this.handleSearch();
       });
     }
 
-    // 搜索按钮（合并：同时搜索公开API + 本地 + ADP）
+    // 搜索按钮
     const searchBtn = document.getElementById('knowledgeSearchBtn');
     if (searchBtn) {
       searchBtn.addEventListener('click', () => this.handleSearch());
@@ -63,27 +63,51 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 设置 ADP chunk 监听
-   */
-  setupADPChunkListener() {
-    if (window.electronAPI && window.electronAPI.onKnowledgeADPChunk) {
-      window.electronAPI.onKnowledgeADPChunk((data) => {
-        this.handleADPChunk(data);
+  // ============ 面板拖拽调整大小 ============
+
+  initPanelResizers() {
+    const resizers = document.querySelectorAll('.search-panel-resizer');
+    resizers.forEach(resizer => {
+      let startY, startHeights;
+
+      resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const panels = document.querySelectorAll('.search-panel');
+        startY = e.clientY;
+        startHeights = Array.from(panels).map(p => p.getBoundingClientRect().height);
+
+        const onMouseMove = (e) => {
+          const delta = e.clientY - startY;
+          const idx = parseInt(resizer.dataset.resizer);
+          const panelsArr = Array.from(panels);
+
+          // 调整相邻两个面板
+          const newH1 = Math.max(80, startHeights[idx] + delta);
+          const newH2 = Math.max(80, startHeights[idx + 1] - delta);
+
+          panelsArr[idx].style.flex = `0 0 ${newH1}px`;
+          panelsArr[idx + 1].style.flex = `0 0 ${newH2}px`;
+        };
+
+        const onMouseUp = () => {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
       });
-    }
+
+      // 光标样式
+      resizer.addEventListener('mouseenter', () => { resizer.style.cursor = 'row-resize'; });
+    });
   }
 
-  /**
-   * 设置推荐推送监听
-   */
-  setupRecommendationListener() {
-    if (window.electronAPI && window.electronAPI.onKnowledgeRecommendation) {
-      window.electronAPI.onKnowledgeRecommendation((data) => {
-        this.addRecommendation(data.recommendation);
-      });
-    }
-  }
+  // ============ 搜索 ============
 
   /**
    * 综合搜索：公开API + 本地记忆 + ADP 同时发起
@@ -93,9 +117,15 @@ class KnowledgeFollow {
     const query = input ? input.value.trim() : '';
     if (!query) return;
 
-    // 显示搜索结果区
+    // 显示搜索结果区，隐藏推荐区
     const resultsSection = document.getElementById('knowledgeSearchResults');
+    const recommendSection = document.getElementById('knowledgeRecommendSection');
     if (resultsSection) resultsSection.style.display = 'block';
+    if (recommendSection) recommendSection.style.display = 'none';
+
+    // 重置面板为均分
+    const panels = document.querySelectorAll('.search-panel');
+    panels.forEach(p => { p.style.flex = '1 1 0%'; });
 
     // 并行搜索三个来源
     this.handlePublicSearch(query);
@@ -104,16 +134,26 @@ class KnowledgeFollow {
   }
 
   /**
-   * 公开资源搜索（ADPToolkit API）
+   * 清除搜索结果，恢复推荐区
    */
+  clearSearchResults() {
+    const resultsSection = document.getElementById('knowledgeSearchResults');
+    const recommendSection = document.getElementById('knowledgeRecommendSection');
+    if (resultsSection) resultsSection.style.display = 'none';
+    if (recommendSection) recommendSection.style.display = 'block';
+  }
+
+  // ============ 公开资源搜索 ============
+
   async handlePublicSearch(query) {
     const container = document.getElementById('publicSearchResults');
+    const countEl = document.getElementById('publicCount');
     if (!container) return;
 
     container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索资源中...</p></div>';
+    if (countEl) countEl.textContent = '...';
 
     try {
-      // 并行搜索4种资源类型
       const [docsRes, casesRes, demosRes, learningRes] = await Promise.allSettled([
         fetch(`${TOOLKIT_BASE_URL}/api/public/documents?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
         fetch(`${TOOLKIT_BASE_URL}/api/public/cases?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
@@ -123,7 +163,6 @@ class KnowledgeFollow {
 
       const items = [];
 
-      // 处理文档
       if (docsRes.status === 'fulfilled' && docsRes.value?.data) {
         docsRes.value.data.forEach(d => items.push({
           id: d.id, type: 'document', title: d.title,
@@ -134,8 +173,6 @@ class KnowledgeFollow {
           createdAt: d.created_at, updatedAt: d.updated_at
         }));
       }
-
-      // 处理案例
       if (casesRes.status === 'fulfilled' && casesRes.value?.data) {
         casesRes.value.data.forEach(c => items.push({
           id: c.id, type: 'case', title: c.title,
@@ -146,8 +183,6 @@ class KnowledgeFollow {
           demoUrl: c.demo_url, createdAt: c.created_at, updatedAt: c.updated_at
         }));
       }
-
-      // 处理 Demo
       if (demosRes.status === 'fulfilled' && demosRes.value?.data) {
         demosRes.value.data.forEach(d => items.push({
           id: d.id, type: 'demo', title: d.name,
@@ -158,8 +193,6 @@ class KnowledgeFollow {
           accessUrl: d.access_url, createdAt: d.created_at, updatedAt: d.updated_at
         }));
       }
-
-      // 处理学习材料
       if (learningRes.status === 'fulfilled' && learningRes.value?.data) {
         learningRes.value.data.forEach(l => items.push({
           id: l.id, type: 'learning', title: l.title,
@@ -173,15 +206,14 @@ class KnowledgeFollow {
 
       this.publicResults = items;
       this.renderPublicResults(items);
+      if (countEl) countEl.textContent = items.length;
     } catch (e) {
       console.error('[KnowledgeFollow] Public search error:', e);
       container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">❌</div><p>资源搜索失败</p><span class="empty-hint">请检查网络连接</span></div>';
+      if (countEl) countEl.textContent = '0';
     }
   }
 
-  /**
-   * 渲染公开资源文件列表
-   */
   renderPublicResults(items) {
     const container = document.getElementById('publicSearchResults');
     if (!container) return;
@@ -191,12 +223,9 @@ class KnowledgeFollow {
       return;
     }
 
-    container.innerHTML = items.map(item => this.renderFileItem(item)).join('');
+    container.innerHTML = '<div class="knowledge-file-list">' + items.map(item => this.renderFileItem(item)).join('') + '</div>';
   }
 
-  /**
-   * 渲染单个文件列表项
-   */
   renderFileItem(item) {
     const typeConfig = {
       document: { icon: '📄', label: '文档', color: '#007AFF', bg: 'rgba(0,122,255,0.08)' },
@@ -207,7 +236,6 @@ class KnowledgeFollow {
     const cfg = typeConfig[item.type] || typeConfig.document;
     const timeAgo = this.formatTimeAgo(item.updatedAt || item.createdAt);
 
-    // 文件类型图标
     const ext = (item.fileType || '').toLowerCase();
     let fileIcon = '📄';
     if (ext === '.pdf') fileIcon = '📕';
@@ -244,20 +272,8 @@ class KnowledgeFollow {
     `;
   }
 
-  /**
-   * 打开公开资源详情
-   */
   openPublicResource(id, type) {
-    const urlMap = {
-      document: `${TOOLKIT_BASE_URL}/api/public/documents/${id}`,
-      case: `${TOOLKIT_BASE_URL}/api/public/cases/${id}`,
-      demo: `${TOOLKIT_BASE_URL}/api/public/demos/${id}`,
-      learning: `${TOOLKIT_BASE_URL}/api/public/learning/${id}`
-    };
-
-    // 在默认浏览器中打开公开页面
     const publicPageUrl = `${TOOLKIT_BASE_URL}/public.html`;
-    // 使用 shell.openExternal
     if (window.electronAPI && window.electronAPI.openExternal) {
       window.electronAPI.openExternal(publicPageUrl);
     } else {
@@ -265,9 +281,6 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 下载公开资源
-   */
   downloadPublicResource(id, type) {
     const url = `${TOOLKIT_BASE_URL}/api/public/download/${type}/${id}`;
     if (window.electronAPI && window.electronAPI.openExternal) {
@@ -277,36 +290,28 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 清除搜索结果
-   */
-  clearSearchResults() {
-    const resultsSection = document.getElementById('knowledgeSearchResults');
-    if (resultsSection) resultsSection.style.display = 'none';
-  }
+  // ============ 本地知识搜索 ============
 
-  /**
-   * 本地知识搜索
-   */
   async handleLocalSearch(query) {
-    const localContainer = document.getElementById('localSearchResults');
-    if (!localContainer) return;
+    const container = document.getElementById('localSearchResults');
+    const countEl = document.getElementById('localCount');
+    if (!container) return;
 
-    localContainer.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索记忆中...</p></div>';
+    container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索记忆中...</p></div>';
+    if (countEl) countEl.textContent = '...';
 
     try {
-      const results = await this.searchEngine.searchLocalKnowledge(query, 3);
+      const results = await this.searchEngine.searchLocalKnowledge(query, 10);
       this.searchResults = results;
       this.renderLocalResults(results, query);
+      if (countEl) countEl.textContent = results.length;
     } catch (e) {
       console.error('[KnowledgeFollow] Local search error:', e);
-      localContainer.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">❌</div><p>搜索失败</p></div>';
+      container.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">❌</div><p>搜索失败</p></div>';
+      if (countEl) countEl.textContent = '0';
     }
   }
 
-  /**
-   * 渲染本地搜索结果
-   */
   renderLocalResults(results, query) {
     const container = document.getElementById('localSearchResults');
     if (!container) return;
@@ -316,12 +321,9 @@ class KnowledgeFollow {
       return;
     }
 
-    container.innerHTML = results.map(r => this.renderLocalCard(r)).join('');
+    container.innerHTML = '<div class="knowledge-card-list">' + results.map(r => this.renderLocalCard(r)).join('') + '</div>';
   }
 
-  /**
-   * 渲染本地知识卡片
-   */
   renderLocalCard(item) {
     const sourceClass = item.type === 'memory' ? 'local-memory' : 'local-notebook';
     const sourceLabel = item.type === 'memory' ? '记忆' : '笔记';
@@ -337,7 +339,7 @@ class KnowledgeFollow {
           <span class="relevance-score">匹配 ${scoreText}</span>
         </div>
         <div class="knowledge-card-title">${this.escapeHtml(item.title)}</div>
-        <div class="knowledge-card-content">${this.escapeHtml(item.content.substring(0, 200))}${item.content.length > 200 ? '...' : ''}</div>
+        <div class="knowledge-card-content">${this.escapeHtml(item.content.substring(0, 150))}${item.content.length > 150 ? '...' : ''}</div>
         <div class="knowledge-card-footer">
           <div class="knowledge-card-meta">
             <span>📅 ${timeAgo}</span>
@@ -352,22 +354,21 @@ class KnowledgeFollow {
     `;
   }
 
-  /**
-   * ADP 搜索（触发 SSE 流式调用）
-   */
+  // ============ ADP 搜索 ============
+
   async handleADPSearch(intent = null) {
     const input = document.getElementById('knowledgeSearchInput');
     const query = input ? input.value.trim() : '';
     if (!query) return;
 
     const streamContainer = document.getElementById('adpStreamingContent');
-    const streamArea = document.getElementById('adpStreamingArea');
-    if (!streamContainer || !streamArea) return;
+    const countEl = document.getElementById('adpCount');
+    if (!streamContainer) return;
 
-    // 清空之前的内容
+    // 清空
     this.adpFullText = '';
     this.isADPStreaming = true;
-    streamContainer.innerHTML = '';
+    streamContainer.innerHTML = '<div class="knowledge-empty"><div class="empty-icon">⏳</div><p>ADP 搜索中...</p></div>';
     this.showStreamingStatus(true);
     this.updateStreamingControls(true);
 
@@ -402,14 +403,25 @@ class KnowledgeFollow {
     const streamContainer = document.getElementById('adpStreamingContent');
     if (!streamContainer) return;
 
+    // text.replace 事件：用新文本替换全部
+    if (data.replace && data.fullText) {
+      this.adpFullText = data.fullText;
+      const html = this.renderSimpleMarkdown(this.adpFullText);
+      streamContainer.innerHTML = html + '<span class="cursor"></span>';
+      const panelBody = streamContainer.closest('.search-panel-body');
+      if (panelBody) panelBody.scrollTop = panelBody.scrollHeight;
+      return;
+    }
+
     if (data.text) {
       this.adpFullText += data.text;
       const html = this.renderSimpleMarkdown(this.adpFullText);
       streamContainer.innerHTML = html + '<span class="cursor"></span>';
 
-      const scrollParent = streamContainer.closest('.knowledge-content');
-      if (scrollParent) {
-        scrollParent.scrollTop = scrollParent.scrollHeight;
+      // 自动滚动到面板底部
+      const panelBody = streamContainer.closest('.search-panel-body');
+      if (panelBody) {
+        panelBody.scrollTop = panelBody.scrollHeight;
       }
     }
 
@@ -420,6 +432,11 @@ class KnowledgeFollow {
       this.showStreamingStatus(false);
       this.updateStreamingControls(false);
       this.showADPDoneActions();
+
+      // 自动保存 ADP 搜索结果到推荐列表
+      if (this.adpFullText) {
+        this.autoSaveADPToRecommendations();
+      }
     }
 
     if (data.error) {
@@ -430,15 +447,33 @@ class KnowledgeFollow {
   }
 
   /**
-   * 停止 ADP 流式输出
+   * 自动保存 ADP 搜索结果到推荐列表（数据库）
    */
+  async autoSaveADPToRecommendations() {
+    const input = document.getElementById('knowledgeSearchInput');
+    const query = input ? input.value.trim() : 'ADP搜索';
+
+    try {
+      await window.electronAPI.knowledgeSaveItem({
+        title: query.substring(0, 50),
+        content: this.adpFullText,
+        source: 'adp_search',
+        intent: 'search_knowledge',
+        tags: ['ADP', '知识搜索'],
+        auto_save: true
+      });
+      console.log('[KnowledgeFollow] ADP result auto-saved');
+    } catch (e) {
+      console.error('[KnowledgeFollow] Auto-save ADP result error:', e);
+    }
+  }
+
   async stopADPStreaming() {
     try {
       await window.electronAPI.knowledgeStopADP();
       this.isADPStreaming = false;
       this.showStreamingStatus(false);
       this.updateStreamingControls(false);
-
       const streamContainer = document.getElementById('adpStreamingContent');
       if (streamContainer) {
         const cursor = streamContainer.querySelector('.cursor');
@@ -449,42 +484,23 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 显示/隐藏流式状态
-   */
   showStreamingStatus(show) {
     const status = document.getElementById('adpStreamingStatus');
-    if (status) {
-      status.style.display = show ? 'flex' : 'none';
-    }
+    if (status) status.style.display = show ? 'flex' : 'none';
   }
 
-  /**
-   * 更新流式控制按钮
-   */
   updateStreamingControls(isStreaming) {
     const controls = document.getElementById('adpStreamingControls');
-    if (controls) {
-      controls.style.display = isStreaming ? 'flex' : 'none';
-    }
+    if (controls) controls.style.display = isStreaming ? 'flex' : 'none';
   }
 
-  /**
-   * 显示 ADP 完成后的操作按钮
-   */
   showADPDoneActions() {
     const doneArea = document.getElementById('adpStreamingDone');
-    if (doneArea) {
-      doneArea.style.display = 'flex';
-    }
+    if (doneArea) doneArea.style.display = 'flex';
   }
 
-  /**
-   * 保存 ADP 回答到知识库
-   */
   async saveADPResult() {
     if (!this.adpFullText) return;
-
     const input = document.getElementById('knowledgeSearchInput');
     const query = input ? input.value.trim() : 'ADP搜索';
 
@@ -497,7 +513,6 @@ class KnowledgeFollow {
         query: query,
         adpConversationId: this.currentADPConversationId
       });
-
       this.showToast('已保存到知识库', 'success');
       this.loadRecommendations();
     } catch (e) {
@@ -506,9 +521,6 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 复制 ADP 回答
-   */
   async copyADPResult() {
     if (!this.adpFullText) return;
     try {
@@ -519,9 +531,6 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 忽略 ADP 回答
-   */
   dismissADPResult() {
     const streamContainer = document.getElementById('adpStreamingContent');
     const doneArea = document.getElementById('adpStreamingDone');
@@ -531,14 +540,16 @@ class KnowledgeFollow {
     this.isADPStreaming = false;
   }
 
-  /**
-   * 加载智能推荐
-   */
+  // ============ 推荐管理 ============
+
   async loadRecommendations() {
     try {
       const result = await window.electronAPI.knowledgeGetRecommendations({});
       if (result.recommendations) {
-        this.recommendations = result.recommendations;
+        // 按时间倒序（最新在最上面）
+        this.recommendations = result.recommendations.sort((a, b) =>
+          new Date(b.created_at) - new Date(a.created_at)
+        );
         this.renderRecommendations();
       }
     } catch (e) {
@@ -546,9 +557,6 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 渲染推荐列表
-   */
   renderRecommendations() {
     const container = document.getElementById('recommendationList');
     if (!container) return;
@@ -561,9 +569,6 @@ class KnowledgeFollow {
     container.innerHTML = this.recommendations.map(r => this.renderRecommendationCard(r)).join('');
   }
 
-  /**
-   * 渲染推荐卡片
-   */
   renderRecommendationCard(item) {
     const intentTag = item.intent ? this.getIntentTagHtml(item.intent) : '';
     const timeAgo = this.formatTimeAgo(item.created_at);
@@ -590,17 +595,12 @@ class KnowledgeFollow {
     `;
   }
 
-  /**
-   * 添加新推荐
-   */
   addRecommendation(recommendation) {
     this.recommendations.unshift(recommendation);
+    this.recommendations.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     this.renderRecommendations();
   }
 
-  /**
-   * 保存推荐到知识库
-   */
   async saveRecommendation(id) {
     try {
       await window.electronAPI.knowledgeSaveItem({ id });
@@ -611,9 +611,6 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 删除推荐
-   */
   async deleteRecommendation(id) {
     try {
       await window.electronAPI.knowledgeDeleteItem({ id });
@@ -625,26 +622,19 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 查看本地知识详情
-   */
+  // ============ 本地详情 ============
+
   async viewDetail(id, type) {
     const card = document.querySelector(`.knowledge-card[data-id="${id}"][data-type="${type}"]`);
     if (card) {
       const content = card.querySelector('.knowledge-card-content');
-      if (content) {
-        content.classList.toggle('expanded');
-      }
+      if (content) content.classList.toggle('expanded');
     }
   }
 
-  /**
-   * 保存本地知识到知识库
-   */
   async saveToLocal(id, type) {
     const item = this.searchResults.find(r => r.id === id && r.type === type);
     if (!item) return;
-
     try {
       await window.electronAPI.knowledgeSaveItem({
         title: item.title,
@@ -659,9 +649,8 @@ class KnowledgeFollow {
     }
   }
 
-  /**
-   * 打开设置
-   */
+  // ============ 设置 ============
+
   openSettings() {
     const settingsBtn = document.getElementById('openSettingsBtn');
     if (settingsBtn) settingsBtn.click();
@@ -671,9 +660,26 @@ class KnowledgeFollow {
     }, 200);
   }
 
-  /**
-   * 获取意图标签 HTML
-   */
+  // ============ ADP chunk 监听 ============
+
+  setupADPChunkListener() {
+    if (window.electronAPI && window.electronAPI.onKnowledgeADPChunk) {
+      window.electronAPI.onKnowledgeADPChunk((data) => {
+        this.handleADPChunk(data);
+      });
+    }
+  }
+
+  setupRecommendationListener() {
+    if (window.electronAPI && window.electronAPI.onKnowledgeRecommendation) {
+      window.electronAPI.onKnowledgeRecommendation((data) => {
+        this.addRecommendation(data.recommendation);
+      });
+    }
+  }
+
+  // ============ 工具方法 ============
+
   getIntentTagHtml(intent) {
     const tags = {
       search_knowledge: { icon: '🔍', label: '搜索知识', class: 'search_knowledge' },
@@ -686,9 +692,6 @@ class KnowledgeFollow {
     return `<span class="intent-tag ${tag.class}">${tag.icon} ${tag.label}</span>`;
   }
 
-  /**
-   * 简单 Markdown 渲染
-   */
   renderSimpleMarkdown(text) {
     if (!text) return '';
     let html = this.escapeHtml(text);
@@ -702,9 +705,6 @@ class KnowledgeFollow {
     return html;
   }
 
-  /**
-   * 格式化相对时间
-   */
   formatTimeAgo(dateStr) {
     if (!dateStr) return '未知';
     const now = new Date();
@@ -721,9 +721,6 @@ class KnowledgeFollow {
     return date.toLocaleDateString('zh-CN');
   }
 
-  /**
-   * HTML 转义
-   */
   escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -731,9 +728,6 @@ class KnowledgeFollow {
     return div.innerHTML;
   }
 
-  /**
-   * Toast 提示
-   */
   showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.style.cssText = `
@@ -743,7 +737,6 @@ class KnowledgeFollow {
       box-shadow: 0 4px 16px rgba(0,0,0,0.12);
       backdrop-filter: blur(20px) saturate(180%);
     `;
-
     if (type === 'success') {
       toast.style.background = 'rgba(52, 199, 89, 0.9)';
       toast.style.color = 'white';
@@ -754,10 +747,8 @@ class KnowledgeFollow {
       toast.style.background = 'rgba(255, 255, 255, 0.9)';
       toast.style.color = '#1a1a2e';
     }
-
     toast.textContent = message;
     document.body.appendChild(toast);
-
     setTimeout(() => {
       toast.style.opacity = '0';
       toast.style.transition = 'opacity 0.3s ease';

@@ -3125,6 +3125,7 @@ async function triggerKnowledgeRecommendation(text, intent) {
     const decoder = new TextDecoder();
     let buffer = '';
     let fullText = '';
+    let currentEvent = '';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -3135,24 +3136,33 @@ async function triggerKnowledgeRecommendation(text, intent) {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim();
+          continue;
+        }
+
         if (line.startsWith('data:')) {
           const data = line.substring(5).trim();
           if (data === '[DONE]') break;
           try {
             const parsed = JSON.parse(data);
-            if (parsed.event === 'text.delta' && parsed.content?.text) {
-              fullText += parsed.content.text;
-            } else if (parsed.event === 'message.added' && parsed.content?.text) {
-              fullText += parsed.content.text;
-            } else if (parsed.event === 'content.added' && parsed.content?.text) {
-              fullText += parsed.content.text;
-            } else if (parsed.event === 'response.completed' || parsed.event === 'message.done') {
+            const eventName = currentEvent || parsed.event || '';
+
+            if ((eventName === 'text.delta') && (parsed.payload?.content?.text || parsed.content?.text)) {
+              fullText += parsed.payload?.content?.text || parsed.content?.text;
+            } else if ((eventName === 'message.added' || eventName === 'content.added') && (parsed.payload?.content?.text || parsed.content?.text)) {
+              fullText += parsed.payload?.content?.text || parsed.content?.text;
+            } else if (eventName === 'response.completed' || eventName === 'message.done') {
               break;
-            } else if (parsed.event === 'error' || parsed.error) {
+            } else if (eventName === 'error' || parsed.error) {
               console.error('[Knowledge] Recommendation ADP error:', parsed.error);
               return;
             }
           } catch {}
+        }
+
+        if (line.trim() === '') {
+          currentEvent = '';
         }
       }
     }
@@ -3255,6 +3265,7 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
+      let currentEvent = '';
 
       try {
         while (true) {
@@ -3266,34 +3277,52 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
           buffer = lines.pop() || ''; // 保留不完整的行
 
           for (const line of lines) {
+            // 解析 SSE event: 行
+            if (line.startsWith('event:')) {
+              currentEvent = line.substring(6).trim();
+              continue;
+            }
+
+            // 解析 SSE data: 行
             if (line.startsWith('data:')) {
               const data = line.substring(5).trim();
               if (data === '[DONE]') {
                 if (mainWindow && !mainWindow.isDestroyed()) {
                   mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, conversationId: convId });
                 }
+                currentEvent = '';
                 break;
               }
 
               try {
                 const parsed = JSON.parse(data);
+                // 合并 event: 行和 data 中的 event 字段
+                const eventName = currentEvent || parsed.event || '';
                 let text = '';
 
-                if (parsed.event === 'text.delta' && parsed.content?.text) {
-                  text = parsed.content.text;
-                } else if (parsed.event === 'message.added' && parsed.content?.text) {
-                  text = parsed.content.text;
-                } else if (parsed.event === 'content.added' && parsed.content?.text) {
-                  text = parsed.content.text;
-                } else if (parsed.event === 'response.completed' || parsed.event === 'message.done') {
+                if ((eventName === 'text.delta') && (parsed.payload?.content?.text || parsed.content?.text)) {
+                  text = parsed.payload?.content?.text || parsed.content?.text;
+                } else if ((eventName === 'message.added' || eventName === 'content.added') && (parsed.payload?.content?.text || parsed.content?.text)) {
+                  text = parsed.payload?.content?.text || parsed.content?.text;
+                } else if (eventName === 'text.replace' && parsed.payload?.content?.text) {
+                  // text.replace 事件：用新文本替换，不追加
+                  fullText = parsed.payload.content.text;
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: false, replace: true, fullText: fullText, conversationId: convId });
+                  }
+                  currentEvent = '';
+                  continue;
+                } else if (eventName === 'response.completed' || eventName === 'message.done') {
                   if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, conversationId: convId });
                   }
+                  currentEvent = '';
                   break;
-                } else if (parsed.event === 'error' || parsed.error) {
+                } else if (eventName === 'error' || parsed.error) {
                   if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, error: parsed.error?.message || JSON.stringify(parsed.error), conversationId: convId });
+                    mainWindow.webContents.send('knowledge:adp-chunk', { text: '', done: true, error: parsed.error?.message || (typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error)), conversationId: convId });
                   }
+                  currentEvent = '';
                   break;
                 }
 
@@ -3306,6 +3335,11 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
               } catch (parseErr) {
                 // 非 JSON 数据，忽略
               }
+            }
+
+            // 空行重置 event
+            if (line.trim() === '') {
+              currentEvent = '';
             }
           }
         }

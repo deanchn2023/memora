@@ -303,6 +303,9 @@ const App = {
       });
     });
     
+    // 侧边栏分类作为拖拽目标
+    this.bindCategoryDropTargets();
+    
     // 记事本列表事件委托（处理动态生成的按钮）
     document.getElementById('notebookList').addEventListener('click', (e) => {
       const noteItem = e.target.closest('.note-item');
@@ -999,27 +1002,31 @@ const App = {
     
     if (result.notes && result.notes.length > 0) {
       noteList.innerHTML = result.notes.map(note => `
-        <div class="note-item" data-id="${note.id}">
-          <div class="note-header">
-            <h3 class="note-title">${note.title}</h3>
-            <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
-          </div>
-          <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
-          <div class="note-preview hidden" id="note-preview-${note.id}">
-            <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
-            <div class="note-preview-hint">点击复制 | 双击编辑</div>
-          </div>
-          <div class="note-footer">
-            <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
-            ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
-            <div class="note-actions">
-              <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
-              <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
-              <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
+        <div class="note-item" data-id="${note.id}" data-category="${note.category}" draggable="true">
+          <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
+          <div class="note-body">
+            <div class="note-header">
+              <h3 class="note-title">${note.title}</h3>
+              <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
+            </div>
+            <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
+            <div class="note-preview hidden" id="note-preview-${note.id}">
+              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
+              <div class="note-preview-hint">点击复制 | 双击编辑</div>
+            </div>
+            <div class="note-footer">
+              <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
+              ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
+              <div class="note-actions">
+                <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
+                <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
+                <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
+              </div>
             </div>
           </div>
         </div>
       `).join('');
+      this.bindNoteDragEvents();
     } else {
       noteList.innerHTML = '<div class="empty-state">暂无笔记</div>';
     }
@@ -1134,6 +1141,97 @@ const App = {
 
   // 修改笔记分类
   // 修改笔记分类（浮层菜单）
+
+  // ============ 拖拽改分类 ============
+
+  // 当前拖拽的笔记ID
+  _dragNoteId: null,
+  _dragNoteCategory: null,
+
+  // 绑定笔记项拖拽事件
+  bindNoteDragEvents() {
+    const noteItems = document.querySelectorAll('.note-item[draggable="true"]');
+    noteItems.forEach(item => {
+      item.addEventListener('dragstart', (e) => {
+        this._dragNoteId = item.dataset.id;
+        this._dragNoteCategory = item.dataset.category;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.dataset.id);
+        // 需要延迟添加，否则拖拽预览也会半透明
+        requestAnimationFrame(() => {
+          item.classList.add('dragging-active');
+        });
+      });
+
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging', 'dragging-active');
+        this._dragNoteId = null;
+        this._dragNoteCategory = null;
+        // 清除所有分类高亮
+        document.querySelectorAll('.category-item').forEach(c => {
+          c.classList.remove('drop-target', 'drop-hover');
+        });
+      });
+    });
+  },
+
+  // 绑定侧边栏分类为拖放目标
+  bindCategoryDropTargets() {
+    const categoryItems = document.querySelectorAll('.category-item');
+    categoryItems.forEach(item => {
+      item.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      item.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        const targetCategory = item.dataset.category;
+        // 只高亮非当前分类（"全部"分类不可拖入）
+        if (targetCategory !== 'all' && targetCategory !== this._dragNoteCategory) {
+          item.classList.add('drop-hover');
+        }
+      });
+
+      item.addEventListener('dragleave', () => {
+        item.classList.remove('drop-hover');
+      });
+
+      item.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        item.classList.remove('drop-hover');
+
+        const noteId = this._dragNoteId;
+        const targetCategory = item.dataset.category;
+        const oldCategory = this._dragNoteCategory;
+
+        if (!noteId || !targetCategory || targetCategory === 'all' || targetCategory === oldCategory) {
+          return;
+        }
+
+        try {
+          if (window.electronAPI) {
+            const result = await window.electronAPI.notebookUpdateNote(noteId, {
+              category: targetCategory
+            });
+            if (result.success) {
+              this.showToast(`已移至「${this.getNoteCategoryLabel(targetCategory)}」`, 'success');
+              const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+              this.loadNotes(activeCat);
+            }
+          }
+        } catch (error) {
+          console.error('拖拽修改分类失败:', error);
+          this.showToast('修改分类失败', 'error');
+        }
+
+        this._dragNoteId = null;
+        this._dragNoteCategory = null;
+      });
+    });
+  },
+
   async changeNoteCategory(noteId, currentCategory) {
     // 移除已存在的旧弹出菜单
     const oldPopup = document.querySelector('.category-popup');
@@ -1450,27 +1548,31 @@ const App = {
     
     if (result.notes && result.notes.length > 0) {
       noteList.innerHTML = result.notes.map(note => `
-        <div class="note-item" data-id="${note.id}">
-          <div class="note-header">
-            <h3 class="note-title">${note.title}</h3>
-            <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
-          </div>
-          <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
-          <div class="note-preview hidden" id="note-preview-${note.id}">
-            <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
-            <div class="note-preview-hint">点击复制 | 双击编辑</div>
-          </div>
-          <div class="note-footer">
-            <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
-            ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
-            <div class="note-actions">
-              <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
-              <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
-              <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
+        <div class="note-item" data-id="${note.id}" data-category="${note.category}" draggable="true">
+          <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
+          <div class="note-body">
+            <div class="note-header">
+              <h3 class="note-title">${note.title}</h3>
+              <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
+            </div>
+            <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
+            <div class="note-preview hidden" id="note-preview-${note.id}">
+              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
+              <div class="note-preview-hint">点击复制 | 双击编辑</div>
+            </div>
+            <div class="note-footer">
+              <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
+              ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
+              <div class="note-actions">
+                <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
+                <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
+                <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
+              </div>
             </div>
           </div>
         </div>
       `).join('');
+      this.bindNoteDragEvents();
     } else {
       noteList.innerHTML = '<div class="empty-state">未找到匹配的笔记</div>';
     }

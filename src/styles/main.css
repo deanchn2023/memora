@@ -1028,6 +1028,77 @@ body {
   cursor: pointer;
   transition: all 0.25s var(--transition);
   box-shadow: var(--shadow-xs);
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+/* 拖拽手柄 */
+.note-drag-handle {
+  flex-shrink: 0;
+  width: 16px;
+  height: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--text-tertiary);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  user-select: none;
+  border-radius: 4px;
+  padding: 4px 2px;
+  margin: -4px 0;
+  line-height: 1;
+  letter-spacing: -2px;
+}
+
+.note-item:hover .note-drag-handle {
+  opacity: 0.6;
+}
+
+.note-drag-handle:hover {
+  opacity: 1 !important;
+  color: var(--primary-color);
+  background: rgba(79, 142, 247, 0.06);
+}
+
+.note-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* 笔记内容区 */
+.note-body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 拖拽中的笔记项 */
+.note-item.dragging-active {
+  opacity: 0.4;
+  transform: scale(0.98);
+  border-style: dashed;
+}
+
+.note-item.dragging {
+  /* dragstart 时保持可见（用于拖拽预览） */
+}
+
+/* 侧边栏分类拖放高亮 */
+.category-item.drop-hover {
+  background: linear-gradient(135deg, #4F8EF7, #6C63FF) !important;
+  color: white !important;
+  transform: scale(1.05);
+  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+  border-color: transparent !important;
+}
+
+.category-item.drop-hover::after {
+  content: ' ↓';
+  font-weight: 700;
 }
 
 .note-header {
