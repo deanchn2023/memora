@@ -1,5 +1,9 @@
 const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage } = require('electron');
 
+// 防止 EPIPE 崩溃：stdout/stderr 管道关闭时（如终端关闭），console.log 写入会抛出 EPIPE
+process.stdout.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
+process.stderr.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
+
 // 单实例锁：防止多个 Electron 实例同时运行（避免疯狂开窗口）
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -43,7 +47,7 @@ const AI_CALLS_KEY = 'taskflow_ai_calls_count';
 const AI_CALLS_DATE_KEY = 'taskflow_ai_calls_date';
 
 // 记忆系统
-const { MemoryStore, MEMORY_TYPES, MEMORY_CATEGORIES } = require('./src/scripts/memory');
+const { MemoryStore, MEMORY_TYPES, MEMORY_CATEGORIES, BUSINESS_CATEGORIES, BUSINESS_KEYWORDS } = require('./src/scripts/memory');
 let memoryStore;
 
 // 记事本系统
@@ -430,28 +434,34 @@ const DEFAULT_AI_PROMPT = `你是一个任务识别AI。
 - title要简短，不超过20字
 - 不要虚构时间
 - 时间不明确时normalized为null
+- ⚠️ 时间语义必须与原文一致："上午"→8-11点，"下午"→13-17点，"晚上"→19-22点，"中午"→12点。严禁将"上午"解析为下午时间
+- ⚠️ 相对时间推断：无明确日期前缀的"上午/下午/晚上"默认指向当天（除非当前已过该时段）。"今晚/今早"强制当天，"明晚/明早"强制明天
+- 当前时间：${new Date().toLocaleString('zh-CN')}
 - confidence必须0~1之间
 - 只输出JSON，不要有其他内容
 - @提及 + 行动要求 → is_task=true, confidence >= 0.9
 - 编号列表 + 行动描述 → is_task=true, confidence >= 0.85
 
-示例1（输入）：明天下午三点提醒我给客户发合同
-示例1（输出）：{"is_task":true,"confidence":0.98,"title":"给客户发合同","description":"提醒用户给客户发送合同","time":{"raw":"明天下午三点","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"is_valid_info":true,"reason":"存在明确行动与具体时间"}
+示例1（输入）：明天上午组织新人培训
+示例1（输出）：{"is_task":true,"confidence":0.95,"title":"组织新人培训","description":"明天上午组织新人培训","time":{"raw":"明天上午","normalized":null,"is_all_day":false},"priority":"medium","tags":["工作"],"is_valid_info":true,"reason":"存在明确行动和时间"}
 
-示例2（输入）：下周找房东续租
-示例2（输出）：{"is_task":true,"confidence":0.91,"title":"联系房东续租","description":"用户需要处理续租事项","time":{"raw":"下周","normalized":null,"is_all_day":false},"priority":"medium","tags":["生活"],"is_valid_info":true,"reason":"存在未来待办事项"}
+示例2（输入）：明天下午三点提醒我给客户发合同
+示例2（输出）：{"is_task":true,"confidence":0.98,"title":"给客户发合同","description":"提醒用户给客户发送合同","time":{"raw":"明天下午三点","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"is_valid_info":true,"reason":"存在明确行动与具体时间"}
 
-示例3（输入）：特朗普访问中国可能利好稀土板块
-示例3（输出）：{"is_task":false,"confidence":0.96,"is_valid_info":false,"reason":"新闻观点，不是用户待办"}
+示例3（输入）：下周找房东续租
+示例3（输出）：{"is_task":true,"confidence":0.91,"title":"联系房东续租","description":"用户需要处理续租事项","time":{"raw":"下周","normalized":null,"is_all_day":false},"priority":"medium","tags":["生活"],"is_valid_info":true,"reason":"存在未来待办事项"}
 
-示例4（输入）：周五之前把PPT做完
-示例4（输出）：{"is_task":true,"confidence":0.97,"title":"完成PPT","description":"用户需要在周五前完成PPT","time":{"raw":"周五之前","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"is_valid_info":true,"reason":"明确待办和截止时间"}
+示例4（输入）：特朗普访问中国可能利好稀土板块
+示例4（输出）：{"is_task":false,"confidence":0.96,"is_valid_info":false,"reason":"新闻观点，不是用户待办"}
 
-示例5（输入）：另外昨天跟强总反馈了流程问题，我们需要整理一下，@Dean 你找大家收集一下流程上的问题，我们看看怎么简化。比如 1）报价审批流程太重，每个价格都要审批 2）标前评审流程重，标品也要评审 3）进入中标后的项目，架构师还要花很多精力跟进
-示例5（输出）：{"is_task":true,"confidence":0.95,"title":"收集整理流程问题并简化","description":"@Dean找大家收集流程问题，看看怎么简化：1）报价审批流程太重 2）标前评审流程重 3）架构师跟进精力大","time":{"raw":null,"normalized":null,"is_all_day":false},"priority":"high","tags":["工作","流程"],"is_valid_info":true,"reason":"@提及+行动要求+编号列表，强待办信号"}
+示例5（输入）：周五之前把PPT做完
+示例5（输出）：{"is_task":true,"confidence":0.97,"title":"完成PPT","description":"用户需要在周五前完成PPT","time":{"raw":"周五之前","normalized":null,"is_all_day":false},"priority":"high","tags":["工作"],"is_valid_info":true,"reason":"明确待办和截止时间"}
 
-示例6（输入）：下午有2份PPT：1、我们专场：ADP 4.0升级+demo+跨行业案例 2、katy行业专场：ADP 4.0升级+demo+零售+四部案例
-示例6（输出）：{"is_task":true,"confidence":0.95,"title":"准备2份PPT材料","description":"下午需要准备两份PPT：我们专场和katy行业专场","time":{"raw":"下午","normalized":null,"is_all_day":false},"priority":"high","tags":["工作","PPT"],"is_valid_info":true,"reason":"包含明确待办事项"}`;
+示例6（输入）：另外昨天跟强总反馈了流程问题，我们需要整理一下，@Dean 你找大家收集一下流程上的问题，我们看看怎么简化。比如 1）报价审批流程太重，每个价格都要审批 2）标前评审流程重，标品也要评审 3）进入中标后的项目，架构师还要花很多精力跟进
+示例6（输出）：{"is_task":true,"confidence":0.95,"title":"收集整理流程问题并简化","description":"@Dean找大家收集流程问题，看看怎么简化：1）报价审批流程太重 2）标前评审流程重 3）架构师跟进精力大","time":{"raw":null,"normalized":null,"is_all_day":false},"priority":"high","tags":["工作","流程"],"is_valid_info":true,"reason":"@提及+行动要求+编号列表，强待办信号"}
+
+示例7（输入）：下午有2份PPT：1、我们专场：ADP 4.0升级+demo+跨行业案例 2、katy行业专场：ADP 4.0升级+demo+零售+四部案例
+示例7（输出）：{"is_task":true,"confidence":0.95,"title":"准备2份PPT材料","description":"下午需要准备两份PPT：我们专场和katy行业专场","time":{"raw":"下午","normalized":null,"is_all_day":false},"priority":"high","tags":["工作","PPT"],"is_valid_info":true,"reason":"包含明确待办事项"}`;
 
 // 获取当前使用的Prompt（优先读取 .md 模板文件，回退到设置或默认）
 function getCurrentAIPrompt() {
@@ -955,8 +965,12 @@ async function analyzeClipboardText(text) {
     // 生成 trace_id 用于反馈闭环
     const traceId = feedbackLogger ? feedbackLogger.newTraceId() : `tr_${Date.now()}_local`;
     
-    // 构建用户提示词，附带预分类信号
-    let userPrompt = `分析以下文本：\n\n${text}`;
+    // 构建用户提示词，附带预分类信号和当前时间
+    const now = new Date();
+    const currentDayOfWeek = ['日','一','二','三','四','五','六'][now.getDay()];
+    const currentHour = now.getHours();
+    const timePeriod = currentHour < 6 ? '凌晨' : currentHour < 12 ? '上午' : currentHour < 18 ? '下午' : '晚上';
+    let userPrompt = `[当前时间：${now.toLocaleString('zh-CN')} 周${currentDayOfWeek} ${timePeriod}]\n\n分析以下文本：\n\n${text}`;
     if (preResult.hasAtMention) {
       userPrompt += '\n\n[预分类信号：检测到@提及，这通常是强待办信号]';
     }
@@ -1004,9 +1018,11 @@ async function analyzeClipboardText(text) {
       console.error('[AI] API response not OK:', response.status);
       // 保存到记忆系统
       if (memoryStore) {
+        const bizCat = classifyBusinessContext(text);
         memoryStore.addMemory({
           type: MEMORY_TYPES.SHORT,
           category: MEMORY_CATEGORIES.CLIPBOARD,
+          business_category: bizCat.length > 0 ? bizCat[0] : BUSINESS_CATEGORIES.OTHER,
           content: text,
           metadata: {
             preClassification: preResult,
@@ -1054,9 +1070,11 @@ async function analyzeClipboardText(text) {
         console.error('[AI] Failed to parse response:', e, 'Raw:', data.choices[0].message.content?.substring(0, 200));
         // 保存到记忆系统
         if (memoryStore) {
+          const bizCat = classifyBusinessContext(text);
           memoryStore.addMemory({
             type: MEMORY_TYPES.SHORT,
             category: MEMORY_CATEGORIES.CLIPBOARD,
+            business_category: bizCat.length > 0 ? bizCat[0] : BUSINESS_CATEGORIES.OTHER,
             content: text,
             metadata: {
               preClassification: preResult,
@@ -1188,6 +1206,7 @@ async function analyzeClipboardText(text) {
               memoryStore.addMemory({
                 type: memoryType,
                 category: memoryResult.category || MEMORY_CATEGORIES.KNOWLEDGE,
+                business_category: memoryResult.business_category || (classifyBusinessContext(text).length > 0 ? classifyBusinessContext(text)[0] : BUSINESS_CATEGORIES.OTHER),
                 content: memoryResult.summary || text.substring(0, 100),
                 metadata: {
                   persons: memoryResult.persons || [],
@@ -1221,7 +1240,7 @@ async function analyzeClipboardText(text) {
       } else if (needsRecommendation) {
         analysisStatus = '已推荐知识';
       } else if (result.is_task) {
-        analysisStatus = '已创建待办';
+        analysisStatus = '识别为待办';
       } else if (result.is_valid_info) {
         analysisStatus = '已提炼记忆';
       }
@@ -1251,12 +1270,18 @@ async function analyzeClipboardText(text) {
       if (result.is_task && confidence >= FILTER_CONFIG.confidenceThreshold) {
         // 高置信度：自动弹出建议
         console.log('[AI] High confidence task detected:', result.title, 'confidence:', confidence);
+        // 时间语义校验：确保 AI 解析的小时与原始文本中的上午/下午语义一致
+        let dueDateISO = result.time?.normalized ? new Date(result.time.normalized).toISOString() : null;
+        if (dueDateISO && result.time?.raw) {
+          dueDateISO = validateTimeSemantic(result.time.raw, dueDateISO);
+        }
+        
         mainWindow.webContents.send('clipboard-task-detected', {
           rawText: text,
           task: {
             title: result.title,
             description: result.description,
-            dueDate: result.time?.normalized ? new Date(result.time.normalized).toISOString() : null,
+            dueDate: dueDateISO,
             priority: result.priority || 'medium',
             estimatedDuration: 60,
             tags: result.tags || [],
@@ -1330,6 +1355,42 @@ async function estimateTaskDuration(task) {
     console.error('时间预估失败:', error);
     return 60;
   }
+}
+
+// 时间语义校验：确保 AI 解析的小时与原始文本中的上午/下午语义一致
+function validateTimeSemantic(rawTime, isoDate) {
+  if (!rawTime || !isoDate) return isoDate;
+  
+  const date = new Date(isoDate);
+  const hour = date.getHours();
+  let corrected = false;
+  
+  // 上午：8-11点，如果解析结果在12点之后，修正为9点
+  if (/上午|早上|早晨|清晨/.test(rawTime) && hour >= 12) {
+    date.setHours(9, 0, 0, 0);
+    corrected = true;
+  }
+  // 下午：13-17点，如果解析结果在12点之前，修正为14点
+  else if (/下午|午后/.test(rawTime) && hour < 12) {
+    date.setHours(14, 0, 0, 0);
+    corrected = true;
+  }
+  // 晚上：19-22点
+  else if (/晚上|今晚|傍晚/.test(rawTime) && hour < 18) {
+    date.setHours(19, 0, 0, 0);
+    corrected = true;
+  }
+  // 中午：12点
+  else if (/中午/.test(rawTime) && (hour < 11 || hour > 13)) {
+    date.setHours(12, 0, 0, 0);
+    corrected = true;
+  }
+  
+  if (corrected) {
+    console.log(`[Time] 校正时间语义: "${rawTime}" 原解析小时=${hour} → 修正为${date.getHours()}`);
+  }
+  
+  return date.toISOString();
 }
 
 function addToCalendar(task) {
@@ -2145,9 +2206,11 @@ ipcMain.handle('extract-memory', async (event, content) => {
       
       // 添加到记忆系统
       if (memoryStore) {
+        const bizCat = classifyBusinessContext(content);
         memoryStore.addMemory({
           type: result.memory_type || 'short',
           category: result.category || 'knowledge',
+          business_category: result.business_category || (bizCat.length > 0 ? bizCat[0] : BUSINESS_CATEGORIES.OTHER),
           content: result.summary || content.substring(0, 100),
           metadata: {
             persons: result.persons || [],
@@ -2564,7 +2627,7 @@ ipcMain.handle('profile:update', (_, updates) => {
   return profile;
 });
 
-ipcMain.handle('agent:invoke', async (event, { query, agentType }) => {
+ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments }) => {
   try {
     const apiConfig = getAPIConfig();
     if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
@@ -2578,11 +2641,55 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType }) => {
     const traceId = feedbackLogger.newTraceId();
     const systemPrompt = buildAgentPrompt(intent, profile, context, positiveExamples, negativeExamples, traceId);
 
+    // Build user message content - support attachments
+    let userContent = query;
+    if (attachments && attachments.length > 0) {
+      const hasImages = attachments.some(a => a.type === 'image');
+      if (hasImages && !query.toLowerCase().includes('图片') && !query.toLowerCase().includes('image')) {
+        // If images attached but user didn't mention them, adjust intent
+      }
+      // Build text portion with file info
+      const fileTextParts = [];
+      for (const att of attachments) {
+        if (att.type === 'image' && att.base64) {
+          fileTextParts.push(`[图片: ${att.name}]`);
+        } else if (att.textContent) {
+          fileTextParts.push(`[文件: ${att.name}]\n${att.textContent}`);
+        } else {
+          fileTextParts.push(`[文件: ${att.name}, 类型: ${att.mimeType}, 大小: ${att.size}]`);
+        }
+      }
+      userContent = fileTextParts.join('\n\n') + '\n\n' + query;
+    }
+
+    // Build messages array - support multimodal for images
+    const messages = [{ role: 'system', content: systemPrompt }];
+    
+    if (attachments && attachments.some(a => a.type === 'image' && a.base64)) {
+      // Multimodal message format for images
+      const content = [];
+      // Add text content first
+      content.push({ type: 'text', text: userContent });
+      // Add images
+      for (const att of attachments) {
+        if (att.type === 'image' && att.base64) {
+          content.push({ type: 'image_url', image_url: { url: `data:${att.mimeType};base64,${att.base64}` } });
+        }
+      }
+      messages.push({ role: 'user', content });
+    } else {
+      messages.push({ role: 'user', content: userContent });
+    }
+
     const startTs = Date.now();
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-      body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: query }], temperature: 0.5, response_format: { type: 'json_object' } })
+      body: JSON.stringify({
+        model: apiConfig.model, messages, temperature: 0.5,
+        // 有图片附件时不强制 JSON 格式（多模态模型可能不兼容）
+        ...(attachments?.length ? {} : { response_format: { type: 'json_object' } })
+      })
     });
 
     if (!response.ok) return { success: false, error: 'AI调用失败' };
@@ -2595,7 +2702,7 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType }) => {
       trace_id: traceId, ts: new Date(startTs).toISOString(),
       module: `agent_${intent}`, prompt_version: `${intent}_v2.0`,
       model: apiConfig.model,
-      input: { text: query, injected_vars: { positive_ids: positiveExamples.map(p => p.fb_id), negative_ids: negativeExamples.map(n => n.fb_id) } },
+      input: { text: query, attachments: attachments ? attachments.map(a => ({ name: a.name, type: a.type, size: a.size })) : [], injected_vars: { positive_ids: positiveExamples.map(p => p.fb_id), negative_ids: negativeExamples.map(n => n.fb_id) } },
       output: aiContent, latency_ms: Date.now() - startTs,
       tokens: data.usage || null
     });
@@ -2638,6 +2745,29 @@ function classifyIntent(query) {
   return Object.entries(scores).find(([_, s]) => s === maxScore)[0];
 }
 
+// === 业务分类自动检测 ===
+function classifyBusinessContext(query) {
+  const q = query.toLowerCase();
+  const scores = {};
+
+  for (const [bizCat, keywords] of Object.entries(BUSINESS_KEYWORDS)) {
+    scores[bizCat] = 0;
+    for (const kw of keywords) {
+      if (q.includes(kw.toLowerCase())) {
+        scores[bizCat] += (kw.length >= 3 ? 2 : 1); // 长关键词权重更高
+      }
+    }
+  }
+
+  // 返回得分 >= 2 的所有业务分类
+  const matched = Object.entries(scores)
+    .filter(([_, s]) => s >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, _]) => cat);
+
+  return matched;
+}
+
 // === 增强 RAG 检索 ===
 async function retrieveContext(query, intent, profile) {
   const ctx = { tasks: null, memories: [], notes: [], entities: [] };
@@ -2663,12 +2793,43 @@ async function retrieveContext(query, intent, profile) {
 
   try {
     if (memoryStore) {
+      // 检测查询中的业务分类
+      const bizCategories = classifyBusinessContext(query);
+      const bizCatLabels = {
+        product: '产品', project: '项目', case: '案例', work: '工作',
+        bidding: '投标', consulting: '咨询', solution: '方案', problem: '问题',
+        badcase: 'badcase', requirement: '需求', customer: '客户情况',
+        personal: '个人情况', other: '其他'
+      };
       const limit = intent === 'memory' ? 20 : 5;
-      ctx.memories = memoryStore.searchRelated(query, limit).map(m => ({
+      ctx.memories = memoryStore.searchRelated(query, limit, bizCategories).map(m => ({
         content: m.content, type: m.type, type_label: { instant: '瞬时', short: '短期', long: '长期' }[m.type] || m.type,
-        category: m.category, importance: m.importance || 'normal',
+        category: m.category, business_category: m.business_category || 'other',
+        business_category_label: bizCatLabels[m.business_category || 'other'] || '其他',
+        importance: m.importance || 'normal',
         created_at: m.createdAt, last_accessed: m.lastAccessed || m.createdAt
       }));
+
+      // 如果检测到业务分类，额外补充该分类下的记忆
+      if (bizCategories.length > 0) {
+        const existingIds = new Set(ctx.memories.map(m => m.content));
+        for (const bizCat of bizCategories.slice(0, 2)) { // 最多取前2个业务分类
+          const bizMemories = memoryStore.getMemories({ business_category: bizCat, limit: 3 });
+          for (const m of bizMemories) {
+            if (!existingIds.has(m.content)) {
+              ctx.memories.push({
+                content: m.content, type: m.type, type_label: { instant: '瞬时', short: '短期', long: '长期' }[m.type] || m.type,
+                category: m.category, business_category: m.business_category || 'other',
+                business_category_label: bizCatLabels[m.business_category || 'other'] || '其他',
+                importance: m.importance || 'normal',
+                created_at: m.createdAt, last_accessed: m.lastAccessed || m.createdAt
+              });
+              existingIds.add(m.content);
+            }
+          }
+        }
+      }
+
       // 附加实体图谱
       const graph = memoryStore.getEntityGraph();
       ctx.entities = Object.entries(graph || {}).slice(0, 20).map(([name, info]) => ({
@@ -2907,6 +3068,86 @@ ipcMain.handle('prompt:reset-file', async (_, filename) => {
       }
     }
     return { success: false, error: '无备份文件可恢复，请手动编辑或重新下载' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 列出指定 Prompt 的所有备份版本
+ipcMain.handle('prompt:list-backups', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许 .md 文件' };
+  try {
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (!fs.existsSync(backupDir)) return { success: true, backups: [] };
+    
+    const backups = fs.readdirSync(backupDir)
+      .filter(f => f.startsWith(safeName) && f.endsWith('.bak'))
+      .sort()
+      .reverse() // 最新的排前面
+      .map(f => {
+        // 从文件名提取时间戳：task_recognition_v2.0.md.2025-01-15T03-00-00-000Z.bak
+        const tsMatch = f.match(/\.(\d{4}-\d{2}-\d{2}T[\d-]+Z)\.bak$/);
+        const timestamp = tsMatch ? tsMatch[1].replace(/-/g, (m, i) => i > 10 ? ':' : m) : '';
+        const stat = fs.statSync(path.join(backupDir, f));
+        return {
+          filename: f,
+          timestamp,
+          size: stat.size,
+          date: stat.mtime.toISOString()
+        };
+      });
+    return { success: true, backups };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 恢复到指定备份版本
+ipcMain.handle('prompt:restore-backup', async (_, filename, backupFilename) => {
+  const safeName = path.basename(filename);
+  const safeBackup = path.basename(backupFilename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许 .md 文件' };
+  try {
+    const filePath = path.join(PROMPT_DIR, safeName);
+    const backupPath = path.join(PROMPT_DIR, 'backups', safeBackup);
+    if (!fs.existsSync(backupPath)) return { success: false, error: '备份文件不存在' };
+    
+    // 先备份当前版本
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (fs.existsSync(filePath)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(filePath, path.join(backupDir, `${safeName}.${ts}.bak`));
+    }
+    
+    // 恢复指定备份
+    fs.copyFileSync(backupPath, filePath);
+    return { success: true, restoredFrom: safeBackup };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 初始化为内置 Prompt（重置到出厂设置）
+ipcMain.handle('prompt:reset-to-builtin', async (_, filename) => {
+  const safeName = path.basename(filename);
+  if (!safeName.endsWith('.md')) return { success: false, error: '只允许 .md 文件' };
+  try {
+    const builtinPath = path.join(__dirname, 'prompts', safeName);
+    if (!fs.existsSync(builtinPath)) return { success: false, error: '内置 Prompt 文件不存在' };
+    
+    const filePath = path.join(PROMPT_DIR, safeName);
+    // 先备份当前版本
+    const backupDir = path.join(PROMPT_DIR, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    if (fs.existsSync(filePath)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(filePath, path.join(backupDir, `${safeName}.${ts}.bak`));
+    }
+    
+    // 复制内置版本
+    fs.copyFileSync(builtinPath, filePath);
+    return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -3239,7 +3480,13 @@ function buildClipboardAnalysisPrompt(traceId) {
     'user_profile.english_name': profile.user?.english_name || '',
     'user_profile.role': profile.user?.role || '',
     'user_profile.industries': profile.user?.industries || [],
-    current_time: new Date().toLocaleString('zh-CN'),
+    current_time: (() => {
+      const now = new Date();
+      const dow = ['日','一','二','三','四','五','六'][now.getDay()];
+      const h = now.getHours();
+      const period = h < 6 ? '凌晨' : h < 12 ? '上午' : h < 18 ? '下午' : '晚上';
+      return `${now.toLocaleString('zh-CN')} 周${dow} ${period}`;
+    })(),
     source_meta: { app: 'clipboard', type: '其他' },
     frequent_persons: profile.frequent_persons || [],
     active_projects: profile.active_projects || [],

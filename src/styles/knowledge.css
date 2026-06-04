@@ -6,6 +6,7 @@
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
+  overflow: hidden;
 }
 
 /* 搜索栏 */
@@ -74,12 +75,51 @@
 /* 知识内容滚动区域 */
 .knowledge-content {
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 24px;
   display: flex;
   flex-direction: column;
   gap: 20px;
   min-height: 0;
+}
+
+.knowledge-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.knowledge-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.knowledge-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+
+.knowledge-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* 推荐区：限制最大高度，超出内部滚动 */
+#knowledgeRecommendSection {
+  flex: 0 0 auto;
+  max-height: 300px;
+  min-height: 0;
+}
+
+#knowledgeRecommendSection .knowledge-card-list {
+  overflow-y: auto;
+  max-height: calc(100% - 50px);
+}
+
+#knowledgeRecommendSection .knowledge-card-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+#knowledgeRecommendSection .knowledge-card-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
 }
 
 /* 区域标题 */
@@ -96,27 +136,6 @@
 
 .knowledge-section:hover {
   box-shadow: var(--shadow-sm);
-}
-
-/* 推荐区：最大高度 40%，超出滚动 */
-#knowledgeRecommendSection {
-  flex: 0 0 auto;
-  max-height: 40%;
-  min-height: 0;
-}
-
-#knowledgeRecommendSection .knowledge-card-list {
-  overflow-y: auto;
-  max-height: calc(100% - 50px);
-}
-
-#knowledgeRecommendSection .knowledge-card-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-#knowledgeRecommendSection .knowledge-card-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 2px;
 }
 
 .knowledge-section-header {
@@ -487,37 +506,36 @@
 .knowledge-search-results {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .search-panels {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   gap: 0;
 }
 
 .search-panel {
   display: flex;
   flex-direction: column;
-  min-height: 80px;
-  max-height: calc(100% - 12px);
+  min-height: 60px;
+  max-height: 350px;
   overflow: hidden;
   border-radius: 0;
-  transition: flex 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: max-height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* ADP 面板点击展开 */
 .search-panel.expanded {
-  flex: 3 1 0% !important;
+  max-height: 600px !important;
 }
 
 .search-panel.collapsed {
-  flex: 0.5 1 0% !important;
+  max-height: 40px !important;
   min-height: 40px;
 }
 
@@ -775,22 +793,23 @@
 
 /* 知识搜索按钮（剪贴板弹窗中） */
 .search-knowledge-btn {
-  padding: 10px 22px;
+  padding: 6px 14px;
   border: none;
-  border-radius: var(--radius-md);
-  font-size: 14px;
+  border-radius: 8px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.25s var(--transition);
+  transition: all 0.2s var(--transition);
   background: linear-gradient(135deg, #4F8EF7, #8B5CF6);
   color: white;
   box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
   letter-spacing: -0.1px;
+  white-space: nowrap;
 }
 
 .search-knowledge-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+  box-shadow: 0 3px 12px rgba(79, 142, 247, 0.35);
+  filter: brightness(1.05);
 }
 
 /* 推荐已读/未读状态 */

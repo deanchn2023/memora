@@ -97,7 +97,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // v1.1 Agent 智能助手
   agent: {
-    invoke: (query, agentType) => ipcRenderer.invoke('agent:invoke', { query, agentType }),
+    invoke: (query, agentType, attachments) => ipcRenderer.invoke('agent:invoke', { query, agentType, attachments }),
   },
 
   // v1.2 Phase 3: Prompt 优化器 + 历史记录
@@ -120,6 +120,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     download: (filename) => ipcRenderer.invoke('prompt:download-file', filename),
     upload: (filename, content) => ipcRenderer.invoke('prompt:upload-file', filename, content),
     getVariables: (filename) => ipcRenderer.invoke('prompt:get-variables', filename),
+    listBackups: (filename) => ipcRenderer.invoke('prompt:list-backups', filename),
+    restoreBackup: (filename, backupFilename) => ipcRenderer.invoke('prompt:restore-backup', filename, backupFilename),
+    resetToBuiltin: (filename) => ipcRenderer.invoke('prompt:reset-to-builtin', filename),
   },
 
   // v1.2 Phase 3: 用户画像建议

@@ -21,6 +21,39 @@ const MEMORY_CATEGORIES = {
   CLIPBOARD: 'clipboard' // 剪贴板日志
 };
 
+// 业务分类类型
+const BUSINESS_CATEGORIES = {
+  PRODUCT: 'product',
+  PROJECT: 'project',
+  CASE: 'case',
+  WORK: 'work',
+  BIDDING: 'bidding',
+  CONSULTING: 'consulting',
+  SOLUTION: 'solution',
+  PROBLEM: 'problem',
+  BADCASE: 'badcase',
+  REQUIREMENT: 'requirement',
+  CUSTOMER: 'customer',
+  PERSONAL: 'personal',
+  OTHER: 'other'
+};
+
+// 业务分类关键词映射（用于自动分类）
+const BUSINESS_KEYWORDS = {
+  product: ['产品', '功能', '需求文档', 'PRD', '原型', '设计稿', '版本'],
+  project: ['项目', '里程碑', '交付', '验收', '排期', '进度'],
+  case: ['案例', '用例', '场景', '实践', '经验'],
+  work: ['工作', '任务', '日程', '会议', '汇报', '周报'],
+  bidding: ['标书', '投标', '招标', '报价', '中标', '商务标', '技术标'],
+  consulting: ['咨询', '顾问', '方案建议', '调研', '诊断'],
+  solution: ['方案', '架构', '技术方案', '解决方案', '实施计划'],
+  problem: ['问题', 'bug', '故障', '异常', '排查', '修复', '线上问题'],
+  badcase: ['badcase', 'bad case', '反面案例', '失败案例', '踩坑'],
+  requirement: ['需求', '需求分析', '用户故事', 'feature', '迭代需求'],
+  customer: ['客户', '甲方', '业主', '合作方', '使用方', '需求方'],
+  personal: ['我', '我的', '个人', '自己', '习惯', '偏好']
+};
+
 // 记忆存储路径：打包后必须使用 userData 目录（ASAR 内只读）
 const MEMORY_PATH = app.isPackaged
   ? path.join(app.getPath('userData'), 'memory')
@@ -75,6 +108,7 @@ class MemoryStore {
       id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
       type: memory.type || MEMORY_TYPES.SHORT,
       category: memory.category || MEMORY_CATEGORIES.KNOWLEDGE,
+      business_category: memory.business_category || BUSINESS_CATEGORIES.OTHER,
       content: memory.content,
       metadata: memory.metadata || {},
       confidence: memory.confidence || 0.8,
@@ -193,8 +227,13 @@ class MemoryStore {
       result = result.filter(m => m.category === options.category);
     }
     
+    if (options.business_category) {
+      result = result.filter(m => (m.business_category || 'other') === options.business_category);
+    }
+    
+    const offset = options.offset || 0;
     if (options.limit) {
-      result = result.slice(0, options.limit);
+      result = result.slice(offset, offset + options.limit);
     }
     
     return result;
@@ -234,7 +273,7 @@ class MemoryStore {
   }
 
   // 搜索相关记忆
-  searchRelated(content, limit = 5) {
+  searchRelated(content, limit = 5, businessCategories = []) {
     const keywords = content.toLowerCase().split(/\s+/).filter(w => w.length > 2);
     const scores = [];
     
@@ -247,6 +286,14 @@ class MemoryStore {
           score += 1;
         }
       });
+      
+      // 业务分类匹配加分
+      if (businessCategories.length > 0) {
+        const memBizCat = memory.business_category || 'other';
+        if (businessCategories.includes(memBizCat)) {
+          score += 2;
+        }
+      }
       
       if (score > 0) {
         scores.push({ memory, score });
@@ -266,11 +313,16 @@ class MemoryStore {
         long: this.memories.filter(m => m.type === MEMORY_TYPES.LONG).length
       },
       byCategory: {},
+      byBusinessCategory: {},
       entityCount: Object.keys(this.entityGraph).length
     };
     
     Object.values(MEMORY_CATEGORIES).forEach(cat => {
       stats.byCategory[cat] = this.memories.filter(m => m.category === cat).length;
+    });
+    
+    Object.values(BUSINESS_CATEGORIES).forEach(bizCat => {
+      stats.byBusinessCategory[bizCat] = this.memories.filter(m => (m.business_category || 'other') === bizCat).length;
     });
     
     return stats;
@@ -280,5 +332,7 @@ class MemoryStore {
 module.exports = {
   MemoryStore,
   MEMORY_TYPES,
-  MEMORY_CATEGORIES
+  MEMORY_CATEGORIES,
+  BUSINESS_CATEGORIES,
+  BUSINESS_KEYWORDS
 };

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000; font-src 'self' data:;">
   <title>忆境 Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
@@ -172,8 +172,15 @@
                   </div>
                 </div>
               </div>
+              <div class="chat-attachments" id="chatAttachments"></div>
               <div class="chat-input-area">
+                <input type="file" id="chatFileInput" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.zip,.rar,.txt,.md,.csv" style="display:none">
                 <div class="input-wrapper">
+                  <button class="file-upload-btn" id="chatFileUploadBtn" title="上传文件">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
                   <input type="text" id="aiChatInput" placeholder="输入你的问题..." autocomplete="off">
                   <button class="action-btn" id="clearChatBtn">清空</button>
                   <button class="send-btn" id="sendAIMessageBtn">
@@ -614,6 +621,21 @@
               </div>
             </div>
           </div>
+
+          <!-- Prompt 版本管理模态框 -->
+          <div class="prompt-editor-overlay hidden" id="promptVersionOverlay">
+            <div class="prompt-editor-modal" style="max-width:520px;">
+              <div class="prompt-editor-header">
+                <h4 id="promptVersionTitle">版本管理</h4>
+                <button class="modal-close" onclick="App.hidePromptVersionOverlay()">×</button>
+              </div>
+              <div class="prompt-editor-body" id="promptVersionList" style="max-height:400px;overflow-y:auto;">
+              </div>
+              <div class="prompt-editor-footer">
+                <button class="btn secondary" onclick="App.hidePromptVersionOverlay()">关闭</button>
+              </div>
+            </div>
+          </div>
         </div>
         
         <!-- 用户画像 -->
@@ -719,18 +741,59 @@
                   <option value="short">短期记忆</option>
                   <option value="long">长期记忆</option>
                 </select>
+                <select id="manualMemoryBusinessCategory">
+                  <option value="other">其他</option>
+                  <option value="product">产品</option>
+                  <option value="project">项目</option>
+                  <option value="case">案例</option>
+                  <option value="work">工作</option>
+                  <option value="bidding">投标</option>
+                  <option value="consulting">咨询</option>
+                  <option value="solution">方案</option>
+                  <option value="problem">问题</option>
+                  <option value="badcase">badcase</option>
+                  <option value="requirement">需求</option>
+                  <option value="customer">客户情况</option>
+                  <option value="personal">个人情况</option>
+                </select>
                 <button class="btn primary small" id="addManualMemoryBtn">添加记忆</button>
               </div>
             </div>
             <div class="memory-list-header">
-              <span>最近记忆</span>
+              <span>记忆列表</span>
               <div class="memory-list-actions">
+                <select id="memoryTypeFilter" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border-color);font-size:12px;background:var(--bg-secondary);color:var(--text-primary);">
+                  <option value="all">全部类型</option>
+                  <option value="short">短期记忆</option>
+                  <option value="long">长期记忆</option>
+                  <option value="instant">瞬时记忆</option>
+                </select>
+                <select id="memoryBusinessFilter" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border-color);font-size:12px;background:var(--bg-secondary);color:var(--text-primary);">
+                  <option value="all">全部业务分类</option>
+                  <option value="product">产品</option>
+                  <option value="project">项目</option>
+                  <option value="case">案例</option>
+                  <option value="work">工作</option>
+                  <option value="bidding">投标</option>
+                  <option value="consulting">咨询</option>
+                  <option value="solution">方案</option>
+                  <option value="problem">问题</option>
+                  <option value="badcase">badcase</option>
+                  <option value="requirement">需求</option>
+                  <option value="customer">客户情况</option>
+                  <option value="personal">个人情况</option>
+                  <option value="other">其他</option>
+                </select>
                 <button class="btn small" id="refreshMemoriesBtn">刷新</button>
                 <button class="btn small danger" id="clearAllMemoriesBtn">清空所有记忆</button>
               </div>
             </div>
             <div class="memory-list" id="memoryList">
               <div class="empty-state">暂无记忆记录</div>
+            </div>
+            <div class="memory-load-more hidden" id="memoryLoadMore">
+              <button class="btn small" id="loadMoreMemoriesBtn">加载更多</button>
+              <span class="memory-count-info" id="memoryCountInfo"></span>
             </div>
           </div>
         </div>

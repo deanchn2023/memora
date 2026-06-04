@@ -6,6 +6,7 @@ const App = {
   remainingTime: 10,
   newNoteCount: 0, // 记事本角标：不在记事本页时新笔记的累加计数
   dbSyncTimer: null, // 数据库同步定时器
+  _chatAttachments: [], // 聊天文件附件列表
 
   init() {
     console.log('[App] init() starting...');
@@ -189,6 +190,12 @@ const App = {
     document.getElementById('refreshMemoriesBtn').addEventListener('click', () => this.loadMemories());
     document.getElementById('clearAllMemoriesBtn').addEventListener('click', () => this.clearAllMemories());
     document.getElementById('addManualMemoryBtn').addEventListener('click', () => this.addManualMemory());
+    document.getElementById('memoryTypeFilter')?.addEventListener('change', () => this.loadMemories());
+    document.getElementById('memoryBusinessFilter')?.addEventListener('change', () => this.loadMemories());
+    document.getElementById('loadMoreMemoriesBtn')?.addEventListener('click', () => {
+      this._memoryPage++;
+      this.loadMemories(true);
+    });
     
     // AI助手相关事件
     document.getElementById('openAIAssistantBtn').addEventListener('click', () => this.showAIAssistantView());
@@ -199,6 +206,12 @@ const App = {
       }
     });
     document.getElementById('clearChatBtn').addEventListener('click', () => this.clearChat());
+    
+    // 文件上传
+    document.getElementById('chatFileUploadBtn').addEventListener('click', () => {
+      document.getElementById('chatFileInput').click();
+    });
+    document.getElementById('chatFileInput').addEventListener('change', (e) => this.handleChatFileSelect(e));
     
     // 搜索知识按钮（剪贴板检测弹窗中）
     document.getElementById('searchKnowledgeBtn').addEventListener('click', () => {
@@ -444,22 +457,39 @@ const App = {
   async sendAIMessage() {
     const input = document.getElementById('aiChatInput');
     const message = input.value.trim();
-    if (!message) return;
+    
+    // 需要有消息或附件
+    if (!message && this._chatAttachments.length === 0) return;
 
     const chatMessages = document.getElementById('chatMessages');
+    const attachments = [...this._chatAttachments]; // 复制附件列表
     
     // 添加用户消息
     const userMessage = document.createElement('div');
     userMessage.className = 'message user';
+    
+    // 附件 HTML
+    let attachmentsHtml = '';
+    if (attachments.length > 0) {
+      attachmentsHtml = '<div class="message-attachments">';
+      for (const att of attachments) {
+        const icon = this.getFileIcon(att.type, att.name);
+        attachmentsHtml += `<span class="message-attachment-item"><span class="msg-att-icon">${icon}</span>${this.escapeHtml(att.name)}</span>`;
+      }
+      attachmentsHtml += '</div>';
+    }
+    
     userMessage.innerHTML = `
       <div class="message-avatar">👤</div>
       <div class="message-content">
-        <p>${this.escapeHtml(message)}</p>
+        <p>${this.escapeHtml(message || '发送了文件')}</p>
+        ${attachmentsHtml}
       </div>
     `;
     chatMessages.appendChild(userMessage);
     
     input.value = '';
+    this.clearChatAttachments();
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     // 添加助手消息占位符（带加载动画）
@@ -479,9 +509,12 @@ const App = {
 
     try {
       let result;
+      // 构建附件数据（读取文件内容）
+      const attachmentData = await this.buildAttachmentData(attachments);
+      
       // 优先使用 Agent 系统（本地 AI），回退到 ADP
       if (window.electronAPI?.agent?.invoke) {
-        result = await window.electronAPI.agent.invoke(message);
+        result = await window.electronAPI.agent.invoke(message, undefined, attachmentData);
         
         if (result.success) {
           const messageContent = assistantMessage.querySelector('.message-content');
@@ -504,7 +537,16 @@ const App = {
             </div>`;
           }
           
+          // 添加复制按钮
+          html += '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
+          
           messageContent.innerHTML = html;
+          
+          // 绑定复制按钮事件
+          const copyBtn = messageContent.querySelector('.copy-btn');
+          if (copyBtn) {
+            copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
+          }
           
           // 绑定反馈按钮事件
           const feedbackDiv = messageContent.querySelector('.agent-feedback');
@@ -543,10 +585,27 @@ const App = {
         }
       } else {
         // 回退：ADP 消息
-        result = await window.electronAPI.sendADPMessage(message);
+        // 将附件信息加入消息
+        let fullMessage = message;
+        if (attachmentData.length > 0) {
+          const fileInfos = attachmentData.map(a => {
+            if (a.textContent) return `[文件: ${a.name}]\n${a.textContent}`;
+            return `[文件: ${a.name}, 类型: ${a.mimeType}, 大小: ${a.size}]`;
+          });
+          fullMessage = fileInfos.join('\n\n') + '\n\n' + message;
+        }
+        
+        result = await window.electronAPI.sendADPMessage(fullMessage);
         if (result.success) {
           const messageContent = assistantMessage.querySelector('.message-content');
           messageContent.innerHTML = `<p>${this.escapeHtml(result.content)}</p>`;
+          // 添加复制按钮
+          const copyBtnHtml = '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
+          messageContent.insertAdjacentHTML('beforeend', copyBtnHtml);
+          const copyBtn = messageContent.querySelector('.copy-btn');
+          if (copyBtn) {
+            copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
+          }
         } else {
           throw new Error(result.error || '发送失败');
         }
@@ -559,6 +618,159 @@ const App = {
     }
     
     chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  // === 复制按钮 ===
+  copyAssistantMessage(btn, messageContent) {
+    // 获取文本内容，排除复制按钮本身
+    const clone = messageContent.cloneNode(true);
+    const copyBtnInClone = clone.querySelector('.copy-btn');
+    if (copyBtnInClone) copyBtnInClone.remove();
+    const text = clone.innerText || clone.textContent || '';
+    navigator.clipboard.writeText(text.trim()).then(() => {
+      btn.classList.add('copied');
+      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+      }, 2000);
+    }).catch(err => {
+      console.error('[Copy] Failed:', err);
+    });
+  },
+
+  // === 文件上传处理 ===
+  handleChatFileSelect(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    
+    // 限制文件数量
+    const maxFiles = 5;
+    const maxFileSize = 10 * 1024 * 1024; // 10MB
+    
+    if (this._chatAttachments.length + files.length > maxFiles) {
+      alert(`最多上传 ${maxFiles} 个文件`);
+      e.target.value = '';
+      return;
+    }
+    
+    for (const file of files) {
+      if (file.size > maxFileSize) {
+        alert(`文件 ${file.name} 超过 10MB 限制`);
+        continue;
+      }
+      
+      const fileType = this.getFileType(file.name, file.type);
+      this._chatAttachments.push({
+        name: file.name,
+        size: file.size,
+        mimeType: file.type,
+        type: fileType,
+        file: file // 保留 File 对象，发送时读取
+      });
+    }
+    
+    this.renderChatAttachments();
+    e.target.value = ''; // 重置 input 以便重复选择同一文件
+  },
+
+  getFileType(filename, mimeType) {
+    const ext = filename.split('.').pop().toLowerCase();
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    const textExts = ['txt', 'md', 'csv'];
+    
+    if (imageExts.includes(ext) || mimeType.startsWith('image/')) return 'image';
+    if (textExts.includes(ext) || mimeType.startsWith('text/')) return 'text';
+    if (ext === 'pdf') return 'pdf';
+    return 'binary';
+  },
+
+  getFileIcon(type, filename) {
+    const ext = filename ? filename.split('.').pop().toLowerCase() : '';
+    switch (type) {
+      case 'image': return '🖼️';
+      case 'text': return '📝';
+      case 'pdf': return '📄';
+      default:
+        if (['doc', 'docx'].includes(ext)) return '📃';
+        if (['xls', 'xlsx'].includes(ext)) return '📊';
+        if (['ppt', 'pptx'].includes(ext)) return '📽️';
+        if (['zip', 'rar'].includes(ext)) return '🗜️';
+        return '📎';
+    }
+  },
+
+  formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  },
+
+  renderChatAttachments() {
+    const container = document.getElementById('chatAttachments');
+    if (!container) return;
+    
+    if (this._chatAttachments.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    
+    container.innerHTML = this._chatAttachments.map((att, idx) => {
+      const icon = this.getFileIcon(att.type, att.name);
+      return `<div class="attachment-chip" data-idx="${idx}">
+        <span class="attachment-icon">${icon}</span>
+        <span class="attachment-name" title="${this.escapeHtml(att.name)}">${this.escapeHtml(att.name)}</span>
+        <span class="attachment-size">${this.formatFileSize(att.size)}</span>
+        <button class="attachment-remove" data-idx="${idx}" title="移除">&times;</button>
+      </div>`;
+    }).join('');
+    
+    // 绑定移除按钮
+    container.querySelectorAll('.attachment-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.dataset.idx);
+        this._chatAttachments.splice(idx, 1);
+        this.renderChatAttachments();
+      });
+    });
+  },
+
+  clearChatAttachments() {
+    this._chatAttachments = [];
+    this.renderChatAttachments();
+  },
+
+  async buildAttachmentData(attachments) {
+    const result = [];
+    for (const att of attachments) {
+      const data = {
+        name: att.name,
+        size: att.size,
+        mimeType: att.mimeType,
+        type: att.type
+      };
+      
+      try {
+        if (att.type === 'image') {
+          // 图片转 base64
+          const arrayBuffer = await att.file.arrayBuffer();
+          const uint8 = new Uint8Array(arrayBuffer);
+          let binary = '';
+          for (let i = 0; i < uint8.length; i++) {
+            binary += String.fromCharCode(uint8[i]);
+          }
+          data.base64 = btoa(binary);
+        } else if (att.type === 'text') {
+          // 文本文件读取内容
+          data.textContent = await att.file.text();
+        }
+      } catch (err) {
+        console.error('[Chat] Failed to read file:', att.name, err);
+      }
+      
+      result.push(data);
+    }
+    return result;
   },
 
   // 渲染 Agent 结果为 HTML
@@ -694,6 +906,9 @@ const App = {
   clearChat() {
     const chatMessages = document.getElementById('chatMessages');
     
+    // 清空附件
+    this.clearChatAttachments();
+    
     // 保留功能提示卡片和快捷问题胶囊，只清空对话消息
     const featureCards = chatMessages.querySelector('.feature-cards');
     const quickQuestions = chatMessages.querySelector('.quick-questions');
@@ -805,7 +1020,11 @@ const App = {
     this.showToast('API配置已清空，将使用内置密钥');
   },
 
-  async loadMemories() {
+  _memoryPage: 0,
+  _memoryPageSize: 30,
+  _memoryHasMore: false,
+
+  async loadMemories(append = false) {
     if (!window.electronAPI) return;
     
     // 加载统计信息
@@ -815,16 +1034,37 @@ const App = {
     document.querySelector('#memoryStats .stat-item:nth-child(3) .stat-value').textContent = stats.byType?.long || 0;
     document.querySelector('#memoryStats .stat-item:nth-child(4) .stat-value').textContent = stats.entityCount || 0;
     
+    if (!append) this._memoryPage = 0;
+
+    // 获取筛选类型
+    const typeFilter = document.getElementById('memoryTypeFilter')?.value || 'all';
+    const bizFilter = document.getElementById('memoryBusinessFilter')?.value || 'all';
+    const options = { limit: this._memoryPageSize };
+    if (typeFilter !== 'all') options.type = typeFilter;
+    if (bizFilter !== 'all') options.business_category = bizFilter;
+
     // 加载记忆列表
-    const result = await window.electronAPI.getMemories({ limit: 50 });
+    const result = await window.electronAPI.getMemories(options);
     const memoryList = document.getElementById('memoryList');
     
+    // 计算是否还有更多（同时考虑类型和业务分类筛选）
+    let totalCount = stats.total || 0;
+    if (typeFilter !== 'all' && stats.byType) totalCount = stats.byType[typeFilter] || 0;
+    if (bizFilter !== 'all' && stats.byBusinessCategory) {
+      const bizCount = stats.byBusinessCategory[bizFilter] || 0;
+      totalCount = (typeFilter !== 'all') ? Math.min(totalCount, bizCount) : bizCount;
+    }
+    const loadedCount = (append ? memoryList.children.length : 0) + (result.memories?.length || 0);
+    this._memoryHasMore = loadedCount < totalCount;
+
     if (result.memories && result.memories.length > 0) {
-      memoryList.innerHTML = result.memories.map(memory => {
+      const html = result.memories.map(memory => {
         const confidence = memory.confidence !== undefined ? Math.round(memory.confidence * 100) : 0;
         const isTask = memory.metadata?.isTask || memory.category === 'task';
         const taskTitle = memory.metadata?.taskTitle;
         const reason = memory.metadata?.reason || memory.metadata?.preClassification?.reason;
+        const bizCat = memory.business_category || 'other';
+        const bizCatLabel = this.getBusinessCategoryLabel(bizCat);
         
         return `
           <div class="memory-item" data-id="${memory.id}" ondblclick="App.editMemory('${memory.id}')">
@@ -836,6 +1076,7 @@ const App = {
             <div class="memory-meta">
               <span class="memory-type ${isTask ? 'task' : ''}">${this.getMemoryTypeLabel(memory.type)}</span>
               <span class="memory-category">${this.getMemoryCategoryLabel(memory.category)}</span>
+              <span class="memory-business-category biz-${bizCat}">${bizCatLabel}</span>
               <div class="memory-confidence">
                 <span class="confidence-label">信心值:</span>
                 <span class="confidence-value" style="color: ${this.getConfidenceColor(memory.confidence)}">${confidence}%</span>
@@ -846,8 +1087,24 @@ const App = {
           </div>
         `;
       }).join('');
-    } else {
+
+      if (append) {
+        memoryList.insertAdjacentHTML('beforeend', html);
+      } else {
+        memoryList.innerHTML = html;
+      }
+    } else if (!append) {
       memoryList.innerHTML = '<div class="empty-state">暂无记忆记录</div>';
+    }
+
+    // 显示/隐藏加载更多
+    const loadMoreEl = document.getElementById('memoryLoadMore');
+    const countInfoEl = document.getElementById('memoryCountInfo');
+    if (loadMoreEl) {
+      loadMoreEl.classList.toggle('hidden', !this._memoryHasMore);
+    }
+    if (countInfoEl) {
+      countInfoEl.textContent = `已显示 ${loadedCount} / ${totalCount} 条`;
     }
 
     // 事件委托：删除按钮
@@ -869,6 +1126,25 @@ const App = {
       clipboard: '剪贴板'
     };
     return labels[category] || category;
+  },
+
+  getBusinessCategoryLabel(bizCat) {
+    const labels = {
+      product: '产品',
+      project: '项目',
+      case: '案例',
+      work: '工作',
+      bidding: '投标',
+      consulting: '咨询',
+      solution: '方案',
+      problem: '问题',
+      badcase: 'badcase',
+      requirement: '需求',
+      customer: '客户情况',
+      personal: '个人情况',
+      other: '其他'
+    };
+    return labels[bizCat] || bizCat;
   },
 
   getConfidenceColor(confidence) {
@@ -913,6 +1189,7 @@ const App = {
     }
     
     const type = document.getElementById('manualMemoryType').value;
+    const business_category = document.getElementById('manualMemoryBusinessCategory').value || 'other';
     
     try {
       if (window.electronAPI) {
@@ -920,6 +1197,7 @@ const App = {
           content: input,
           type: type,
           category: 'knowledge',
+          business_category: business_category,
           confidence: 1.0,
           metadata: {
             source: 'manual',
@@ -1041,8 +1319,9 @@ const App = {
     const tagMap = {
       '闲聊': 'note-status-tag tag-chat',
       '无需推荐': 'note-status-tag tag-skip',
-      '已推荐知识': 'note-status-tag tag-recommended',
+      '识别为待办': 'note-status-tag tag-task',
       '已创建待办': 'note-status-tag tag-task',
+      '已推荐知识': 'note-status-tag tag-recommended',
       '已提炼记忆': 'note-status-tag tag-memory'
     };
     const cls = tagMap[status] || 'note-status-tag tag-skip';
@@ -1636,42 +1915,60 @@ const App = {
             console.log('[App] analyzeTask result:', analysis);
             
             if (analysis.success && analysis.task) {
-              // 填充任务表单并显示任务创建模态框
-              document.getElementById('taskTitle').value = analysis.task.title || result.note.title;
-              document.getElementById('taskDesc').value = analysis.task.description || result.note.content;
+              const taskData = analysis.task;
+              const dueDate = taskData.dueDate ? new Date(taskData.dueDate) : this.getDefaultDueDate();
               
-              if (analysis.task.dueDate) {
-                const date = new Date(analysis.task.dueDate);
-                document.getElementById('taskDue').value = date.toISOString().slice(0, 16);
-              }
+              // 直接创建任务
+              const task = Store.addTask({
+                title: taskData.title || result.note.title,
+                description: taskData.description || result.note.content,
+                estimatedDuration: taskData.estimatedDuration || 60,
+                priority: taskData.priority || 'medium',
+                dueDate: dueDate.toISOString(),
+                source: 'notebook',
+                rawText: result.note.content
+              });
               
-              document.getElementById('taskPriority').value = analysis.task.priority || 'medium';
-              document.getElementById('taskDuration').value = analysis.task.estimatedDuration || 60;
+              task.reminders = Reminder.calculateReminders(task);
+              Store.updateTask(task.id, { reminders: task.reminders });
               
-              // 显示分析结果
-              document.getElementById('aiAnalysisResult').classList.remove('hidden');
-              document.getElementById('analysisConfidence').textContent = `置信度: ${Math.round(analysis.task.confidence * 100)}%`;
+              // 更新笔记分析状态
+              await window.electronAPI.notebookUpdateNote(noteId, {
+                analysis: { ...result.note.analysis, status: '已创建待办', isTask: true, taskId: task.id }
+              });
               
               // 记录用户反馈，用于优化prompt
               await window.electronAPI.recordFeedback({
                 type: 'convert_to_task',
                 content: result.note.content,
-                result: analysis.task,
+                result: taskData,
                 timestamp: new Date().toISOString()
               });
               
-              // 显示任务创建模态框
-              document.getElementById('modalTitle').textContent = '新建任务（来自笔记）';
-              document.getElementById('taskModal').classList.remove('hidden');
-              
-              this.showToast('笔记已转为待办任务');
+              this.renderTaskList();
+              Calendar.render();
+              this.showToast('待办任务已创建');
             } else {
               // 如果AI分析失败，手动创建任务
               console.log('[App] AI analysis failed, creating manual task');
-              document.getElementById('taskTitle').value = result.note.title;
-              document.getElementById('taskDesc').value = result.note.content;
-              document.getElementById('modalTitle').textContent = '新建任务（来自笔记）';
-              document.getElementById('taskModal').classList.remove('hidden');
+              const dueDate = this.getDefaultDueDate();
+              
+              const task = Store.addTask({
+                title: result.note.title,
+                description: result.note.content,
+                estimatedDuration: 60,
+                priority: 'medium',
+                dueDate: dueDate.toISOString(),
+                source: 'notebook',
+                rawText: result.note.content
+              });
+              
+              task.reminders = Reminder.calculateReminders(task);
+              Store.updateTask(task.id, { reminders: task.reminders });
+              
+              await window.electronAPI.notebookUpdateNote(noteId, {
+                analysis: { ...result.note.analysis, status: '已创建待办', isTask: true, taskId: task.id }
+              });
               
               // 记录反馈
               await window.electronAPI.recordFeedback({
@@ -1680,6 +1977,10 @@ const App = {
                 manual: true,
                 timestamp: new Date().toISOString()
               });
+              
+              this.renderTaskList();
+              Calendar.render();
+              this.showToast('待办任务已创建');
             }
           } catch (error) {
             console.error('转换任务失败:', error);
@@ -3032,17 +3333,99 @@ const App = {
   },
 
   async resetPromptFile(filename) {
-    const confirmed = await this.showConfirmDialog('恢复确认', `确定要恢复 ${filename} 到最近的备份版本吗？`);
-    if (!confirmed) return;
-    if (!window.electronAPI?.promptFiles?.reset) return;
+    // 弹出版本选择弹窗
+    const overlay = document.getElementById('promptVersionOverlay');
+    const listEl = document.getElementById('promptVersionList');
+    const titleEl = document.getElementById('promptVersionTitle');
+    if (!overlay) return;
 
-    const result = await window.electronAPI.promptFiles.reset(filename);
+    titleEl.textContent = `${filename} - 版本管理`;
+    listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">加载中...</div>';
+    overlay.classList.remove('hidden');
+
+    // 加载备份列表
+    const result = await window.electronAPI.promptFiles.listBackups(filename);
+    if (!result.success) {
+      listEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-tertiary);">无备份记录</div>`;
+      return;
+    }
+
+    let html = '';
+    // 当前版本
+    html += `
+      <div class="prompt-version-item current">
+        <div class="version-info">
+          <span class="version-label">当前版本</span>
+          <span class="version-detail">正在使用</span>
+        </div>
+        <div class="version-actions">
+          <button class="btn small secondary" onclick="App.openPromptEditor('${filename}')">编辑</button>
+        </div>
+      </div>`;
+
+    // 内置版本（初始化选项）
+    html += `
+      <div class="prompt-version-item builtin">
+        <div class="version-info">
+          <span class="version-label">出厂初始版本</span>
+          <span class="version-detail">恢复到应用内置的初始 Prompt</span>
+        </div>
+        <div class="version-actions">
+          <button class="btn small danger" onclick="App.resetPromptToBuiltin('${filename}')">恢复初始</button>
+        </div>
+      </div>`;
+
+    // 备份版本列表
+    if (result.backups && result.backups.length > 0) {
+      html += '<div class="version-divider">历史备份版本</div>';
+      for (const backup of result.backups) {
+        const dateStr = backup.date ? new Date(backup.date).toLocaleString('zh-CN') : '未知时间';
+        const sizeStr = backup.size ? `${(backup.size / 1024).toFixed(1)} KB` : '';
+        html += `
+          <div class="prompt-version-item backup">
+            <div class="version-info">
+              <span class="version-label">${dateStr}</span>
+              <span class="version-detail">${sizeStr}</span>
+            </div>
+            <div class="version-actions">
+              <button class="btn small" onclick="App.restorePromptBackup('${filename}', '${backup.filename}')">恢复此版本</button>
+            </div>
+          </div>`;
+      }
+    }
+
+    listEl.innerHTML = html;
+  },
+
+  async restorePromptBackup(filename, backupFilename) {
+    const confirmed = await this.showConfirmDialog('恢复确认', `确定要恢复到该备份版本吗？当前版本会自动备份。`);
+    if (!confirmed) return;
+    const result = await window.electronAPI.promptFiles.restoreBackup(filename, backupFilename);
     if (result.success) {
-      this.showToast(`已从备份恢复 ${filename}`);
+      this.showToast(`已恢复到备份版本`);
+      this.hidePromptVersionOverlay();
       this.loadPromptFiles();
     } else {
-      this.showToast('恢复失败：' + (result.error || '无备份文件'), 'error');
+      this.showToast('恢复失败：' + (result.error || ''), 'error');
     }
+  },
+
+  async resetPromptToBuiltin(filename) {
+    const confirmed = await this.showConfirmDialog('初始化确认', `确定要恢复到出厂初始版本吗？当前版本会自动备份。`);
+    if (!confirmed) return;
+    const result = await window.electronAPI.promptFiles.resetToBuiltin(filename);
+    if (result.success) {
+      this.showToast(`已恢复到出厂初始版本`);
+      this.hidePromptVersionOverlay();
+      this.loadPromptFiles();
+    } else {
+      this.showToast('恢复失败：' + (result.error || ''), 'error');
+    }
+  },
+
+  hidePromptVersionOverlay() {
+    const overlay = document.getElementById('promptVersionOverlay');
+    if (overlay) overlay.classList.add('hidden');
   },
 
   // === Prompt 变量预览 ===

@@ -712,8 +712,7 @@ body {
 }
 
 .memory-list-container {
-  max-height: 320px;
-  overflow: hidden;
+  max-height: 500px;
   display: flex;
   flex-direction: column;
 }
@@ -738,6 +737,25 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.memory-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-color);
+  margin-top: 8px;
+}
+
+.memory-load-more.hidden {
+  display: none;
+}
+
+.memory-count-info {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .memory-item {
@@ -813,6 +831,28 @@ body {
   color: var(--text-secondary);
   font-size: 10px;
 }
+
+.memory-business-category {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+/* 业务分类颜色体系 */
+.memory-business-category.biz-product { background: #e8f0fe; color: #1a73e8; }
+.memory-business-category.biz-project { background: #e6f4ea; color: #137333; }
+.memory-business-category.biz-case { background: #fef7e0; color: #b06000; }
+.memory-business-category.biz-work { background: #f3e8fd; color: #7c3aed; }
+.memory-business-category.biz-bidding { background: #fce8e6; color: #c5221f; }
+.memory-business-category.biz-consulting { background: #e8f7fc; color: #007b83; }
+.memory-business-category.biz-solution { background: #e8f0fe; color: #185abc; }
+.memory-business-category.biz-problem { background: #fce8e6; color: #d93025; }
+.memory-business-category.biz-badcase { background: #f1f3f4; color: #5f6368; }
+.memory-business-category.biz-requirement { background: #fef7e0; color: #e37400; }
+.memory-business-category.biz-customer { background: #e6f4ea; color: #0d652d; }
+.memory-business-category.biz-personal { background: #f3e8fd; color: #9334e6; }
+.memory-business-category.biz-other { background: var(--bg-tertiary); color: var(--text-tertiary); }
 
 .memory-confidence {
   display: flex;
@@ -1616,6 +1656,172 @@ body {
   margin-bottom: 4px;
 }
 
+/* 复制按钮 */
+.message.assistant .message-content {
+  position: relative;
+}
+
+.copy-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s var(--transition);
+  z-index: 2;
+}
+
+.message.assistant:hover .copy-btn {
+  opacity: 0.7;
+}
+
+.copy-btn:hover {
+  opacity: 1 !important;
+  background: var(--bg-tertiary);
+  color: var(--primary-color);
+  transform: scale(1.1);
+}
+
+.copy-btn.copied {
+  color: var(--success-color);
+  opacity: 1 !important;
+}
+
+/* 文件上传按钮 */
+.file-upload-btn {
+  width: 44px;
+  height: 44px;
+  background: var(--bg-secondary);
+  border: 1.5px solid var(--border-color);
+  border-radius: 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.25s var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.file-upload-btn:hover {
+  background: var(--primary-light);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  transform: scale(1.05);
+}
+
+/* 附件区域 */
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 20px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.chat-attachments:empty {
+  display: none;
+}
+
+.chat-attachments:not(:empty) {
+  padding-top: 10px;
+  padding-bottom: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  border-top: 0.5px solid var(--border-light);
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  max-width: 200px;
+  animation: chipSlideIn 0.2s var(--transition);
+}
+
+@keyframes chipSlideIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.attachment-chip .attachment-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.attachment-chip .attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.attachment-chip .attachment-size {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.attachment-chip .attachment-remove {
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.attachment-chip .attachment-remove:hover {
+  background: var(--danger-light);
+  color: var(--danger-color);
+}
+
+/* 用户消息中的附件 */
+.message-attachments {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.message-attachment-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.message-attachment-item .msg-att-icon {
+  font-size: 12px;
+}
+
 /* 聊天输入 */
 .chat-input-area {
   border-top: 0.5px solid var(--border-light);
@@ -2412,7 +2618,62 @@ body {
   gap: 10px;
   padding: 14px 20px;
   border-top: 1px solid var(--border-color);
-  background: rgba(245, 245, 247, 0.4);
+}
+
+/* Prompt 版本管理 */
+.prompt-version-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+  transition: background 0.2s;
+}
+
+.prompt-version-item:hover {
+  background: var(--bg-secondary);
+}
+
+.prompt-version-item.current {
+  background: rgba(52, 199, 89, 0.06);
+  border: 0.5px solid rgba(52, 199, 89, 0.2);
+}
+
+.prompt-version-item.builtin {
+  background: rgba(79, 142, 247, 0.06);
+  border: 0.5px solid rgba(79, 142, 247, 0.2);
+}
+
+.version-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.version-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.version-detail {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.version-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.version-divider {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 8px 16px 4px;
+  border-top: 0.5px solid var(--border-color);
+  margin-top: 8px;
+}  background: rgba(245, 245, 247, 0.4);
 }
 
 /* 优化器历史记录 */
