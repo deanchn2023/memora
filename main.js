@@ -760,7 +760,7 @@ function createTray() {
   tray = new Tray(trayIcon);
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: '显示主窗口', click: () => mainWindow.show() },
+    { label: '显示主窗口', click: () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } } },
     { label: '开始番茄钟', click: () => mainWindow.webContents.send('start-pomodoro') },
     { type: 'separator' },
     { label: '退出', click: () => {
@@ -773,7 +773,11 @@ function createTray() {
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
-    mainWindow.show();
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
 }
 
@@ -2429,7 +2433,11 @@ app.whenReady().then(() => {
   setInterval(checkWeeklyOptimizer, 60 * 60 * 1000);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
       createWindow();
     }
   });
