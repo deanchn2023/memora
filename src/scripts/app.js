@@ -644,9 +644,11 @@ const App = {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     
-    // 限制文件数量
+    // 限制文件数量和大小：多文件单个≤20MB最多5个，单文件最大≤100MB
     const maxFiles = 5;
-    const maxFileSize = 10 * 1024 * 1024; // 10MB
+    const isSingleFile = (this._chatAttachments.length + files.length) <= 1;
+    const maxFileSize = isSingleFile ? 100 * 1024 * 1024 : 20 * 1024 * 1024; // 单文件100MB，多文件20MB
+    const maxFileSizeLabel = isSingleFile ? '100MB' : '20MB';
     
     if (this._chatAttachments.length + files.length > maxFiles) {
       alert(`最多上传 ${maxFiles} 个文件`);
@@ -655,8 +657,12 @@ const App = {
     }
     
     for (const file of files) {
-      if (file.size > maxFileSize) {
-        alert(`文件 ${file.name} 超过 10MB 限制`);
+      // 判断当前总附件数决定单文件限制
+      const currentIsSingle = (this._chatAttachments.length + 1) <= 1 && files.length === 1;
+      const currentMaxSize = currentIsSingle ? 100 * 1024 * 1024 : 20 * 1024 * 1024;
+      const currentMaxLabel = currentIsSingle ? '100MB' : '20MB';
+      if (file.size > currentMaxSize) {
+        alert(`文件 ${file.name} 超过 ${currentMaxLabel} 限制`);
         continue;
       }
       
