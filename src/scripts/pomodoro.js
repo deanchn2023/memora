@@ -88,11 +88,14 @@ const Pomodoro = {
   reset() {
     this.state.isRunning = false;
     this.state.currentSession = 0;
+    this.state.plannedSessions = 1;
+    this.state.currentTaskId = null;
     this.state.startTime = null;
     this.state.remainingTime = this.settings.workDuration * 60;
     this.state.type = 'work';
     
     clearInterval(this.timer);
+    this.timer = null;
     this.updateDisplay();
     this.updateButton();
     this.updateSessionDots();
