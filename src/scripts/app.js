@@ -2372,10 +2372,22 @@ const App = {
   },
 
   getDefaultDueDate() {
-    const date = new Date();
-    date.setDate(date.getDate() + 1);
-    date.setHours(17, 0, 0, 0);
-    return date;
+    const now = new Date();
+    const hour = now.getHours();
+    
+    // 默认截止时间：根据当前时间推算下一个合理时段
+    if (hour < 12) {
+      // 上午 → 默认今天下午17:00
+      now.setHours(17, 0, 0, 0);
+    } else if (hour < 18) {
+      // 下午 → 默认今天晚上20:00
+      now.setHours(20, 0, 0, 0);
+    } else {
+      // 晚上 → 默认明天上午10:00
+      now.setDate(now.getDate() + 1);
+      now.setHours(10, 0, 0, 0);
+    }
+    return now;
   },
 
   // 将 Date 对象格式化为 datetime-local 输入框所需的本地时间字符串 (YYYY-MM-DDTHH:mm)

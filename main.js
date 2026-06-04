@@ -1367,8 +1367,42 @@ function validateTimeSemantic(rawTime, isoDate) {
   
   const date = new Date(isoDate);
   const hour = date.getHours();
+  const now = new Date();
   let corrected = false;
   
+  // 日期校正：如果时间词暗示"今天"但 AI 解析成了明天，修正为今天
+  // "晚上/今晚/下午"等无"明天"前缀的时间词，默认指当天
+  const hasTomorrowPrefix = /明天|明晚|明早|明下午/.test(rawTime);
+  if (!hasTomorrowPrefix) {
+    const targetHour = /晚上|今晚|傍晚/.test(rawTime) ? 19 : 
+                       /下午|午后/.test(rawTime) ? 14 : 
+                       /上午|早上|早晨|清晨/.test(rawTime) ? 9 : 
+                       /中午/.test(rawTime) ? 12 : -1;
+    
+    if (targetHour > 0) {
+      // 检查解析出的日期是否是明天
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const isTomorrow = date.getDate() === tomorrow.getDate() && 
+                          date.getMonth() === tomorrow.getMonth();
+      
+      if (isTomorrow) {
+        // 如果当前时间还没过该时段，应该指向今天而非明天
+        // 例如：当前下午3点说"晚上六点半"，应指今天晚上
+        // 但如果当前晚上11点说"晚上"，则明天晚上才合理
+        const currentHour = now.getHours();
+        const isAlreadyPast = currentHour >= targetHour + 3; // 当前时间已过该时段+3小时缓冲
+        
+        if (!isAlreadyPast) {
+          date.setFullYear(now.getFullYear(), now.getMonth(), now.getDate());
+          corrected = true;
+          console.log(`[Time] 日期校正: "${rawTime}" 从明天修正为今天（当前${currentHour}点，未过${targetHour}点时段）`);
+        }
+      }
+    }
+  }
+  
+  // 小时校正：修正 AI 时间语义不匹配
   // 上午：8-11点，如果解析结果在12点之后，修正为9点
   if (/上午|早上|早晨|清晨/.test(rawTime) && hour >= 12) {
     date.setHours(9, 0, 0, 0);
@@ -1390,8 +1424,28 @@ function validateTimeSemantic(rawTime, isoDate) {
     corrected = true;
   }
   
+  // 保留原文中的具体时间（如"六点半"→18:30）
+  const timeMatch = rawTime.match(/(\d{1,2})[点时:：](\d{1,2})?/);
+  if (timeMatch) {
+    let parsedHour = parseInt(timeMatch[1]);
+    const parsedMin = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    
+    // "下午3点"/"晚上6点半"等含时段词的时间
+    if (/下午|午后|晚上|今晚|傍晚/.test(rawTime) && parsedHour < 12) {
+      parsedHour += 12; // 下午6点 → 18点
+    }
+    if (/上午|早上|早晨|清晨/.test(rawTime) && parsedHour >= 12) {
+      parsedHour -= 12; // 上午14点 → 2点（异常修正）
+    }
+    
+    if (parsedHour >= 0 && parsedHour < 24 && parsedMin >= 0 && parsedMin < 60) {
+      date.setHours(parsedHour, parsedMin, 0, 0);
+      corrected = true;
+    }
+  }
+  
   if (corrected) {
-    console.log(`[Time] 校正时间语义: "${rawTime}" 原解析小时=${hour} → 修正为${date.getHours()}`);
+    console.log(`[Time] 校正时间语义: "${rawTime}" → ${date.toLocaleString('zh-CN')}`);
   }
   
   return date.toISOString();

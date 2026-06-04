@@ -38,7 +38,10 @@
       "scripts/**",
       "prompts/**",
       "resources/**",
-      "package.json"
+      "package.json",
+      "!src/scripts/memory/memories.json",
+      "!src/scripts/memory/entity-graph.json",
+      "!src/scripts/notebook/notes.json"
     ]
   }
 }
