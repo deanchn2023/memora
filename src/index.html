@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000 http://121.5.164.126:3450; font-src 'self' data:;">
   <title>忆境 Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
@@ -456,15 +456,89 @@
       <div class="modal-body">
         <!-- 设置标签页 -->
         <div class="settings-tabs">
-          <button class="settings-tab active" data-tab="api">API配置</button>
+          <button class="settings-tab active" data-tab="org">组织配置</button>
+          <button class="settings-tab" data-tab="api">API配置</button>
           <button class="settings-tab" data-tab="adp">ADP配置</button>
           <button class="settings-tab" data-tab="prompt">Prompt配置</button>
           <button class="settings-tab" data-tab="profile">用户画像</button>
           <button class="settings-tab" data-tab="memory">记忆管理</button>
         </div>
         
+        <!-- 组织配置（v2.0 新增） -->
+        <div class="settings-panel" id="orgPanel">
+          <!-- 未登录状态 -->
+          <div id="orgLoginSection">
+            <div class="org-login-card">
+              <div class="org-login-icon">🏢</div>
+              <h4>组织配置</h4>
+              <p style="color: var(--text-secondary); margin: 8px 0 16px;">登录后自动获取组织配置，无需手动填写 API Key 和 ADP AppKey</p>
+              <div class="form-group">
+                <label for="loginEmail">邮箱</label>
+                <input type="email" id="loginEmail" placeholder="输入邮箱">
+              </div>
+              <div class="form-group">
+                <label for="loginPassword">密码</label>
+                <input type="password" id="loginPassword" placeholder="输入密码" onkeydown="if(event.key==='Enter')App.handleOrgLogin()">
+              </div>
+              <div id="loginError" class="login-error hidden"></div>
+              <button class="btn-primary org-login-btn" id="orgLoginBtn" onclick="App.handleOrgLogin()">登 录</button>
+            </div>
+          </div>
+          
+          <!-- 已登录状态 -->
+          <div id="orgLoggedInSection" class="hidden">
+            <div class="org-info-card">
+              <div class="org-info-header">
+                <span class="org-info-avatar" id="orgUserAvatar">👤</span>
+                <div class="org-info-text">
+                  <div class="org-info-name" id="orgUserName">-</div>
+                  <div class="org-info-detail" id="orgUserOrg">-</div>
+                </div>
+                <button class="btn-ghost org-logout-btn" onclick="App.handleOrgLogout()">退出登录</button>
+              </div>
+              <div class="org-sync-row">
+                <span class="org-sync-time" id="orgSyncTime">配置同步时间：-</span>
+                <button class="btn-ghost org-sync-btn" onclick="App.handleConfigSync()">🔄 同步最新配置</button>
+              </div>
+            </div>
+            
+            <div class="org-config-summary">
+              <h5>当前组织配置</h5>
+              <div class="org-config-item">
+                <span class="org-config-label">API 地址</span>
+                <span class="org-config-value" id="orgApiUrl">-</span>
+              </div>
+              <div class="org-config-item">
+                <span class="org-config-label">模型</span>
+                <span class="org-config-value" id="orgApiModel">-</span>
+              </div>
+              <div class="org-config-item">
+                <span class="org-config-label">每日额度</span>
+                <span class="org-config-value" id="orgApiLimit">-</span>
+              </div>
+              <div class="org-config-item">
+                <span class="org-config-label">ADP 助手</span>
+                <span class="org-config-value" id="orgAdpName">-</span>
+              </div>
+              <div class="org-config-item">
+                <span class="org-config-label">ADP 状态</span>
+                <span class="org-config-value" id="orgAdpStatus">-</span>
+              </div>
+            </div>
+            
+            <div class="org-config-notice">
+              <small>🔒 组织配置由管理员统一管理，API/ADP 面板中的配置已自动使用组织设置。退出登录后将回退到本地配置。</small>
+            </div>
+          </div>
+        </div>
+        
         <!-- API配置 -->
-        <div class="settings-panel" id="apiPanel">
+        <div class="settings-panel hidden" id="apiPanel">
+          <!-- 登录状态提示 -->
+          <div id="apiServerHint" class="config-server-hint hidden">
+            <span class="config-server-badge">🏢 组织配置</span>
+            <span>当前使用组织统一配置，以下设置由管理员管理</span>
+          </div>
           <div class="form-group">
             <label for="apiKey">API Key</label>
             <input type="password" id="apiKey" placeholder="输入API Key（不输入则使用内置密钥）">
@@ -494,6 +568,11 @@
         
         <!-- ADP配置 -->
         <div class="settings-panel hidden" id="adpPanel">
+          <!-- 登录状态提示 -->
+          <div id="adpServerHint" class="config-server-hint hidden">
+            <span class="config-server-badge">🏢 组织配置</span>
+            <span>当前使用组织统一配置，以下设置由管理员管理</span>
+          </div>
           <div class="form-group">
             <label for="adpAppKey">ADP AppKey（AI助手通用）</label>
             <input type="password" id="adpAppKey" placeholder="输入ADP应用AppKey">

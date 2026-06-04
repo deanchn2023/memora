@@ -24,6 +24,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendADPMessage: (message) => ipcRenderer.invoke('send-adp-message', message),
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
 
+  // v2.0 认证与远程配置
+  authLogin: (email, password) => ipcRenderer.invoke('auth:login', { email, password }),
+  authLogout: () => ipcRenderer.invoke('auth:logout'),
+  authGetState: () => ipcRenderer.invoke('auth:get-state'),
+  configSync: () => ipcRenderer.invoke('config:sync'),
+  onAuthChanged: (callback) => {
+    ipcRenderer.on('auth:changed', (_, data) => callback(data));
+  },
+
   // 知识跟随
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   knowledgeSearchADP: (params) => ipcRenderer.invoke('knowledge:search-adp', params),

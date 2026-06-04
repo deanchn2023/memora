@@ -3172,3 +3172,245 @@ body {
   color: #1d1d1f;
   background: var(--bg-secondary, #f5f5f7);
 }
+
+/* ============= v2.0 组织配置样式 ============= */
+
+.org-login-card {
+  text-align: center;
+  padding: 32px 24px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 16px;
+  max-width: 360px;
+  margin: 0 auto;
+}
+
+.org-login-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.org-login-card h4 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0;
+}
+
+.org-login-card .form-group {
+  text-align: left;
+  margin-bottom: 12px;
+}
+
+.org-login-card input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.org-login-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: var(--primary-color, #007AFF);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.org-login-btn:hover {
+  opacity: 0.85;
+}
+
+.org-login-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-error {
+  color: #FF3B30;
+  font-size: 13px;
+  text-align: center;
+  padding: 8px;
+  background: rgba(255, 59, 48, 0.08);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.login-error.hidden {
+  display: none;
+}
+
+.org-info-card {
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.org-info-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.org-info-avatar {
+  font-size: 32px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary, white);
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.org-info-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.org-info-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.org-info-detail {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  margin-top: 2px;
+}
+
+.org-logout-btn {
+  font-size: 13px;
+  color: #FF3B30;
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.org-logout-btn:hover {
+  background: rgba(255, 59, 48, 0.06);
+}
+
+.org-sync-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light, rgba(0,0,0,0.06));
+}
+
+.org-sync-time {
+  font-size: 12px;
+  color: var(--text-tertiary, #aeaeb2);
+}
+
+.org-sync-btn {
+  font-size: 13px;
+  color: var(--primary-color, #007AFF);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: background 0.15s;
+}
+
+.org-sync-btn:hover {
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.org-config-summary {
+  margin-bottom: 16px;
+}
+
+.org-config-summary h5 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0 0 12px;
+}
+
+.org-config-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light, rgba(0,0,0,0.04));
+}
+
+.org-config-item:last-child {
+  border-bottom: none;
+}
+
+.org-config-label {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+}
+
+.org-config-value {
+  font-size: 13px;
+  color: var(--text-primary, #1d1d1f);
+  font-weight: 500;
+  max-width: 200px;
+  text-align: right;
+  word-break: break-all;
+}
+
+.org-config-notice {
+  background: rgba(0, 122, 255, 0.04);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.org-config-notice small {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  line-height: 1.5;
+}
+
+.config-server-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(0, 122, 255, 0.04);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+}
+
+.config-server-hint.hidden {
+  display: none;
+}
+
+.config-server-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--primary-color, #007AFF);
+  color: white;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 登录状态下配置字段只读样式 */
+.settings-panel.config-locked input {
+  opacity: 0.6;
+  pointer-events: none;
+  background: var(--bg-tertiary, #f0f0f2);
+}

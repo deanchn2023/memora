@@ -71,6 +71,37 @@ const App = {
       console.error('[App] setupClipboardListener() failed:', e);
     }
     
+    // v2.0: 监听认证状态变化
+    try {
+      if (window.electronAPI?.onAuthChanged) {
+        window.electronAPI.onAuthChanged((data) => {
+          console.log('[App] Auth state changed:', data.isLoggedIn ? 'logged in' : 'logged out');
+          this._updateOrgUI(data);
+          if (data.isLoggedIn) {
+            this._updateConfigServerHints(true);
+          } else {
+            this._updateConfigServerHints(false);
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[App] Auth listener setup failed:', e);
+    }
+    
+    // v2.0: 检查初始登录状态
+    try {
+      if (window.electronAPI?.authGetState) {
+        window.electronAPI.authGetState().then(state => {
+          if (state.isLoggedIn) {
+            this._updateOrgUI(state);
+            this._updateConfigServerHints(true);
+          }
+        });
+      }
+    } catch (e) {
+      // ignore
+    }
+    
     setTimeout(() => this.updateInitTest(''), 2000);
     console.log('[App] init() finished');
   },
@@ -376,6 +407,7 @@ const App = {
     // 延迟加载：只在首次切换到标签时加载数据
     if (!this._settingsTabLoaded[tabName]) {
       this._settingsTabLoaded[tabName] = true;
+      if (tabName === 'org') this._loadOrgConfig();
       if (tabName === 'api') this._loadApiConfig();
       if (tabName === 'adp') this._loadAdpConfig();
       if (tabName === 'memory') this.loadMemories();
@@ -390,8 +422,11 @@ const App = {
       document.getElementById('apiBaseUrl').value = config.baseUrl || '';
       document.getElementById('apiModel').value = config.model || '';
       document.getElementById('apiDailyLimit').value = config.dailyLimit || 1000;
-      document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '自定义密钥' : '内置密钥'}`;
+      document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '自定义密钥' : (config.fromServer ? '组织配置' : '内置密钥')}`;
       document.getElementById('currentDailyLimit').textContent = `每日限制: ${config.dailyLimit}次`;
+      
+      // v2.0: 登录状态时 API 面板显示提示
+      this._updateConfigServerHints(config.fromServer);
     });
   },
 
@@ -404,7 +439,145 @@ const App = {
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
       document.getElementById('adpConfigStatus').textContent = `当前状态: ${config.appKey ? '已配置通用Key' : '未配置'}${config.knowledgeAppKey ? ' | 知识推荐Key已配置' : ''}${config.searchAppKey ? ' | 搜索Key已配置' : ''}`;
+      
+      // v2.0: 登录状态时 ADP 面板显示提示
+      this._updateConfigServerHints(config.fromServer);
     });
+  },
+
+  // ===== v2.0 组织配置方法 =====
+
+  _loadOrgConfig() {
+    if (!window.electronAPI) return;
+    window.electronAPI.authGetState().then(state => {
+      this._updateOrgUI(state);
+    });
+  },
+
+  _updateOrgUI(state) {
+    const loginSection = document.getElementById('orgLoginSection');
+    const loggedInSection = document.getElementById('orgLoggedInSection');
+    
+    if (state.isLoggedIn) {
+      loginSection.classList.add('hidden');
+      loggedInSection.classList.remove('hidden');
+      
+      // 填充用户信息
+      document.getElementById('orgUserName').textContent = state.user?.name || state.user?.email || '-';
+      document.getElementById('orgUserOrg').textContent = state.user?.org_name ? `${state.user.org_name} · ${state.user.email}` : state.user?.email || '-';
+      
+      // 加载服务器配置摘要
+      this._loadOrgConfigSummary();
+    } else {
+      loginSection.classList.remove('hidden');
+      loggedInSection.classList.add('hidden');
+    }
+  },
+
+  async _loadOrgConfigSummary() {
+    if (!window.electronAPI) return;
+    
+    // 从 getAPIConfig 获取当前生效的 API 配置
+    const apiConfig = await window.electronAPI.getAPIConfig();
+    document.getElementById('orgApiUrl').textContent = apiConfig.baseUrl || '-';
+    document.getElementById('orgApiModel').textContent = apiConfig.model || '-';
+    document.getElementById('orgApiLimit').textContent = apiConfig.dailyLimit ? `${apiConfig.dailyLimit}次/天` : '-';
+    
+    // 从 getADPConfig 获取当前生效的 ADP 配置
+    const adpConfig = await window.electronAPI.getADPConfig();
+    document.getElementById('orgAdpName').textContent = adpConfig.agentName || '-';
+    document.getElementById('orgAdpStatus').textContent = adpConfig.appKey ? '✅ 已配置' : '❌ 未配置';
+    
+    // 同步时间
+    const now = new Date();
+    document.getElementById('orgSyncTime').textContent = `配置同步时间：${now.toLocaleString('zh-CN')}`;
+  },
+
+  _updateConfigServerHints(fromServer) {
+    const apiHint = document.getElementById('apiServerHint');
+    const adpHint = document.getElementById('adpServerHint');
+    const apiPanel = document.getElementById('apiPanel');
+    const adpPanel = document.getElementById('adpPanel');
+    
+    if (fromServer) {
+      apiHint?.classList.remove('hidden');
+      adpHint?.classList.remove('hidden');
+      apiPanel?.classList.add('config-locked');
+      adpPanel?.classList.add('config-locked');
+    } else {
+      apiHint?.classList.add('hidden');
+      adpHint?.classList.add('hidden');
+      apiPanel?.classList.remove('config-locked');
+      adpPanel?.classList.remove('config-locked');
+    }
+  },
+
+  async handleOrgLogin() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const errorEl = document.getElementById('loginError');
+    const btn = document.getElementById('orgLoginBtn');
+    
+    if (!email || !password) {
+      errorEl.textContent = '请输入邮箱和密码';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    
+    errorEl.classList.add('hidden');
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    
+    try {
+      const result = await window.electronAPI.authLogin(email, password);
+      
+      if (result.success) {
+        this._updateOrgUI({ isLoggedIn: true, user: result.user });
+        this._loadOrgConfigSummary();
+        this._updateConfigServerHints(true);
+        this.showToast('登录成功，已同步组织配置');
+        
+        // 刷新 API 和 ADP 配置显示
+        this._settingsTabLoaded.api = false;
+        this._settingsTabLoaded.adp = false;
+      } else {
+        errorEl.textContent = result.error || '登录失败';
+        errorEl.classList.remove('hidden');
+      }
+    } catch (err) {
+      errorEl.textContent = '网络错误，请检查连接';
+      errorEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '登 录';
+    }
+  },
+
+  async handleOrgLogout() {
+    if (!window.electronAPI) return;
+    
+    const result = await window.electronAPI.authLogout();
+    if (result.success) {
+      this._updateOrgUI({ isLoggedIn: false });
+      this._updateConfigServerHints(false);
+      this.showToast('已退出登录，切换到本地配置');
+      
+      // 刷新 API 和 ADP 配置显示
+      this._settingsTabLoaded.api = false;
+      this._settingsTabLoaded.adp = false;
+    }
+  },
+
+  async handleConfigSync() {
+    if (!window.electronAPI) return;
+    
+    const result = await window.electronAPI.configSync();
+    if (result.success) {
+      await this._loadOrgConfigSummary();
+      this.showToast('配置已同步');
+    } else {
+      this.showToast(result.error || '同步失败', 'error');
+    }
   },
 
   showSettingsModal() {
