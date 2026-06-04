@@ -4,6 +4,7 @@ const Pomodoro = {
     isRunning: false,
     currentSession: 0,
     totalSessions: 0,
+    plannedSessions: 1, // 计划番茄数
     currentTaskId: null,
     startTime: null,
     type: 'work',
@@ -37,6 +38,12 @@ const Pomodoro = {
   },
 
   start(taskId = null) {
+    // 先清除已有定时器，防止重复点击叠加多个定时器导致读秒过快
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    
     if (taskId) {
       this.state.currentTaskId = taskId;
     }
@@ -46,6 +53,7 @@ const Pomodoro = {
     this.state.remainingTime = this.getDuration() * 60;
     
     this.timer = setInterval(() => this.tick(), 1000);
+    this.updateDisplay();
     this.updateButton();
     Store.savePomodoroState(this.state);
   },
@@ -58,13 +66,21 @@ const Pomodoro = {
   },
 
   resume() {
+    // 先清除已有定时器
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    
     const elapsed = Math.floor((Date.now() - this.state.startTime) / 1000);
     this.state.remainingTime = this.getDuration() * 60 - elapsed;
     
     if (this.state.remainingTime <= 0) {
       this.complete();
     } else {
+      this.state.isRunning = true;
       this.timer = setInterval(() => this.tick(), 1000);
+      this.updateDisplay();
       this.updateButton();
     }
   },
@@ -168,8 +184,9 @@ const Pomodoro = {
   },
 
   updateSessionDots() {
+    const total = Math.max(this.state.plannedSessions || 1, this.settings.sessionsBeforeLongBreak);
     const dots = [];
-    for (let i = 0; i < this.settings.sessionsBeforeLongBreak; i++) {
+    for (let i = 0; i < total; i++) {
       if (i < this.state.currentSession) {
         dots.push('<span class="completed">●</span>');
       } else {
@@ -179,13 +196,34 @@ const Pomodoro = {
     document.getElementById('pomodoroCount').innerHTML = dots.join(' ');
   },
 
-  setCurrentTask(taskId, taskTitle) {
+  setCurrentTask(taskId, taskTitle, plannedSessions = 1) {
     this.state.currentTaskId = taskId;
+    this.state.plannedSessions = plannedSessions || 1;
     const taskName = document.querySelector('.current-task .task-name');
     if (taskName) {
       taskName.textContent = taskTitle || '无';
     }
+    this.updateSessionDots();
     Store.savePomodoroState(this.state);
+  },
+
+  // 增加计划番茄数（点击番茄按钮时调用）
+  addPlannedSession(taskId, taskTitle) {
+    if (this.state.currentTaskId === taskId) {
+      // 同一任务，累加
+      this.state.plannedSessions = (this.state.plannedSessions || 1) + 1;
+    } else {
+      // 不同任务，重置为1
+      this.state.currentTaskId = taskId;
+      this.state.plannedSessions = 1;
+      const taskName = document.querySelector('.current-task .task-name');
+      if (taskName) {
+        taskName.textContent = taskTitle || '无';
+      }
+    }
+    this.updateSessionDots();
+    Store.savePomodoroState(this.state);
+    return this.state.plannedSessions;
   },
 
   showNotification(title, body) {

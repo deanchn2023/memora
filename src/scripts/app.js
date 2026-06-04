@@ -2671,8 +2671,14 @@ const App = {
         e.stopPropagation();
         const task = Store.getTasks().find(t => t.id === taskId);
         if (task) {
-          Pomodoro.setCurrentTask(taskId, task.title);
-          Pomodoro.start(taskId);
+          // 每次点击增加一个计划番茄数
+          const plannedCount = Pomodoro.addPlannedSession(taskId, task.title);
+          this.showToast(`已添加番茄钟（计划${plannedCount}个）`);
+          
+          // 如果番茄钟未运行，立即启动
+          if (!Pomodoro.state.isRunning) {
+            Pomodoro.start(taskId);
+          }
         }
       });
       
@@ -2695,6 +2701,9 @@ const App = {
     const relativeTime = dueDate ? this.getRelativeTime(dueDate) : '无截止时间';
     const priorityBadge = `<span class="priority-badge ${task.priority}">${task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>`;
     const draftBadge = task.isDraft ? `<span class="draft-badge">草稿</span>` : '';
+    // 计算该任务已完成的番茄数
+    const completedPomodoros = (task.pomodoroSessions || []).filter(s => s.type === 'work' && s.completed).length;
+    const pomodoroCountHtml = completedPomodoros > 0 ? `<span class="pomodoro-count">🍅×${completedPomodoros}</span>` : '';
     
     return `
       <div class="task-item${task.isDraft ? ' draft-item' : ''}" data-id="${task.id}">
@@ -2702,12 +2711,15 @@ const App = {
         <div class="task-info">
           <div class="title">${task.title} ${draftBadge}</div>
           <div class="meta">
+            ${priorityBadge}
             <span>${relativeTime}</span>
             <span>${task.estimatedDuration}分钟</span>
-            ${priorityBadge}
-            <button class="start-pomodoro" title="开始番茄钟">🍅</button>
-            <button class="delete-task-btn" title="删除任务">🗑</button>
+            ${pomodoroCountHtml}
           </div>
+        </div>
+        <div class="task-actions">
+          <button class="task-action-btn start-pomodoro" title="增加一个番茄钟">🍅</button>
+          <button class="task-action-btn delete-task-btn" title="删除任务">🗑</button>
         </div>
       </div>
     `;

@@ -260,26 +260,41 @@
   gap: 4px;
 }
 
-.task-info .meta button {
-  padding: 4px 8px;
+.pomodoro-count {
+  color: #FF9500;
+  font-weight: 500;
+}
+
+/* 任务操作按钮区域 */
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  opacity: 0;
+  transition: opacity 0.2s var(--transition);
+  flex-shrink: 0;
+}
+
+.task-item:hover .task-actions {
+  opacity: 1;
+}
+
+.task-action-btn {
+  width: 32px;
+  height: 32px;
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: 10px;
+  font-size: 15px;
   cursor: pointer;
-  transition: all 0.2s var(--transition);
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
   background: transparent;
+  transition: all 0.2s var(--transition);
 }
 
-.task-item:hover .task-info .meta button {
-  opacity: 0.7;
-}
-
-.task-info .meta button:hover {
-  opacity: 1 !important;
+.task-action-btn:hover {
   transform: scale(1.15);
 }
 
