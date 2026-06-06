@@ -4455,8 +4455,6 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       durationInput.value = task.estimatedDuration;
       priorityInput.value = task.priority;
-      // 渲染已关联人物
-      this._renderTaskLinkedPersons(task.linkedPersons || []);
     } else {
       document.getElementById('modalTitle').textContent = '新建任务';
       titleInput.value = task?.title || '';
@@ -4471,8 +4469,6 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       durationInput.value = task?.estimatedDuration || 60;
       priorityInput.value = task?.priority || 'medium';
-      // 渲染 AI 识别到的人物或空
-      this._renderTaskLinkedPersons(task?.linkedPersons || []);
     }
     
     modal.classList.remove('hidden');
@@ -4536,7 +4532,21 @@ ${JSON.stringify(reportData, null, 2)}`;
     return '';
   },
 
-  // 获取当前任务关联的人物
+  // 自动从画像匹配关联人物（根据标题和描述中的关键词）
+  _getAutoLinkedPersons(title, description) {
+    try {
+      const profile = Store.getProfile();
+      if (!profile?.frequentPersons?.length) return [];
+      const text = `${title} ${description}`.toLowerCase();
+      return profile.frequentPersons
+        .filter(p => p.name && text.includes(p.name.toLowerCase()))
+        .map(p => ({ name: p.name, relation: p.relation || '' }));
+    } catch (e) {
+      return [];
+    }
+  },
+
+  // 获取当前任务关联的人物（旧方法，保留兼容）
   _getTaskLinkedPersons() {
     const container = document.getElementById('taskLinkedPersons');
     if (!container) return [];
@@ -4568,7 +4578,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       estimatedDuration: parseInt(durationInput.value) || 60,
       priority: priorityInput.value,
       dueDate: dueInput.value ? new Date(dueInput.value).toISOString() : null,
-      linkedPersons: this._getTaskLinkedPersons()
+      linkedPersons: this._getAutoLinkedPersons(title, descInput.value.trim())
     };
     
     if (this.editingTask && this.editingTask.id) {

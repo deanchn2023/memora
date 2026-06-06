@@ -744,6 +744,22 @@
   transition: all 0.2s var(--transition);
 }
 
+/* 日期选择器修复：确保原生弹窗可交互 */
+.form-group input[type="datetime-local"],
+.form-group input[type="date"],
+.form-group input[type="time"] {
+  position: relative;
+  z-index: 1;
+}
+
+/* 确保模态框中日期选择器的原生弹窗不被遮挡 */
+.modal-content .form-group:has(input[type="datetime-local"]),
+.modal-content .form-group:has(input[type="date"]) {
+  position: relative;
+  z-index: auto;
+  overflow: visible;
+}
+
 .form-group input:focus,
 .form-group textarea:focus,
 .form-group select:focus {

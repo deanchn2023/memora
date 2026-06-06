@@ -293,6 +293,10 @@ const ThemeEngine = (() => {
       root.style.setProperty(key, value);
     });
 
+    // 暗色主题设置 color-scheme 让原生控件（日期选择器、滚动条等）跟随暗色
+    const isDarkTheme = themeId === 'ocean-dark';
+    root.style.setProperty('color-scheme', isDarkTheme ? 'dark' : 'light');
+
     currentTheme = themeId;
     localStorage.setItem(STORAGE_KEY, themeId);
 
