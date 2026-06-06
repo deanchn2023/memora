@@ -176,31 +176,32 @@ const App = {
   },
 
   bindEvents() {
-    document.getElementById('addTaskBtn').addEventListener('click', () => this.showTaskModal());
+    document.getElementById('addTaskBtn')?.addEventListener('click', () => this.showTaskModal());
     
-    document.getElementById('createTaskBtn').addEventListener('click', () => this.createTaskFromClipboard());
-    document.getElementById('editTaskBtn').addEventListener('click', () => this.editClipboardTask());
-    document.getElementById('ignoreBtn').addEventListener('click', () => this.hideClipboardDetector());
-    document.getElementById('saveToNoteBtn').addEventListener('click', () => this.saveClipboardToNote());
-    document.getElementById('saveToMemoryBtn').addEventListener('click', () => this.saveClipboardToMemory());
-    document.getElementById('saveAsQuestionBtn').addEventListener('click', () => this.saveClipboardAsQuestion());
+    document.getElementById('createTaskBtn')?.addEventListener('click', () => this.createTaskFromClipboard());
+    document.getElementById('editTaskBtn')?.addEventListener('click', () => this.editClipboardTask());
+    document.getElementById('ignoreBtn')?.addEventListener('click', () => this.hideClipboardDetector());
+    document.getElementById('saveToNoteBtn')?.addEventListener('click', () => this.saveClipboardToNote());
+    document.getElementById('saveToMemoryBtn')?.addEventListener('click', () => this.saveClipboardToMemory());
+    document.getElementById('saveAsQuestionBtn')?.addEventListener('click', () => this.saveClipboardAsQuestion());
     
-    document.getElementById('closeModal').addEventListener('click', () => this.hideTaskModal());
-    document.getElementById('cancelTask').addEventListener('click', () => this.hideTaskModal());
-    document.getElementById('saveTask').addEventListener('click', () => this.saveTask());
+    document.getElementById('closeModal')?.addEventListener('click', () => this.hideTaskModal());
+    document.getElementById('cancelTask')?.addEventListener('click', () => this.hideTaskModal());
+    document.getElementById('saveTask')?.addEventListener('click', () => this.saveTask());
     
     // AI分析按钮
-    document.getElementById('aiAnalyzeBtn').addEventListener('click', () => this.analyzeTaskInput());
-    document.getElementById('aiSaveToNoteBtn').addEventListener('click', () => this.saveAIToNote());
-    document.getElementById('aiExtractMemoryBtn').addEventListener('click', () => this.extractAIMemory());
-    document.getElementById('aiSaveAsQuestionBtn').addEventListener('click', () => this.saveAIAsQuestion());
+    document.getElementById('aiAnalyzeBtn')?.addEventListener('click', () => this.analyzeTaskInput());
+    document.getElementById('aiSaveToNoteBtn')?.addEventListener('click', () => this.saveAIToNote());
+    document.getElementById('aiExtractMemoryBtn')?.addEventListener('click', () => this.extractAIMemory());
+    document.getElementById('aiSaveAsQuestionBtn')?.addEventListener('click', () => this.saveAIAsQuestion());
     
     // 番茄钟选择器
     document.querySelectorAll('.pomodoro-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         document.querySelectorAll('.pomodoro-btn').forEach(b => b.classList.remove('active'));
         e.target.classList.add('active');
-        document.getElementById('taskPomodoros').value = e.target.dataset.pomodoros;
+        const pomInput = document.getElementById('taskPomodoros');
+        if (pomInput) pomInput.value = e.target.dataset.pomodoros;
         
         // 更新提示信息
         this.updatePomodoroHint();
@@ -208,23 +209,26 @@ const App = {
     });
     
     // 时长变化时更新番茄钟提示
-    document.getElementById('taskDuration').addEventListener('input', () => {
+    document.getElementById('taskDuration')?.addEventListener('input', () => {
       this.updatePomodoroHint();
     });
     
     // 全天任务选择
-    document.getElementById('isAllDay').addEventListener('change', (e) => {
+    document.getElementById('isAllDay')?.addEventListener('change', (e) => {
       if (e.target.checked) {
         // 全天任务自动分配8个番茄钟（约4小时专注时间）
-        document.getElementById('taskPomodoros').value = 'auto';
+        const pomInput = document.getElementById('taskPomodoros');
+        if (pomInput) pomInput.value = 'auto';
         document.querySelectorAll('.pomodoro-btn').forEach(b => b.classList.remove('active'));
-        document.querySelector('[data-pomodoros="auto"]').classList.add('active');
-        document.getElementById('taskDuration').value = 480; // 8小时
+        const autoBtn = document.querySelector('[data-pomodoros="auto"]');
+        if (autoBtn) autoBtn.classList.add('active');
+        const durInput = document.getElementById('taskDuration');
+        if (durInput) durInput.value = 480; // 8小时
         this.updatePomodoroHint();
       }
     });
     
-    document.querySelector('.modal-overlay').addEventListener('click', () => this.hideTaskModal());
+    document.querySelector('.modal-overlay')?.addEventListener('click', () => this.hideTaskModal());
     
     document.addEventListener('showTaskModal', (e) => this.showTaskModal(e.detail));
     
@@ -239,9 +243,9 @@ const App = {
     });
     
     // 设置相关事件
-    document.getElementById('openSettingsBtn').addEventListener('click', () => this.showSettingsModal());
-    document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
-    document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
+    document.getElementById('openSettingsBtn')?.addEventListener('click', () => this.showSettingsModal());
+    document.getElementById('closeSettingsBtn')?.addEventListener('click', () => this.hideSettingsModal());
+    document.getElementById('saveSettingsBtn')?.addEventListener('click', () => this.saveSettings());
 
     // 语言切换按钮
     document.getElementById('langToggleBtn')?.addEventListener('click', () => {
@@ -287,12 +291,12 @@ const App = {
         if (emailInput) emailInput.placeholder = '输入邮箱';
       }
     });
-    document.getElementById('resetPromptBtn').addEventListener('click', () => this.resetAIPrompt());
-    document.getElementById('clearClipboardHashesBtn').addEventListener('click', () => this.clearClipboardHashes());
-    document.getElementById('clearAPIKeyBtn').addEventListener('click', () => this.clearAPIKey());
-    document.getElementById('refreshMemoriesBtn').addEventListener('click', () => this.loadMemories());
-    document.getElementById('clearAllMemoriesBtn').addEventListener('click', () => this.clearAllMemories());
-    document.getElementById('addManualMemoryBtn').addEventListener('click', () => this.addManualMemory());
+    document.getElementById('resetPromptBtn')?.addEventListener('click', () => this.resetAIPrompt());
+    document.getElementById('clearClipboardHashesBtn')?.addEventListener('click', () => this.clearClipboardHashes());
+    document.getElementById('clearAPIKeyBtn')?.addEventListener('click', () => this.clearAPIKey());
+    document.getElementById('refreshMemoriesBtn')?.addEventListener('click', () => this.loadMemories());
+    document.getElementById('clearAllMemoriesBtn')?.addEventListener('click', () => this.clearAllMemories());
+    document.getElementById('addManualMemoryBtn')?.addEventListener('click', () => this.addManualMemory());
     document.getElementById('exportDataBtn')?.addEventListener('click', () => this.exportAllData());
     document.getElementById('importDataBtn')?.addEventListener('click', () => this.importDataFile());
     document.getElementById('importConfirmBtn')?.addEventListener('click', () => this.confirmImportData());
@@ -307,7 +311,7 @@ const App = {
     });
     
     // AI助手相关事件
-    document.getElementById('openAIAssistantBtn').addEventListener('click', () => this.showAIAssistantView());
+    document.getElementById('openAIAssistantBtn')?.addEventListener('click', () => this.showAIAssistantView());
 
     // AI 助手模式切换（Agent/LLM）
     document.getElementById('aiModeAgent')?.addEventListener('click', () => {
@@ -453,7 +457,7 @@ const App = {
     });
     
     // 记事本相关事件
-    document.getElementById('notebookSearchInput').addEventListener('input', () => this.searchNotes());
+    document.getElementById('notebookSearchInput')?.addEventListener('input', () => this.searchNotes());
     document.getElementById('notebookSearchBtn')?.addEventListener('click', () => this.searchNotes());
     
     // 加载自定义分类并渲染侧边栏
@@ -462,7 +466,7 @@ const App = {
     });
     
     // 记事本列表事件委托（处理动态生成的按钮）
-    document.getElementById('notebookList').addEventListener('click', (e) => {
+    document.getElementById('notebookList')?.addEventListener('click', (e) => {
       const noteItem = e.target.closest('.note-item');
       if (!noteItem) return;
       
@@ -511,7 +515,7 @@ const App = {
     });
     
     // 双击预览内容区域进入编辑模式
-    document.getElementById('notebookList').addEventListener('dblclick', (e) => {
+    document.getElementById('notebookList')?.addEventListener('dblclick', (e) => {
       const previewContent = e.target.closest('.note-preview-content');
       if (previewContent) {
         e.stopPropagation();
