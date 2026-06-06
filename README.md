@@ -174,7 +174,7 @@ Memora/
 
 ## 开发者
 
-**Dean Chen** (朱从坤)
+**Dean Chn** 
 
 ## 许可证
 
