@@ -61,9 +61,9 @@ const Calendar = {
       });
     });
 
-    document.getElementById('prevDate').addEventListener('click', () => this.navigate(-1));
-    document.getElementById('nextDate').addEventListener('click', () => this.navigate(1));
-    document.getElementById('todayBtn').addEventListener('click', () => this.goToToday());
+    document.getElementById('prevDate')?.addEventListener('click', () => this.navigate(-1));
+    document.getElementById('nextDate')?.addEventListener('click', () => this.navigate(1));
+    document.getElementById('todayBtn')?.addEventListener('click', () => this.goToToday());
   },
 
   showCalendarView() {
@@ -190,9 +190,9 @@ const Calendar = {
 
   // ========== 日视图 ==========
   renderDayView() {
-    document.getElementById('dayView').classList.remove('hidden');
-    document.getElementById('weekView').classList.add('hidden');
-    document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('dayView')?.classList.remove('hidden');
+    document.getElementById('weekView')?.classList.add('hidden');
+    document.getElementById('monthView')?.classList.add('hidden');
 
     const grid = document.getElementById('timeGrid');
     grid.innerHTML = '';
@@ -492,9 +492,9 @@ const Calendar = {
 
   // ========== 周视图（带拖拽） ==========
   renderWeekView() {
-    document.getElementById('dayView').classList.add('hidden');
-    document.getElementById('weekView').classList.remove('hidden');
-    document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('dayView')?.classList.add('hidden');
+    document.getElementById('weekView')?.classList.remove('hidden');
+    document.getElementById('monthView')?.classList.add('hidden');
 
     const container = document.getElementById('weekView');
     container.innerHTML = '';
@@ -622,9 +622,9 @@ const Calendar = {
 
   // ========== 月视图（带拖拽） ==========
   renderMonthView() {
-    document.getElementById('dayView').classList.add('hidden');
-    document.getElementById('weekView').classList.add('hidden');
-    document.getElementById('monthView').classList.remove('hidden');
+    document.getElementById('dayView')?.classList.add('hidden');
+    document.getElementById('weekView')?.classList.add('hidden');
+    document.getElementById('monthView')?.classList.remove('hidden');
 
     const container = document.getElementById('monthView');
     container.innerHTML = '';

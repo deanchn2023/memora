@@ -24,7 +24,7 @@ const Pomodoro = {
   },
 
   bindEvents() {
-    document.getElementById('startPomodoro').addEventListener('click', () => {
+    document.getElementById('startPomodoro')?.addEventListener('click', () => {
       if (this.state.isRunning) {
         this.pause();
       } else {
@@ -32,7 +32,7 @@ const Pomodoro = {
       }
     });
 
-    document.getElementById('resetPomodoro').addEventListener('click', () => {
+    document.getElementById('resetPomodoro')?.addEventListener('click', () => {
       this.reset();
     });
   },

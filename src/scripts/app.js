@@ -347,25 +347,25 @@ const App = {
         if (data.has_update) this._showUpdateModal(data);
       });
     }
-    document.getElementById('sendAIMessageBtn').addEventListener('click', () => this.sendAIMessage());
-    document.getElementById('aiChatInput').addEventListener('keypress', (e) => {
+    document.getElementById('sendAIMessageBtn')?.addEventListener('click', () => this.sendAIMessage());
+    document.getElementById('aiChatInput')?.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         this.sendAIMessage();
       }
     });
-    document.getElementById('clearChatBtn').addEventListener('click', () => this.clearChat());
+    document.getElementById('clearChatBtn')?.addEventListener('click', () => this.clearChat());
     
     // 文件上传
-    document.getElementById('chatFileUploadBtn').addEventListener('click', () => {
-      document.getElementById('chatFileInput').click();
+    document.getElementById('chatFileUploadBtn')?.addEventListener('click', () => {
+      document.getElementById('chatFileInput')?.click();
     });
-    document.getElementById('chatFileInput').addEventListener('change', (e) => this.handleChatFileSelect(e));
+    document.getElementById('chatFileInput')?.addEventListener('change', (e) => this.handleChatFileSelect(e));
 
     // 输入框粘贴文件和图片支持
-    document.getElementById('aiChatInput').addEventListener('paste', (e) => this.handleChatPaste(e));
+    document.getElementById('aiChatInput')?.addEventListener('paste', (e) => this.handleChatPaste(e));
 
     // 搜索知识按钮（剪贴板检测弹窗中）
-    document.getElementById('searchKnowledgeBtn').addEventListener('click', () => {
+    document.getElementById('searchKnowledgeBtn')?.addEventListener('click', () => {
       const rawText = document.getElementById('rawText')?.textContent;
       const activeIntent = document.querySelector('.clipboard-intent-tag.active');
       const intent = activeIntent ? activeIntent.dataset.intent : null;
@@ -1201,17 +1201,17 @@ const App = {
 
   showLoginModal() {
     const modal = document.getElementById('loginModal');
-    modal.classList.remove('hidden');
+    modal?.classList.remove('hidden');
     this._loadOrgConfig();
   },
 
   hideLoginModal() {
-    document.getElementById('loginModal').classList.add('hidden');
+    document.getElementById('loginModal')?.classList.add('hidden');
   },
 
   showSettingsModal() {
     const modal = document.getElementById('settingsModal');
-    modal.classList.remove('hidden');
+    modal?.classList.remove('hidden');
     
     // 更新设置标签可见性
     this._updateSettingsTabVisibility(this._isOrgLoggedIn());
@@ -1225,22 +1225,22 @@ const App = {
   },
 
   hideSettingsModal() {
-    document.getElementById('settingsModal').classList.add('hidden');
+    document.getElementById('settingsModal')?.classList.add('hidden');
   },
 
   showAIAssistantView() {
     // 隐藏其他视图
     document.getElementById('calendarView')?.classList.add('hidden');
-    document.getElementById('notebookView').classList.add('hidden');
-    document.getElementById('knowledgeView').classList.add('hidden');
+    document.getElementById('notebookView')?.classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
     document.getElementById('documentsView')?.classList.add('hidden');
     
     // 更新 view-tab active 状态
     document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
     
     // 显示AI助手视图
-    document.getElementById('aiAssistantView').classList.remove('hidden');
-    document.getElementById('aiChatInput').focus();
+    document.getElementById('aiAssistantView')?.classList.remove('hidden');
+    document.getElementById('aiChatInput')?.focus();
 
     // 更新 AI 模式切换按钮可见性
     this._updateAIModeToggle();
@@ -1335,12 +1335,12 @@ const App = {
   showKnowledgeView() {
     // 隐藏其他视图
     document.getElementById('calendarView')?.classList.add('hidden');
-    document.getElementById('notebookView').classList.add('hidden');
-    document.getElementById('aiAssistantView').classList.add('hidden');
+    document.getElementById('notebookView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
     document.getElementById('documentsView')?.classList.add('hidden');
     
     // 显示知识跟随视图
-    document.getElementById('knowledgeView').classList.remove('hidden');
+    document.getElementById('knowledgeView')?.classList.remove('hidden');
     
     // 初始化知识跟随模块
     if (window.knowledgeFollow) {
@@ -4364,11 +4364,11 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
 
   showClipboardDetector() {
-    document.getElementById('clipboardDetector').classList.remove('hidden');
+    document.getElementById('clipboardDetector')?.classList.remove('hidden');
   },
 
   hideClipboardDetector() {
-    document.getElementById('clipboardDetector').classList.add('hidden');
+    document.getElementById('clipboardDetector')?.classList.add('hidden');
     this.pendingClipboardTask = null;
     
     if (this.autoSaveTimer) {
@@ -4574,7 +4574,7 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
 
   hideTaskModal() {
-    document.getElementById('taskModal').classList.add('hidden');
+    document.getElementById('taskModal')?.classList.add('hidden');
     this.editingTask = null;
   },
 
@@ -4745,7 +4745,7 @@ ${JSON.stringify(reportData, null, 2)}`;
           }
           
           // 显示分析结果
-          document.getElementById('aiAnalysisResult').classList.remove('hidden');
+          document.getElementById('aiAnalysisResult')?.classList.remove('hidden');
           document.getElementById('analysisConfidence').textContent = `置信度: ${Math.round(result.task.confidence * 100)}%`;
           
           let analysisHtml = `<div style="margin-top: 8px;">`;
@@ -5749,11 +5749,11 @@ ${JSON.stringify(reportData, null, 2)}`;
       <strong>文件：</strong>${filename} · <strong>用途：</strong>${this.escapeHtml(fileMeta.desc || '')} · <strong>使用场景：</strong>${this.escapeHtml(fileMeta.used_in || '')}
     `;
     document.getElementById('promptFileContent').value = result.content;
-    document.getElementById('promptEditorOverlay').classList.remove('hidden');
+    document.getElementById('promptEditorOverlay')?.classList.remove('hidden');
   },
 
   hidePromptEditor() {
-    document.getElementById('promptEditorOverlay').classList.add('hidden');
+    document.getElementById('promptEditorOverlay')?.classList.add('hidden');
     this._currentPromptFile = null;
   },
 
@@ -6144,7 +6144,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       cancelBtn.onclick = () => this.hideOptimizerDetail();
       footerEl.appendChild(cancelBtn);
 
-      document.getElementById('optimizerDetailOverlay').classList.remove('hidden');
+      document.getElementById('optimizerDetailOverlay')?.classList.remove('hidden');
     } catch (error) {
       this.showToast('加载优化详情失败：' + error.message, 'error');
     }
