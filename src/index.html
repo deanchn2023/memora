@@ -56,6 +56,11 @@
         </div>
         <div class="header-actions">
           <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><linearGradient id="aBtnBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="12" fill="url(#aBtnBg)"/><text x="20" y="27" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="700" fill="white">M</text></svg></button>
+          <!-- AI 助手模式切换 -->
+          <div class="ai-mode-toggle hidden" id="aiModeToggle">
+            <button class="ai-mode-btn active" data-mode="agent" id="aiModeAgent">🤖 Agent</button>
+            <button class="ai-mode-btn" data-mode="llm" id="aiModeLLM">💬 LLM</button>
+          </div>
           <button class="lang-toggle-btn" id="langToggleBtn" data-tooltip="语言/Language">中</button>
           <button class="settings-btn" id="openSettingsBtn" data-tooltip="设置">⚙️</button>
           <!-- 通知铃铛 -->
@@ -147,7 +152,7 @@
             <div class="notebook-header">
               <div class="notebook-search">
                 <input type="text" id="notebookSearchInput" placeholder="搜索笔记..." data-i18n-placeholder="notebook.search">
-                <button class="search-btn">🔍</button>
+                <button class="search-btn" id="notebookSearchBtn">🔍</button>
               </div>
             </div>
             <div class="notebook-content">

@@ -308,6 +308,16 @@ const App = {
     // AI助手相关事件
     document.getElementById('openAIAssistantBtn').addEventListener('click', () => this.showAIAssistantView());
 
+    // AI 助手模式切换（Agent/LLM）
+    document.getElementById('aiModeAgent')?.addEventListener('click', () => {
+      this._aiAssistantMode = 'agent';
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'agent'));
+    });
+    document.getElementById('aiModeLLM')?.addEventListener('click', () => {
+      this._aiAssistantMode = 'llm';
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'llm'));
+    });
+
     // 通知铃铛
     document.getElementById('notificationBellBtn')?.addEventListener('click', () => this._toggleNotificationPanel());
     document.getElementById('notificationMarkAllBtn')?.addEventListener('click', () => this._markAllNotificationsRead());
@@ -443,6 +453,7 @@ const App = {
     
     // 记事本相关事件
     document.getElementById('notebookSearchInput').addEventListener('input', () => this.searchNotes());
+    document.getElementById('notebookSearchBtn')?.addEventListener('click', () => this.searchNotes());
     
     // 加载自定义分类并渲染侧边栏
     this.loadCustomCategories().then(() => {
@@ -618,6 +629,23 @@ const App = {
       // 更新头部用户徽章
       this._updateHeaderUserBadge(false);
     }
+
+    // 更新设置标签可见性
+    this._updateSettingsTabVisibility(state.isLoggedIn);
+  },
+
+  /** 根据登录状态更新设置标签可见性
+   * 未登录只显示：API配置、外观、数据管理、关于
+   * 已登录显示全部
+   */
+  _updateSettingsTabVisibility(isLoggedIn) {
+    const hiddenTabsWhenLoggedOut = ['adp', 'prompt', 'profile', 'memory'];
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+      const tabName = tab.dataset.tab;
+      if (hiddenTabsWhenLoggedOut.includes(tabName)) {
+        tab.style.display = isLoggedIn ? '' : 'none';
+      }
+    });
   },
 
   _updateHeaderUserBadge(isLoggedIn, user) {
@@ -1180,6 +1208,9 @@ const App = {
     const modal = document.getElementById('settingsModal');
     modal.classList.remove('hidden');
     
+    // 更新设置标签可见性
+    this._updateSettingsTabVisibility(this._isOrgLoggedIn());
+
     // 只加载当前活跃标签页的数据（延迟加载其他标签）
     if (window.electronAPI) {
       const activeTab = document.querySelector('.settings-tab.active');
@@ -1199,12 +1230,46 @@ const App = {
     document.getElementById('knowledgeView').classList.add('hidden');
     document.getElementById('documentsView')?.classList.add('hidden');
     
+    // 更新 view-tab active 状态
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+    
     // 显示AI助手视图
     document.getElementById('aiAssistantView').classList.remove('hidden');
     document.getElementById('aiChatInput').focus();
 
+    // 更新 AI 模式切换按钮可见性
+    this._updateAIModeToggle();
+
     // 功能卡片点击切换快捷问题
     this._initFeatureCards();
+  },
+
+  /** 更新 AI 助手模式切换按钮 */
+  _updateAIModeToggle() {
+    const toggle = document.getElementById('aiModeToggle');
+    if (!toggle) return;
+
+    // 始终显示模式切换
+    toggle.classList.remove('hidden');
+
+    // 已登录默认 agent 模式，未登录默认 llm 模式
+    const isLoggedIn = this._isOrgLoggedIn();
+    const defaultMode = isLoggedIn ? 'agent' : 'llm';
+
+    if (!this._aiAssistantMode) {
+      this._aiAssistantMode = defaultMode;
+    }
+
+    // 更新按钮状态
+    toggle.querySelectorAll('.ai-mode-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === this._aiAssistantMode);
+    });
+  },
+
+  /** 判断是否已登录组织 */
+  _isOrgLoggedIn() {
+    const loggedInSection = document.getElementById('orgLoggedInSection');
+    return loggedInSection && !loggedInSection.classList.contains('hidden');
   },
 
   /** 功能卡片切换快捷问题 */
@@ -1345,10 +1410,19 @@ const App = {
       // 构建附件数据（读取文件内容）
       const attachmentData = await this.buildAttachmentData(attachments);
       
-      // 优先使用 Agent 系统（本地 AI），回退到 ADP
-      // forceMode: 'adp' 强制走 ADP，'agent' 强制走本地 Agent
-      if (forceMode !== 'adp' && window.electronAPI?.agent?.invoke) {
-        result = await window.electronAPI.agent.invoke(message, undefined, attachmentData);
+      // 根据 AI 助手模式决定调用路径：
+      // - agent 模式：使用 ADP 智能体（工具调用、多步推理等）
+      // - llm 模式：使用已配置的大模型 API 直接对话（简单聊天）
+      // - forceMode: 'adp' 强制走 ADP，'agent' 强制走本地 Agent
+      const isAgentMode = this._aiAssistantMode !== 'llm';
+      
+      if (forceMode === 'adp' || (isAgentMode && !window.electronAPI?.agent?.invoke)) {
+        // ADP 模式：走 ADP 智能体流式
+      } else if (window.electronAPI?.agent?.invoke) {
+        // Agent 或 LLM 模式：使用本地 AI（agent:invoke 内部会根据意图分类）
+        // LLM 模式强制使用 'chat' 类型，Agent 模式自动分类
+        const agentType = this._aiAssistantMode === 'llm' ? 'chat' : undefined;
+        result = await window.electronAPI.agent.invoke(message, agentType, attachmentData);
         
         if (result.success) {
           const messageContent = assistantMessage.querySelector('.message-content');

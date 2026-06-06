@@ -392,6 +392,43 @@ body {
   box-shadow: var(--shadow-xs);
 }
 
+/* AI 模式切换按钮组 */
+.ai-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  padding: 2px;
+  border-radius: 10px;
+}
+
+.ai-mode-toggle.hidden {
+  display: none;
+}
+
+.ai-mode-btn {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.25s var(--transition);
+  white-space: nowrap;
+}
+
+.ai-mode-btn:hover {
+  color: var(--text-primary);
+}
+
+.ai-mode-btn.active {
+  background: var(--bg-primary);
+  color: var(--primary-color);
+  box-shadow: var(--shadow-xs);
+  font-weight: 600;
+}
+
 .lang-toggle-btn {
   font-size: 13px;
   font-weight: 600;
@@ -1801,6 +1838,7 @@ body {
   height: 34px;
   opacity: 0;
   position: relative;
+  color: var(--text-secondary);
 }
 
 .note-item:hover .note-btn {
@@ -1811,6 +1849,7 @@ body {
   opacity: 1 !important;
   transform: scale(1.1);
   box-shadow: var(--shadow-xs);
+  color: var(--text-primary);
 }
 
 /* Tooltip */
@@ -1855,19 +1894,19 @@ body {
   background: var(--primary-light);
   color: var(--primary-color);
 }
-.note-btn-primary:hover { background: rgba(79, 142, 247, 0.15); }
+.note-btn-primary:hover { background: rgba(79, 142, 247, 0.15); color: var(--primary-color); }
 
 .note-btn-secondary {
   background: rgba(139, 92, 246, 0.08);
   color: var(--primary-color);
 }
-.note-btn-secondary:hover { background: rgba(139, 92, 246, 0.15); }
+.note-btn-secondary:hover { background: rgba(139, 92, 246, 0.15); color: var(--primary-color); }
 
 .note-btn-danger {
   background: var(--danger-light);
   color: var(--danger-color);
 }
-.note-btn-danger:hover { background: rgba(255, 59, 48, 0.15); }
+.note-btn-danger:hover { background: rgba(255, 59, 48, 0.15); color: var(--danger-color); }
 
 /* 笔记预览 */
 .note-item:hover {

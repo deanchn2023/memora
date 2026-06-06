@@ -86,6 +86,8 @@ const translations = {
     'ai.placeholder': '输入消息，Shift+Enter 换行...',
     'ai.send': '发送',
     'ai.thinking': '思考中...',
+    'ai.mode.agent': '🤖 Agent',
+    'ai.mode.llm': '💬 LLM',
 
     // 设置
     'settings.title': '设置',
@@ -266,6 +268,8 @@ const translations = {
     'ai.placeholder': 'Type a message, Shift+Enter for new line...',
     'ai.send': 'Send',
     'ai.thinking': 'Thinking...',
+    'ai.mode.agent': '🤖 Agent',
+    'ai.mode.llm': '💬 LLM',
 
     // Settings
     'settings.title': 'Settings',
