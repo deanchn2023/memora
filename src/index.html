@@ -3,11 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://21.91.29.59:3000; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000 http://121.5.164.126:3450; font-src 'self' data:;">
   <title>忆境 Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
   <link rel="stylesheet" href="styles/knowledge.css">
+  <link rel="stylesheet" href="styles/documents.css">
+  <link rel="stylesheet" href="styles/localFiles.css">
+  <link rel="stylesheet" href="styles/knowledgeDistillation.css">
+  <link rel="stylesheet" href="styles/appearance.css">
 </head>
 <body>
   <div id="app">
@@ -38,10 +42,9 @@
     <div class="main-container">
       <div class="header">
         <div class="view-tabs">
-          <button class="view-tab active" data-view="day">日</button>
-          <button class="view-tab" data-view="week">周</button>
-          <button class="view-tab" data-view="month">月</button>
+          <button class="view-tab active" data-view="calendar">日历</button>
           <button class="view-tab" data-view="notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
+          <button class="view-tab" data-view="documents">文档</button>
           <button class="view-tab" data-view="knowledge">知识</button>
         </div>
         <div class="date-navigator">
@@ -51,8 +54,33 @@
           <button class="today-btn" id="todayBtn">今天</button>
         </div>
         <div class="header-actions">
-          <button class="ai-assistant-btn" id="openAIAssistantBtn" title="AI助手">🤖</button>
-          <button class="settings-btn" id="openSettingsBtn" title="设置">⚙️</button>
+          <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><linearGradient id="aBtnBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="12" fill="url(#aBtnBg)"/><text x="20" y="27" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="700" fill="white">M</text></svg></button>
+          <button class="settings-btn" id="openSettingsBtn" data-tooltip="设置">⚙️</button>
+          <!-- 通知铃铛 -->
+          <button class="notification-bell-btn hidden" id="notificationBellBtn" data-tooltip="通知">
+            🔔
+            <span class="notification-badge hidden" id="notificationBadge">0</span>
+          </button>
+          <!-- 登录按钮：未登录时显示 -->
+          <button class="login-btn" id="headerLoginBtn" data-tooltip="登录"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="20" cy="20" r="20" fill="#E8F5E9"/><circle cx="20" cy="15" r="7" fill="#81C784"/><ellipse cx="20" cy="32" rx="12" ry="9" fill="#81C784"/><circle cx="17" cy="14" r="1.2" fill="#2E7D32"/><circle cx="23" cy="14" r="1.2" fill="#2E7D32"/><path d="M18 17.5 Q20 19.5 22 17.5" stroke="#2E7D32" stroke-width="1" fill="none" stroke-linecap="round"/><circle cx="14" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/><circle cx="26" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/></svg></button>
+          <!-- 已登录用户信息 -->
+          <div class="user-badge hidden" id="headerUserBadge">
+            <span class="user-badge-avatar" id="headerUserAvatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="uBgH" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0E6FF"/><stop offset="1" stop-color="#E0F0FF"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#uBgH)"/><circle cx="20" cy="14.5" r="6.5" fill="#C4B5FD"/><ellipse cx="20" cy="30" rx="10.5" ry="8" fill="#C4B5FD"/><circle cx="17.5" cy="13.8" r="1" fill="#7C3AED"/><circle cx="22.5" cy="13.8" r="1" fill="#7C3AED"/><path d="M18.5 16.2 Q20 17.8 21.5 16.2" stroke="#7C3AED" stroke-width="0.9" fill="none" stroke-linecap="round"/><circle cx="15" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="25" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="12" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/><circle cx="28" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/></svg></span>
+            <span class="user-badge-name" id="headerUserName">-</span>
+          </div>
+        </div>
+        <!-- 通知面板 -->
+        <div class="notification-panel hidden" id="notificationPanel">
+          <div class="notification-panel-header">
+            <span>通知</span>
+            <div class="notification-panel-actions">
+              <button class="notification-mark-all" id="notificationMarkAllBtn">全部已读</button>
+              <button class="notification-clear-all" id="notificationClearAllBtn" title="清除所有通知">🗑</button>
+            </div>
+          </div>
+          <div class="notification-panel-body" id="notificationPanelBody">
+            <div class="notification-empty">暂无通知</div>
+          </div>
         </div>
       </div>
 
@@ -75,7 +103,13 @@
           </div>
 
           <div class="task-list-section">
-            <h3>待办列表</h3>
+            <div class="task-list-header">
+              <h3>待办列表</h3>
+              <div class="task-sort-toggle" id="taskSortToggle">
+                <button class="sort-btn active" data-sort="dueDate" title="按截止时间排序">⏰</button>
+                <button class="sort-btn" data-sort="priority" title="按优先级排序">🔥</button>
+              </div>
+            </div>
             <div class="task-list" id="taskList">
               <div class="empty-state">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -91,11 +125,22 @@
         </div>
 
         <div class="main-view">
-          <div class="day-view" id="dayView">
-            <div class="time-grid" id="timeGrid"></div>
+          <!-- 日历视图容器 -->
+          <div class="calendar-view" id="calendarView">
+            <!-- 日历子视图切换 -->
+            <div class="calendar-sub-tabs">
+              <div class="calendar-sub-tabs-inner">
+                <button class="calendar-sub-tab" data-cal="day">日</button>
+                <button class="calendar-sub-tab active" data-cal="week">周</button>
+                <button class="calendar-sub-tab" data-cal="month">月</button>
+              </div>
+            </div>
+            <div class="day-view" id="dayView">
+              <div class="time-grid" id="timeGrid"></div>
+            </div>
+            <div class="week-view hidden" id="weekView"></div>
+            <div class="month-view hidden" id="monthView"></div>
           </div>
-          <div class="week-view hidden" id="weekView"></div>
-          <div class="month-view hidden" id="monthView"></div>
           <div class="notebook-view hidden" id="notebookView">
             <div class="notebook-header">
               <div class="notebook-search">
@@ -129,25 +174,25 @@
               <div class="chat-messages" id="chatMessages">
                 <!-- 功能提示卡片 -->
                 <div class="feature-cards">
-                  <div class="feature-card">
+                  <div class="feature-card active" data-category="task" title="智能任务分析">
                     <div class="feature-icon">📝</div>
                     <div class="feature-content">
                       <h4>智能任务分析</h4>
                       <p>帮你分析和管理待办事项</p>
                     </div>
                   </div>
-                  <div class="feature-card">
-                    <div class="feature-icon">🧠</div>
+                  <div class="feature-card" data-category="bidding" title="招投标支持">
+                    <div class="feature-icon">📋</div>
                     <div class="feature-content">
-                      <h4>记忆提炼</h4>
-                      <p>从笔记中提取关键记忆</p>
+                      <h4>招投标支持</h4>
+                      <p>招投标文档智能生成</p>
                     </div>
                   </div>
-                  <div class="feature-card">
-                    <div class="feature-icon">📊</div>
+                  <div class="feature-card" data-category="knowledge" title="知识助手">
+                    <div class="feature-icon">📚</div>
                     <div class="feature-content">
-                      <h4>数据统计</h4>
-                      <p>展示你的完成进度</p>
+                      <h4>知识助手</h4>
+                      <p>产品知识与助销资料</p>
                     </div>
                   </div>
                 </div>
@@ -155,18 +200,19 @@
                 <!-- 快捷问题胶囊 -->
                 <div class="quick-questions">
                   <p class="quick-title">💡 快捷问题</p>
-                  <div class="quick-capsules">
-                    <button class="quick-capsule agent-priority" data-question="今天该做什么？帮我排个优先级">🎯 今日排程</button>
-                    <button class="quick-capsule agent-report" data-question="生成今天的工作日报">📊 生成日报</button>
-                    <button class="quick-capsule agent-knowledge" data-question="帮我整理一下最近的笔记">📚 整理笔记</button>
-                    <button class="quick-capsule agent-memory" data-question="帮我整理一下记忆，看看哪些需要保留">🧠 整理记忆</button>
-                    <button class="quick-capsule" data-question="最紧急的事项是什么？">🔥 紧急事项</button>
-                    <button class="quick-capsule" data-question="给我一些时间管理建议">⏰ 时间建议</button>
+                  <div class="quick-capsules" id="quickCapsules">
+                    <!-- 智能任务分析 -->
+                    <button class="quick-capsule agent-priority" data-question="今天该做什么？帮我排个优先级" data-category="task">🎯 今日排程</button>
+                    <button class="quick-capsule agent-report" data-question="生成今天的工作日报" data-category="task">📊 生成日报</button>
+                    <button class="quick-capsule agent-knowledge" data-question="帮我整理一下最近的笔记" data-category="task">📚 整理笔记</button>
+                    <button class="quick-capsule agent-memory" data-question="帮我整理一下记忆，看看哪些需要保留" data-category="task">🧠 整理记忆</button>
+                    <button class="quick-capsule agent-priority" data-question="最紧急的事项是什么？" data-category="task">🔥 紧急事项</button>
+                    <button class="quick-capsule agent-report" data-question="给我一些时间管理建议" data-category="task">⏰ 时间建议</button>
                   </div>
                 </div>
                 
                 <div class="message assistant">
-                  <div class="message-avatar">🤖</div>
+                  <div class="message-avatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="aBgH" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="14" fill="url(#aBgH)"/><text x="20" y="26" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="white">M</text></svg></div>
                   <div class="message-content">
                     <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
                   </div>
@@ -195,90 +241,250 @@
           </div>
           <!-- 知识跟随视图 -->
           <div class="knowledge-view hidden" id="knowledgeView">
-            <div class="knowledge-search-bar">
-              <input type="text" id="knowledgeSearchInput" class="knowledge-search-input" placeholder="🔍 输入关键词搜索知识..." autocomplete="off">
-              <button class="knowledge-search-btn" id="knowledgeSearchBtn">🔍 搜索</button>
+            <!-- 子视图切换 Tab -->
+            <div class="knowledge-sub-tabs">
+              <button class="knowledge-sub-tab active" data-knowledge-tab="graph">🧠 知识图谱</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="articles">📚 知识文章</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="questions">❓ 问题列表</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="search">🔍 知识搜索</button>
             </div>
-            <div class="knowledge-content">
-              <!-- 智能推荐区 -->
-              <div class="knowledge-section" id="knowledgeRecommendSection">
-                <div class="knowledge-section-header">
-                  <div class="knowledge-section-title">
-                    <span class="icon">🤖</span> 智能推荐
+
+            <!-- 子视图1：知识图谱 -->
+            <div id="knowledgeGraphView" class="kd-subview">
+              <!-- 统计栏 -->
+              <div class="kd-stats-bar" id="knowledgeStats">
+                <span class="stat-item"><span class="stat-num">0</span> 知识原子</span>
+                <span class="stat-dot">·</span>
+                <span class="stat-item"><span class="stat-num">0</span> 知识簇</span>
+                <span class="stat-dot">·</span>
+                <span class="stat-item"><span class="stat-num">0</span> 知识文章</span>
+              </div>
+              <!-- 工具栏 -->
+              <div class="kd-toolbar">
+                <input type="text" id="knowledgeGraphSearch" class="kd-search-input" placeholder="搜索知识簇..." autocomplete="off">
+                <select id="knowledgeDomainFilter" class="kd-select">
+                  <option value="">全部领域</option>
+                </select>
+                <button class="kd-btn primary" id="knowledgeDistillBtn" onclick="window.kdDistillAll && window.kdDistillAll()">⚡ 一键萃取</button>
+                <button class="kd-btn" id="knowledgeCreateClusterBtn" onclick="window.kdShowCreateClusterModal && window.kdShowCreateClusterModal()">+ 新建簇</button>
+              </div>
+              <!-- 簇卡片网格 -->
+              <div class="kd-cluster-grid" id="knowledgeClusterGrid">
+                <div class="knowledge-empty">
+                  <div class="empty-icon">🧠</div>
+                  <p>暂无知识簇</p>
+                  <span class="empty-hint">复制内容到剪贴板，系统会自动提取知识原子并聚类</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 子视图2：知识文章 -->
+            <div id="knowledgeArticlesView" class="kd-subview hidden">
+              <div class="kd-article-list" id="knowledgeArticleList">
+                <div class="knowledge-empty">
+                  <div class="empty-icon">📚</div>
+                  <p>暂无知识文章</p>
+                  <span class="empty-hint">知识簇成熟后可生成文章</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 子视图3：问题列表 -->
+            <div id="knowledgeQuestionsView" class="kd-subview hidden">
+              <div class="kd-questions-toolbar">
+                <input type="text" id="knowledgeQuestionSearch" class="kd-search-input" placeholder="搜索问题..." autocomplete="off">
+                <button class="kd-btn primary" id="knowledgeAddQuestionBtn" onclick="window.kdShowAddQuestionModal && window.kdShowAddQuestionModal()">+ 记录问题</button>
+              </div>
+              <div class="kd-question-list" id="knowledgeQuestionList">
+                <div class="knowledge-empty">
+                  <div class="empty-icon">❓</div>
+                  <p>暂无待解决问题</p>
+                  <span class="empty-hint">记录工作中遇到的问题，后续集中解决形成知识</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 子视图4：智能搜索（原知识跟随内容） -->
+            <div id="knowledgeSearchView" class="kd-subview hidden">
+              <div class="knowledge-search-bar">
+                <input type="text" id="knowledgeSearchInput" class="knowledge-search-input" placeholder="🔍 输入关键词搜索知识..." autocomplete="off">
+                <button class="knowledge-search-btn" id="knowledgeSearchBtn">🔍 搜索</button>
+              </div>
+              <div class="knowledge-content">
+                <!-- 智能推荐区 -->
+                <div class="knowledge-section" id="knowledgeRecommendSection">
+                  <div class="knowledge-section-header">
+                    <div class="knowledge-section-title">
+                      <span class="icon">🤖</span> 智能推荐
+                    </div>
+                    <div class="knowledge-section-actions">
+                      <button class="knowledge-action-btn" id="knowledgeRefreshBtn">🔄 刷新</button>
+                    </div>
                   </div>
-                  <div class="knowledge-section-actions">
-                    <button class="knowledge-action-btn" id="knowledgeRefreshBtn">🔄 刷新</button>
+                  <div id="recommendationList" class="knowledge-card-list">
+                    <div class="knowledge-empty">
+                      <div class="empty-icon">🤖</div>
+                      <p>暂无智能推荐</p>
+                      <span class="empty-hint">复制含疑问的内容，系统将自动推荐知识</span>
+                    </div>
                   </div>
                 </div>
-                <div id="recommendationList" class="knowledge-card-list">
-                  <div class="knowledge-empty">
-                    <div class="empty-icon">🤖</div>
-                    <p>暂无智能推荐</p>
-                    <span class="empty-hint">复制含疑问的内容，系统将自动推荐知识</span>
+
+                <!-- 搜索结果区（三面板可拖拽调整） -->
+                <div class="knowledge-section knowledge-search-results" id="knowledgeSearchResults" style="display: none;">
+                  <div class="knowledge-section-header">
+                    <div class="knowledge-section-title">
+                      <span class="icon">🔎</span> 搜索结果
+                    </div>
+                    <button class="knowledge-action-btn" onclick="knowledgeFollow.clearSearchResults()">✕ 关闭</button>
+                  </div>
+
+                  <div class="search-panels" id="searchPanels">
+                    <!-- 面板1: ADP 问答 -->
+                    <div class="search-panel" id="panelADP" data-panel="adp" style="flex: 1 1 0%;">
+                      <div class="search-panel-header" data-drag="adp">
+                        <span class="search-panel-title">🤖 ADP 问答</span>
+                        <span class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
+                          <span class="adp-pulse-dot"></span>
+                          <span class="adp-pulse-dot"></span>
+                          <span class="adp-pulse-dot"></span>
+                          <span>思考中</span>
+                        </span>
+                        <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
+                          <button class="adp-stream-control stop" onclick="knowledgeFollow.stopADPStreaming()">⏹</button>
+                        </div>
+                      </div>
+                      <div class="search-panel-body" id="adpSearchResults">
+                        <div class="adp-streaming-content" id="adpStreamingContent">
+                          <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
+                        </div>
+                        <div class="adp-streaming-done" id="adpStreamingDone" style="display: none;">
+                          <button class="adp-done-btn primary" onclick="knowledgeFollow.saveADPResult()">💾 保存</button>
+                          <button class="adp-done-btn" onclick="knowledgeFollow.copyADPResult()">📋 复制</button>
+                          <button class="adp-done-btn" onclick="knowledgeFollow.dismissADPResult()">❌ 忽略</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="search-panel-resizer" data-resizer="0"></div>
+
+                    <!-- 面板2: 本地记忆 -->
+                    <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
+                      <div class="search-panel-header" data-drag="local">
+                        <span class="search-panel-title">🧠 本地记忆</span>
+                        <span class="search-panel-keywords" id="localKeywords" style="display: none;"></span>
+                        <span class="search-panel-count" id="localCount">0</span>
+                      </div>
+                      <div class="search-panel-body" id="localSearchResults">
+                        <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
+                      </div>
+                    </div>
+
+                    <div class="search-panel-resizer" data-resizer="1"></div>
+
+                    <!-- 面板3: 资源文件 -->
+                    <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
+                      <div class="search-panel-header" data-drag="public">
+                        <span class="search-panel-title">📄 资源文件</span>
+                        <span class="search-panel-keywords" id="publicKeywords" style="display: none;"></span>
+                        <span class="search-panel-count" id="publicCount">0</span>
+                      </div>
+                      <div class="search-panel-body" id="publicSearchResults">
+                        <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+            </div>
 
-              <!-- 搜索结果区（三面板可拖拽调整） -->
-              <div class="knowledge-section knowledge-search-results" id="knowledgeSearchResults" style="display: none;">
-                <div class="knowledge-section-header">
-                  <div class="knowledge-section-title">
-                    <span class="icon">🔎</span> 搜索结果
-                  </div>
-                  <button class="knowledge-action-btn" onclick="knowledgeFollow.clearSearchResults()">✕ 关闭</button>
+            <!-- 详情视图（覆盖在子视图上方） -->
+            <div id="knowledgeDetailView" class="kd-subview hidden">
+              <div class="kd-detail-toolbar">
+                <button class="kd-action-btn" id="knowledgeDetailBack">← 返回</button>
+              </div>
+              <div class="kd-detail-view" id="knowledgeDetailContent">
+              </div>
+            </div>
+          </div>
+          <!-- 知识文档视图 -->
+          <div class="documents-view hidden" id="documentsView">
+            <div class="documents-header">
+              <div class="documents-search">
+                <input type="text" id="documentsSearchInput" placeholder="搜索文档、案例、Demo..." autocomplete="off">
+                <button class="documents-search-btn" id="documentsSearchBtn">🔍</button>
+              </div>
+              <div class="documents-sort-tabs" id="documentsSortTabs">
+                <button class="doc-sort-tab active" data-sort="latest">🕐 最新</button>
+                <button class="doc-sort-tab" data-sort="hot">🔥 最热</button>
+              </div>
+            </div>
+            <div class="documents-category-tabs" id="documentsCategoryTabs">
+              <button class="doc-cat-tab active" data-type="documents">📄 文档</button>
+              <button class="doc-cat-tab" data-type="cases">💼 案例</button>
+              <button class="doc-cat-tab" data-type="demos">🎮 Demo</button>
+              <button class="doc-cat-tab" data-type="learning">📚 学习材料</button>
+              <button class="doc-cat-tab" data-type="local">💻 本地</button>
+            </div>
+            <div class="documents-body" id="documentsBody">
+              <div class="documents-loading" id="documentsLoading" style="display: none;">
+                <div class="spinner"></div>
+                <span>加载中...</span>
+              </div>
+              <div class="documents-grid" id="documentsGrid">
+                <div class="documents-empty">
+                  <div class="empty-icon">📄</div>
+                  <p>点击标签浏览文档</p>
+                  <span class="empty-hint">支持搜索文档、案例、Demo 和学习材料</span>
                 </div>
+              </div>
+              <div class="documents-pagination hidden" id="documentsPagination">
+                <span class="pagination-info" id="paginationInfo"></span>
+                <button class="pagination-btn" id="prevPageBtn">上一页</button>
+                <button class="pagination-btn" id="nextPageBtn">下一页</button>
+              </div>
 
-                <div class="search-panels" id="searchPanels">
-                  <!-- 面板1: ADP 问答（优先展示流式输出） -->
-                  <div class="search-panel" id="panelADP" data-panel="adp" style="flex: 1 1 0%;">
-                    <div class="search-panel-header" data-drag="adp">
-                      <span class="search-panel-title">🤖 ADP 问答</span>
-                      <span class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
-                        <div class="spinner"></div>
-                        <span>思考中</span>
-                      </span>
-                      <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
-                        <button class="adp-stream-control stop" onclick="knowledgeFollow.stopADPStreaming()">⏹</button>
-                      </div>
-                    </div>
-                    <div class="search-panel-body" id="adpSearchResults">
-                      <div class="adp-streaming-content" id="adpStreamingContent">
-                        <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
-                      </div>
-                      <div class="adp-streaming-done" id="adpStreamingDone" style="display: none;">
-                        <button class="adp-done-btn primary" onclick="knowledgeFollow.saveADPResult()">💾 保存</button>
-                        <button class="adp-done-btn" onclick="knowledgeFollow.copyADPResult()">📋 复制</button>
-                        <button class="adp-done-btn" onclick="knowledgeFollow.dismissADPResult()">❌ 忽略</button>
-                      </div>
-                    </div>
+              <!-- 本地文件区域 -->
+              <div class="local-files-container hidden" id="localFilesContainer">
+                <div class="local-files-toolbar">
+                  <div class="local-dir-tabs" id="localDirTabs">
+                    <button class="local-dir-tab active" data-dir="all">📂 全部</button>
+                    <button class="local-dir-tab" data-dir="desktop">🖥 桌面</button>
+                    <button class="local-dir-tab" data-dir="downloads">📥 下载</button>
+                    <button class="local-dir-tab" data-dir="documents">📝 文档</button>
+                    <button class="local-dir-tab" data-dir="pictures">🖼 图片</button>
+                    <button class="local-dir-tab" data-dir="movies">🎬 影片</button>
+                    <button class="local-dir-tab" data-dir="home">🏠 主目录</button>
                   </div>
-
-                  <!-- 拖拽分割条 -->
-                  <div class="search-panel-resizer" data-resizer="0"></div>
-
-                  <!-- 面板2: 本地记忆 -->
-                  <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
-                    <div class="search-panel-header" data-drag="local">
-                      <span class="search-panel-title">🧠 本地记忆</span>
-                      <span class="search-panel-count" id="localCount">0</span>
-                    </div>
-                    <div class="search-panel-body" id="localSearchResults">
-                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
-                    </div>
+                  <button class="local-refresh-btn" id="localRefreshBtn">🔄 刷新索引</button>
+                </div>
+                <div class="local-type-row">
+                  <div class="local-type-tabs" id="localTypeTabs">
+                    <button class="local-type-tab active" data-type="all">全部</button>
+                    <button class="local-type-tab" data-type="document">📄 文档</button>
+                    <button class="local-type-tab" data-type="spreadsheet">📊 表格</button>
+                    <button class="local-type-tab" data-type="presentation">📑 演示</button>
+                    <button class="local-type-tab" data-type="image">🖼 图片</button>
+                    <button class="local-type-tab" data-type="video">🎬 影片</button>
+                    <button class="local-type-tab" data-type="code">💻 代码</button>
                   </div>
-
-                  <!-- 拖拽分割条 -->
-                  <div class="search-panel-resizer" data-resizer="1"></div>
-
-                  <!-- 面板3: 资源文件 -->
-                  <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
-                    <div class="search-panel-header" data-drag="public">
-                      <span class="search-panel-title">📄 资源文件</span>
-                      <span class="search-panel-count" id="publicCount">0</span>
-                    </div>
-                    <div class="search-panel-body" id="publicSearchResults">
-                      <div class="knowledge-empty"><div class="empty-icon">⏳</div><p>搜索中...</p></div>
-                    </div>
+                </div>
+                <div class="local-index-status" id="localIndexStatus">
+                  <span>📊 点击「刷新索引」开始扫描本地文件</span>
+                </div>
+                <div class="local-files-body" id="localFilesBody">
+                  <div class="local-files-loading" id="localFilesLoading" style="display: none;">
+                    <div class="spinner"></div>
+                    <span>加载中...</span>
+                  </div>
+                  <div class="local-files-grid" id="localFilesGrid"></div>
+                  <div class="local-files-empty" id="localFilesEmpty" style="display: none;">
+                    <div class="empty-icon">📂</div>
+                    <p>暂无文件</p>
+                    <span class="empty-hint">尝试切换目录或调整筛选条件</span>
+                  </div>
+                  <div class="local-load-more" id="localLoadMore" style="display: none;">
+                    <button class="local-load-more-btn" id="localLoadMoreBtn">加载更多</button>
                   </div>
                 </div>
               </div>
@@ -345,6 +551,7 @@
             <button class="action-btn primary" id="createTaskBtn">创建任务</button>
             <button class="action-btn secondary" id="saveToNoteBtn">保存到笔记</button>
             <button class="action-btn secondary" id="saveToMemoryBtn">保存到记忆</button>
+            <button class="action-btn secondary" id="saveAsQuestionBtn">❓ 记录问题</button>
             <button class="search-knowledge-btn" id="searchKnowledgeBtn">🔍 搜索知识</button>
             <button class="action-btn" id="editTaskBtn">编辑</button>
             <button class="action-btn" id="ignoreBtn">忽略</button>
@@ -370,6 +577,7 @@
             <button class="btn primary small" id="aiAnalyzeBtn">🤖 AI分析</button>
             <button class="btn secondary small" id="aiSaveToNoteBtn">📝 保存到记事本</button>
             <button class="btn secondary small" id="aiExtractMemoryBtn">🧠 提炼到记忆</button>
+            <button class="btn secondary small" id="aiSaveAsQuestionBtn">❓ 记录问题</button>
           </div>
         </div>
         
@@ -426,6 +634,14 @@
           </select>
         </div>
         
+        <!-- 关联人物（来自画像） -->
+        <div class="form-group">
+          <label>👤 关联人物 <span style="font-weight:400; color:var(--text-tertiary); font-size:11px;">（来自画像，AI分析时自动识别）</span></label>
+          <div id="taskLinkedPersons" class="task-linked-persons">
+            <span class="linked-persons-empty">暂无关联人物</span>
+          </div>
+        </div>
+        
         <div class="form-group">
           <label class="checkbox-label">
             <input type="checkbox" id="isAllDay" value="true">
@@ -445,6 +661,159 @@
 
   </div>
 
+  <!-- 独立登录弹窗 -->
+  <div class="modal hidden" id="loginModal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content login-modal-content">
+      <div class="modal-header">
+        <h3>账户</h3>
+        <button class="modal-close" id="closeLoginBtn">×</button>
+      </div>
+      <div class="modal-body">
+        <!-- 未登录状态 -->
+        <div id="orgLoginSection">
+          <div class="org-login-card">
+            <div class="org-login-icon">🔐</div>
+            <h4>登录账户</h4>
+            <p style="color: var(--text-secondary); margin: 8px 0 16px;">登录后自动获取组织配置，接收通知推送</p>
+            <!-- 环境选择 -->
+            <div class="form-group">
+              <label for="loginEnv">服务环境</label>
+              <select id="loginEnv" class="env-select">
+                <option value="beta">Beta 版本（测试）</option>
+                <option value="production">正式版本</option>
+              </select>
+              <div class="env-hint" id="loginEnvHint">测试环境：config-server</div>
+              <button class="server-urls-toggle-btn" id="serverUrlsToggleBtn" onclick="App.toggleServerUrlsEdit()">⚙ 服务器地址</button>
+            </div>
+            <!-- 服务器地址重置区（登录前只显示重置按钮，不显示地址内容） -->
+            <div class="server-urls-edit-collapsed" id="serverUrlsEditArea">
+              <div class="server-url-reset-group">
+                <button class="server-url-reset-env-btn" onclick="App.resetServerUrls('beta')">↩ 重置 Beta 服务器</button>
+                <button class="server-url-reset-env-btn" onclick="App.resetServerUrls('production')">↩ 重置正式服务器</button>
+                <button class="server-url-reset-all-btn" onclick="App.resetServerUrls('all')">↩ 全部重置</button>
+              </div>
+              <div class="server-url-status hidden" id="loginServerUrlStatus"></div>
+            </div>
+            <div class="form-group">
+              <label for="loginEmail">邮箱</label>
+              <input type="email" id="loginEmail" placeholder="输入邮箱">
+            </div>
+            <div class="form-group">
+              <label for="loginPassword">密码</label>
+              <input type="password" id="loginPassword" placeholder="输入密码" onkeydown="if(event.key==='Enter')App.handleOrgLogin()">
+            </div>
+            <div class="login-remember-row">
+              <label class="login-remember-label">
+                <input type="checkbox" id="loginRememberMe" checked>
+                <span>记住登录状态</span>
+              </label>
+              <span class="login-remember-hint">关闭应用后自动登录</span>
+            </div>
+            <div id="loginError" class="login-error hidden"></div>
+            <button class="btn-primary org-login-btn" id="orgLoginBtn" onclick="App.handleOrgLogin()">登 录</button>
+          </div>
+        </div>
+        
+        <!-- 已登录状态 -->
+        <div id="orgLoggedInSection" class="hidden">
+          <div class="login-profile-card">
+            <div class="login-profile-header">
+              <span class="login-profile-avatar" id="orgUserAvatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="uBgL" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0E6FF"/><stop offset="1" stop-color="#E0F0FF"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#uBgL)"/><circle cx="20" cy="14.5" r="6.5" fill="#C4B5FD"/><ellipse cx="20" cy="30" rx="10.5" ry="8" fill="#C4B5FD"/><circle cx="17.5" cy="13.8" r="1" fill="#7C3AED"/><circle cx="22.5" cy="13.8" r="1" fill="#7C3AED"/><path d="M18.5 16.2 Q20 17.8 21.5 16.2" stroke="#7C3AED" stroke-width="0.9" fill="none" stroke-linecap="round"/><circle cx="15" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="25" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="12" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/><circle cx="28" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/></svg></span>
+              <div class="login-profile-info">
+                <div class="login-profile-name" id="orgUserName">-</div>
+                <div class="login-profile-detail" id="orgUserOrg">-</div>
+                <div class="login-profile-env" id="orgUserEnv">-</div>
+              </div>
+            </div>
+            <div class="login-profile-divider"></div>
+            <div class="login-profile-config">
+              <div class="login-config-item">
+                <span class="login-config-icon">🔗</span>
+                <span class="login-config-label">API</span>
+                <span class="login-config-value" id="orgApiUrl">-</span>
+              </div>
+              <div class="login-config-item">
+                <span class="login-config-icon">🤖</span>
+                <span class="login-config-label">模型</span>
+                <span class="login-config-value" id="orgApiModel">-</span>
+              </div>
+              <div class="login-config-item">
+                <span class="login-config-icon">⚡</span>
+                <span class="login-config-label">额度</span>
+                <span class="login-config-value" id="orgApiLimit">-</span>
+              </div>
+              <div class="login-config-item">
+                <span class="login-config-icon">🧠</span>
+                <span class="login-config-label">ADP</span>
+                <span class="login-config-value" id="orgAdpStatus">-</span>
+              </div>
+            </div>
+            <div class="login-profile-divider"></div>
+            <div class="login-profile-config-source">
+              <div class="config-source-label">配置来源</div>
+              <div class="config-source-toggle" id="configSourceToggle">
+                <button class="config-source-btn active" data-source="cloud" onclick="App.setConfigSource('cloud')">☁️ 云端配置</button>
+                <button class="config-source-btn" data-source="local" onclick="App.setConfigSource('local')">💻 本地配置</button>
+              </div>
+              <div class="config-source-hint" id="configSourceHint">使用组织管理员统一配置</div>
+            </div>
+            <div class="login-profile-divider"></div>
+            <!-- 服务器地址管理 -->
+            <div class="server-urls-section">
+              <div class="config-source-label">服务器地址</div>
+              <div class="server-urls-envs">
+                <!-- Beta -->
+                <div class="server-url-group">
+                  <div class="server-url-group-header">
+                    <span class="server-url-env-badge beta">Beta</span>
+                    <span class="server-url-custom-hint" id="betaCustomHint"></span>
+                    <button class="server-url-reset-btn" onclick="App.resetServerUrls('beta')" title="重置为默认地址">↩ 重置</button>
+                  </div>
+                  <div class="server-url-row">
+                    <label>认证</label>
+                    <input type="text" id="betaAuthUrl" class="server-url-input" placeholder="http://...">
+                  </div>
+                  <div class="server-url-row">
+                    <label>配置</label>
+                    <input type="text" id="betaConfigUrl" class="server-url-input" placeholder="http://...">
+                  </div>
+                </div>
+                <!-- Production -->
+                <div class="server-url-group">
+                  <div class="server-url-group-header">
+                    <span class="server-url-env-badge production">正式</span>
+                    <span class="server-url-custom-hint" id="productionCustomHint"></span>
+                    <button class="server-url-reset-btn" onclick="App.resetServerUrls('production')" title="重置为默认地址">↩ 重置</button>
+                  </div>
+                  <div class="server-url-row">
+                    <label>认证</label>
+                    <input type="text" id="productionAuthUrl" class="server-url-input" placeholder="http://...">
+                  </div>
+                  <div class="server-url-row">
+                    <label>配置</label>
+                    <input type="text" id="productionConfigUrl" class="server-url-input" placeholder="http://...">
+                  </div>
+                </div>
+              </div>
+              <div class="server-url-actions">
+                <button class="server-url-save-btn" onclick="App.saveServerUrls()">💾 保存并验证</button>
+                <button class="server-url-reset-all-btn" onclick="App.resetServerUrls('all')">↩ 全部重置</button>
+              </div>
+              <div class="server-url-status hidden" id="serverUrlStatus"></div>
+            </div>
+            <div class="login-profile-divider"></div>
+            <div class="login-profile-actions">
+              <span class="login-sync-time" id="orgSyncTime">-</span>
+              <button class="login-action-btn sync" id="syncConfigBtn" onclick="App.handleConfigSync()">🔄 同步配置</button>
+              <button class="login-action-btn logout" onclick="App.handleOrgLogout()">退出登录</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 设置Modal -->
   <div class="modal hidden" id="settingsModal">
     <div class="modal-overlay"></div>
@@ -458,13 +827,20 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="api">API配置</button>
           <button class="settings-tab" data-tab="adp">ADP配置</button>
-          <button class="settings-tab" data-tab="prompt">Prompt配置</button>
+          <button class="settings-tab" data-tab="prompt">Prompt</button>
           <button class="settings-tab" data-tab="profile">用户画像</button>
           <button class="settings-tab" data-tab="memory">记忆管理</button>
+          <button class="settings-tab" data-tab="appearance">外观</button>
+          <button class="settings-tab" data-tab="data">数据管理</button>
         </div>
         
         <!-- API配置 -->
-        <div class="settings-panel" id="apiPanel">
+        <div class="settings-panel hidden" id="apiPanel">
+          <!-- 登录状态提示 -->
+          <div id="apiServerHint" class="config-server-hint hidden">
+            <span class="config-server-badge">🏢 组织配置</span>
+            <span>当前使用组织统一配置，以下设置由管理员管理</span>
+          </div>
           <div class="form-group">
             <label for="apiKey">API Key</label>
             <input type="password" id="apiKey" placeholder="输入API Key（不输入则使用内置密钥）">
@@ -494,6 +870,11 @@
         
         <!-- ADP配置 -->
         <div class="settings-panel hidden" id="adpPanel">
+          <!-- 登录状态提示 -->
+          <div id="adpServerHint" class="config-server-hint hidden">
+            <span class="config-server-badge">🏢 组织配置</span>
+            <span>当前使用组织统一配置，以下设置由管理员管理</span>
+          </div>
           <div class="form-group">
             <label for="adpAppKey">ADP AppKey（AI助手通用）</label>
             <input type="password" id="adpAppKey" placeholder="输入ADP应用AppKey">
@@ -502,17 +883,17 @@
             </small>
           </div>
           <div class="form-group">
-            <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey（可选）</label>
-            <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用通用AppKey">
+            <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey</label>
+            <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用内置知识AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识跟随模块的智能推荐专用 AppKey。留空时回退到通用 AppKey。
+              知识推荐专用 AppKey，与通用 ADP AppKey 不同。留空时使用内置知识专用 Key。
             </small>
           </div>
           <div class="form-group">
-            <label for="adpSearchAppKey">搜索问答 AppKey（可选）</label>
-            <input type="password" id="adpSearchAppKey" placeholder="留空则使用知识推荐或通用AppKey">
+            <label for="adpSearchAppKey">搜索问答 AppKey</label>
+            <input type="password" id="adpSearchAppKey" placeholder="留空则使用内置知识AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识搜索问答专用 AppKey。留空时依次回退到知识推荐 AppKey → 通用 AppKey。
+              知识搜索专用 AppKey，与通用 ADP AppKey 不同。留空时使用内置知识专用 Key。
             </small>
           </div>
           <div class="form-group">
@@ -534,7 +915,7 @@
           </div>
         </div>
         
-        <!-- Prompt配置 -->
+        <!-- Prompt -->
         <div class="settings-panel hidden" id="promptPanel">
           <div class="prompt-manager-header">
             <h4>📝 Prompt 模板管理</h4>
@@ -638,79 +1019,143 @@
           </div>
         </div>
         
-        <!-- 用户画像 -->
-        <div class="settings-panel hidden" id="profilePanel">
-          <div class="profile-section">
-            <h4>👤 基本信息</h4>
-            <div class="form-row">
+          <!-- 用户画像 -->
+          <div class="settings-panel hidden" id="profilePanel">
+            <div class="profile-section">
+              <h4>👤 基本信息</h4>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="profileName">姓名</label>
+                  <input type="text" id="profileName" placeholder="你的姓名">
+                </div>
+                <div class="form-group">
+                  <label for="profileEnglishName">英文名</label>
+                  <input type="text" id="profileEnglishName" placeholder="English Name">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="profileRole">角色</label>
+                  <input type="text" id="profileRole" placeholder="如：产品经理 & 全栈开发者">
+                </div>
+                <div class="form-group">
+                  <label for="profileIndustries">行业（逗号分隔）</label>
+                  <input type="text" id="profileIndustries" placeholder="AI, SaaS, 企业服务">
+                </div>
+              </div>
+            </div>
+            
+            <div class="profile-section">
+              <h4>👥 高频接触人物</h4>
+              <div id="frequentPersonsList" class="profile-list"></div>
+              <div class="profile-add-row">
+                <input type="text" id="newPersonName" placeholder="姓名" style="flex:1">
+                <input type="text" id="newPersonRelation" placeholder="关系（如：老板、同事）" style="flex:1">
+                <input type="text" id="newPersonCompany" placeholder="公司（可选）" style="flex:1">
+                <button class="btn small" id="addPersonBtn">+ 添加</button>
+              </div>
+            </div>
+            
+            <div class="profile-section">
+              <h4>📂 活跃项目</h4>
+              <div id="activeProjectsList" class="profile-list"></div>
+              <div class="profile-add-row">
+                <input type="text" id="newProjectName" placeholder="项目名" style="flex:1">
+                <input type="text" id="newProjectAlias" placeholder="别名（逗号分隔）" style="flex:1">
+                <select id="newProjectStatus" style="flex:0.5">
+                  <option value="active">进行中</option>
+                  <option value="paused">暂停</option>
+                  <option value="completed">已完成</option>
+                </select>
+                <button class="btn small" id="addProjectBtn">+ 添加</button>
+              </div>
+            </div>
+            
+            <div class="profile-section">
+              <h4>⚡ 优先级偏好</h4>
               <div class="form-group">
-                <label for="profileName">姓名</label>
-                <input type="text" id="profileName" placeholder="你的姓名">
+                <label for="prioritySignals">高优先级触发词（逗号分隔）</label>
+                <input type="text" id="prioritySignals" placeholder="老板, 紧急, ASAP, 立即">
               </div>
               <div class="form-group">
-                <label for="profileEnglishName">英文名</label>
-                <input type="text" id="profileEnglishName" placeholder="English Name">
+                <label for="lowPrioritySignals">低优先级触发词（逗号分隔）</label>
+                <input type="text" id="lowPrioritySignals" placeholder="FYI, 有空, 可选, 参考">
               </div>
             </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label for="profileRole">角色</label>
-                <input type="text" id="profileRole" placeholder="如：产品经理 & 全栈开发者">
+            
+            <!-- AI 批量导入画像 -->
+            <div class="profile-section">
+              <h4>🧠 AI 批量导入</h4>
+              <p class="profile-import-desc">粘贴文本描述你的同事、项目、行业等信息，AI 自动解析并填充画像</p>
+              <textarea id="profileImportText" class="profile-import-textarea" placeholder="示例：&#10;张三 - 技术负责人，负责后端架构和数据库设计&#10;李四 - 产品经理，负责 CogniFrame 和 StellarQS30&#10;王五 - 客户总监，对接金融行业客户，华东区域&#10;StellarQS30 - 雅思学习系统，进行中&#10;CogniFrame - 脚手架生成器，进行中"></textarea>
+              <div class="profile-import-actions">
+                <button class="btn primary small" id="profileImportBtn">🧠 AI 解析并导入</button>
+                <span id="profileImportStatus" class="profile-import-status"></span>
               </div>
-              <div class="form-group">
-                <label for="profileIndustries">行业（逗号分隔）</label>
-                <input type="text" id="profileIndustries" placeholder="AI, SaaS, 企业服务">
+              <div id="profileImportPreview" class="profile-import-preview hidden"></div>
+            </div>
+            
+            <!-- Phase 3: 画像更新建议 -->
+            <div class="profile-section">
+              <h4>💡 智能建议</h4>
+              <div id="profileSuggestions" class="profile-suggestions">
+                <p style="color: var(--text-secondary); font-size: 13px;">点击下方按钮，系统将分析你的使用数据并给出画像更新建议。</p>
+              </div>
+              <button class="btn secondary small" id="generateProfileSuggestionsBtn" style="margin-top: 8px;">🔍 生成建议</button>
+            </div>
+          </div>
+
+          <!-- 外观设置 -->
+          <div class="settings-panel hidden" id="appearancePanel">
+            <div class="appearance-section">
+              <h4>🎨 主题风格</h4>
+              <p class="appearance-desc">选择你喜欢的界面风格，所有主题都经过精心设计</p>
+              <div class="theme-grid" id="themeGrid">
+                <!-- 由 ThemeEngine 动态渲染 -->
+              </div>
+            </div>
+            <div class="appearance-section">
+              <h4>✨ 视觉效果</h4>
+              <div class="appearance-option">
+                <div class="appearance-option-info">
+                  <span class="appearance-option-title">毛玻璃效果</span>
+                  <span class="appearance-option-desc">标题栏和面板的模糊透明效果</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="glassEffectToggle" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="appearance-option">
+                <div class="appearance-option-info">
+                  <span class="appearance-option-title">背景光球</span>
+                  <span class="appearance-option-desc">主视图区域的渐变光球装饰</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="orbEffectToggle" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="appearance-option">
+                <div class="appearance-option-info">
+                  <span class="appearance-option-title">悬停动效</span>
+                  <span class="appearance-option-desc">卡片和按钮的悬停浮起效果</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="hoverEffectToggle" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="appearance-section">
+              <h4>🔤 字体大小</h4>
+              <div class="font-size-selector">
+                <button class="font-size-btn" data-size="small">小</button>
+                <button class="font-size-btn active" data-size="medium">中</button>
+                <button class="font-size-btn" data-size="large">大</button>
               </div>
             </div>
           </div>
-          
-          <div class="profile-section">
-            <h4>👥 高频接触人物</h4>
-            <div id="frequentPersonsList" class="profile-list"></div>
-            <div class="profile-add-row">
-              <input type="text" id="newPersonName" placeholder="姓名" style="flex:1">
-              <input type="text" id="newPersonRelation" placeholder="关系（如：老板、同事）" style="flex:1">
-              <input type="text" id="newPersonCompany" placeholder="公司（可选）" style="flex:1">
-              <button class="btn small" id="addPersonBtn">+ 添加</button>
-            </div>
-          </div>
-          
-          <div class="profile-section">
-            <h4>📂 活跃项目</h4>
-            <div id="activeProjectsList" class="profile-list"></div>
-            <div class="profile-add-row">
-              <input type="text" id="newProjectName" placeholder="项目名" style="flex:1">
-              <input type="text" id="newProjectAlias" placeholder="别名（逗号分隔）" style="flex:1">
-              <select id="newProjectStatus" style="flex:0.5">
-                <option value="active">进行中</option>
-                <option value="paused">暂停</option>
-                <option value="completed">已完成</option>
-              </select>
-              <button class="btn small" id="addProjectBtn">+ 添加</button>
-            </div>
-          </div>
-          
-          <div class="profile-section">
-            <h4>⚡ 优先级偏好</h4>
-            <div class="form-group">
-              <label for="prioritySignals">高优先级触发词（逗号分隔）</label>
-              <input type="text" id="prioritySignals" placeholder="老板, 紧急, ASAP, 立即">
-            </div>
-            <div class="form-group">
-              <label for="lowPrioritySignals">低优先级触发词（逗号分隔）</label>
-              <input type="text" id="lowPrioritySignals" placeholder="FYI, 有空, 可选, 参考">
-            </div>
-          </div>
-          
-          <!-- Phase 3: 画像更新建议 -->
-          <div class="profile-section">
-            <h4>💡 智能建议</h4>
-            <div id="profileSuggestions" class="profile-suggestions">
-              <p style="color: var(--text-secondary); font-size: 13px;">点击下方按钮，系统将分析你的使用数据并给出画像更新建议。</p>
-            </div>
-            <button class="btn secondary small" id="generateProfileSuggestionsBtn" style="margin-top: 8px;">🔍 生成建议</button>
-          </div>
-        </div>
         
         <!-- 记忆管理 -->
         <div class="settings-panel hidden" id="memoryPanel">
@@ -757,6 +1202,7 @@
                   <option value="personal">个人情况</option>
                 </select>
                 <button class="btn primary small" id="addManualMemoryBtn">添加记忆</button>
+                <button class="btn secondary small" id="aiOrganizeMemoryBtn">🧠 AI 整理后添加</button>
               </div>
             </div>
             <div class="memory-list-header">
@@ -785,6 +1231,7 @@
                   <option value="other">其他</option>
                 </select>
                 <button class="btn small" id="refreshMemoriesBtn">刷新</button>
+                <button class="btn small secondary" id="aiBatchOrganizeBtn">🧠 AI 批量整理</button>
                 <button class="btn small danger" id="clearAllMemoriesBtn">清空所有记忆</button>
               </div>
             </div>
@@ -794,6 +1241,100 @@
             <div class="memory-load-more hidden" id="memoryLoadMore">
               <button class="btn small" id="loadMoreMemoriesBtn">加载更多</button>
               <span class="memory-count-info" id="memoryCountInfo"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 数据管理 -->
+        <div class="settings-panel hidden" id="dataPanel">
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">📦</span>
+              <div>
+                <h4>数据导出</h4>
+                <p class="data-section-desc">将所有数据（知识、记忆、画像、笔记、任务、配置等）导出为加密备份文件，可在其他设备上导入恢复</p>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="form-group">
+                <label for="exportPassword">设置加密密码</label>
+                <input type="password" id="exportPassword" placeholder="至少4位密码，用于加密备份文件" autocomplete="new-password">
+              </div>
+              <div class="form-group">
+                <label for="exportPasswordConfirm">确认密码</label>
+                <input type="password" id="exportPasswordConfirm" placeholder="再次输入密码" autocomplete="new-password">
+              </div>
+              <button class="btn primary" id="exportDataBtn">📦 一键导出全部数据</button>
+              <div id="exportResult" class="data-result hidden"></div>
+            </div>
+          </div>
+
+          <div class="data-divider"></div>
+
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">📥</span>
+              <div>
+                <h4>数据导入</h4>
+                <p class="data-section-desc">从加密备份文件恢复数据。支持两种模式：合并（保留现有数据+追加新数据）或替换（完全覆盖）</p>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="form-group">
+                <label for="importPassword">输入解密密码</label>
+                <input type="password" id="importPassword" placeholder="输入导出时设置的密码" autocomplete="current-password">
+              </div>
+              <div class="form-group">
+                <label>导入模式</label>
+                <div class="import-mode-selector">
+                  <label class="import-mode-option">
+                    <input type="radio" name="importMode" value="merge" checked>
+                    <span class="import-mode-label">
+                      <strong>🔀 合并模式</strong>
+                      <small>保留现有数据，仅追加不重复的新数据</small>
+                    </span>
+                  </label>
+                  <label class="import-mode-option">
+                    <input type="radio" name="importMode" value="replace">
+                    <span class="import-mode-label">
+                      <strong>🔄 替换模式</strong>
+                      <small>完全覆盖现有数据（慎用）</small>
+                    </span>
+                  </label>
+                </div>
+              </div>
+              <button class="btn primary" id="importDataBtn">📥 选择文件并导入</button>
+              <div id="importPreview" class="data-result hidden"></div>
+              <div id="importConfirmArea" class="hidden" style="margin-top:12px;">
+                <div class="import-warning">
+                  ⚠️ 导入将修改本地数据，建议先导出备份。确认继续？
+                </div>
+                <button class="btn danger" id="importConfirmBtn">✅ 确认导入</button>
+                <button class="btn secondary" id="importCancelBtn">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="data-divider"></div>
+
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">ℹ️</span>
+              <div>
+                <h4>导出内容说明</h4>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="data-contents-grid">
+                <div class="data-content-item"><span class="data-content-icon">🧠</span>记忆系统（瞬时/短期/长期记忆）</div>
+                <div class="data-content-item"><span class="data-content-icon">🧬</span>知识图谱（原子/簇/文章）</div>
+                <div class="data-content-item"><span class="data-content-icon">👤</span>用户画像（人物/项目/偏好）</div>
+                <div class="data-content-item"><span class="data-content-icon">📝</span>记事本（笔记/分类）</div>
+                <div class="data-content-item"><span class="data-content-icon">✅</span>待办任务（任务/番茄钟记录）</div>
+                <div class="data-content-item"><span class="data-content-icon">⚙️</span>本地配置（API/ADP/设置）</div>
+                <div class="data-content-item"><span class="data-content-icon">📄</span>Prompt模板</div>
+                <div class="data-content-item"><span class="data-content-icon">🔒</span>AES-256-GCM 加密保护</div>
+              </div>
             </div>
           </div>
         </div>
@@ -820,11 +1361,15 @@
 <!-- 隐藏的文件上传 input -->
 <input type="file" id="promptFileUploadInput" accept=".md" style="display:none">
 <script src="scripts/store.js"></script>
+<script src="scripts/themeEngine.js"></script>
 <script src="scripts/pomodoro.js"></script>
 <script src="scripts/calendar.js"></script>
 <script src="scripts/reminder.js"></script>
 <script src="scripts/knowledgeSearch.js"></script>
 <script src="scripts/knowledgeFollow.js"></script>
+<script src="scripts/knowledgeDistillation.js"></script>
+<script src="scripts/documents.js"></script>
+<script src="scripts/localFiles.js"></script>
 <script src="scripts/app.js"></script>
 <script>
   console.log('[HTML] All scripts loaded');

@@ -1,11 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { app } = require('electron');
 
 // 记事本存储路径：打包后必须使用 userData 目录（ASAR 内只读）
-const NOTEBOOK_PATH = app.isPackaged
-  ? path.join(app.getPath('userData'), 'notebook')
-  : path.join(__dirname, 'notebook');
+const NOTEBOOK_PATH = path.join(app.getPath('userData'), 'notebook');
 
 // 确保目录存在
 if (!fs.existsSync(NOTEBOOK_PATH)) {
@@ -26,6 +25,15 @@ class Notebook {
       if (fs.existsSync(file)) {
         const data = fs.readFileSync(file, 'utf8');
         this.notes = JSON.parse(data);
+        // 迁移：为缺少 contentHash 的旧笔记补充 hash
+        let needSave = false;
+        for (const note of this.notes) {
+          if (!note.contentHash && note.content) {
+            note.contentHash = this._hashContent(note.content);
+            needSave = true;
+          }
+        }
+        if (needSave) this.saveNotes();
       } else {
         this.notes = [];
       }
@@ -74,12 +82,20 @@ class Notebook {
   }
 
   addNote(note) {
+    // 全局 hash 去重：相同内容不重复添加（不限日期）
+    const contentHash = this._hashContent(note.content);
+    if (this._isDuplicate(contentHash)) {
+      console.log('[Notebook] Duplicate content, skipping:', contentHash.substring(0, 8));
+      return null;
+    }
+
     const newNote = {
       id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
       content: note.content,
       title: note.title || this.extractTitle(note.content),
       category: note.category || 'general',
       tags: note.tags || [],
+      contentHash: contentHash,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       analyzed: note.analyzed || false,
@@ -90,6 +106,26 @@ class Notebook {
     this.notes.unshift(newNote);
     this.saveNotes();
     return newNote;
+  }
+
+  /**
+   * 计算内容的 SHA-256 hash（trim 后计算，忽略首尾空白差异）
+   */
+  _hashContent(content) {
+    const trimmed = (content || '').trim();
+    return crypto.createHash('sha256').update(trimmed, 'utf8').digest('hex');
+  }
+
+  /**
+   * 检查是否已存在相同 hash 的记事项（全局去重，不限日期）
+   */
+  _isDuplicate(contentHash) {
+    if (!contentHash) return false;
+    return this.notes.some(note => {
+      // 比对 hash：优先使用存储的 contentHash，否则实时计算
+      const noteHash = note.contentHash || this._hashContent(note.content);
+      return noteHash === contentHash;
+    });
   }
 
   extractTitle(content) {

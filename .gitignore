@@ -2,6 +2,10 @@ node_modules/
 dist/
 .DS_Store
 *.log
+# 用户数据文件不应打包进 ASAR
+src/scripts/memory/memories.json
+src/scripts/memory/entity-graph.json
+src/scripts/notebook/notes.json
 .env
 src/scripts/memory/
 src/scripts/notebook/

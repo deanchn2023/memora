@@ -1,0 +1,266 @@
+/* ============= 外观设置面板 ============= */
+.appearance-section {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.appearance-section:last-child {
+  border-bottom: none;
+}
+
+.appearance-section h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.appearance-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 18px;
+  line-height: 1.5;
+}
+
+/* 主题网格 */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.theme-card {
+  position: relative;
+  border-radius: 14px;
+  border: 2px solid var(--border-color);
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.theme-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 14px 14px 0 0;
+  transition: height 0.3s ease;
+}
+
+.theme-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+.theme-card.active {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.theme-card.active::after {
+  content: '✓';
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px var(--primary-glow);
+}
+
+/* 主题预览色条 */
+.theme-preview {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  height: 32px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.theme-preview-color {
+  flex: 1;
+  border-radius: 4px;
+  transition: transform 0.2s ease;
+}
+
+.theme-card:hover .theme-preview-color {
+  transform: scaleY(1.1);
+}
+
+.theme-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-card-icon {
+  font-size: 18px;
+}
+
+.theme-card-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+/* 视觉效果选项 */
+.appearance-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.appearance-option:last-child {
+  border-bottom: none;
+}
+
+.appearance-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.appearance-option-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.appearance-option-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Toggle 开关 */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--bg-tertiary);
+  transition: 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  border-radius: 26px;
+  border: 1.5px solid var(--border-color);
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: '';
+  height: 20px;
+  width: 20px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--bg-card);
+  transition: 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(18px);
+}
+
+/* 字体大小选择器 */
+.font-size-selector {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.font-size-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1.5px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  text-align: center;
+}
+
+.font-size-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--primary-light);
+}
+
+.font-size-btn.active {
+  background: var(--gradient-brand);
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 2px 8px var(--primary-glow);
+  font-weight: 600;
+}
+
+/* 禁用效果的样式 */
+.no-glass .titlebar,
+.no-glass .header,
+.no-glass .local-files-toolbar,
+.no-glass .calendar-sub-tabs,
+.no-glass .notification-panel,
+.no-glass .detector-content,
+.no-glass .modal-content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.no-orb .main-view::before,
+.no-orb .main-view::after {
+  display: none !important;
+}
+
+.no-hover .task-item:hover,
+.no-hover .note-item:hover,
+.no-hover .feature-card:hover,
+.no-hover .quick-capsule:hover,
+.no-hover .add-task-btn:hover {
+  transform: none !important;
+}
+
+/* 字体大小 */
+body.font-small { font-size: 12px; }
+body.font-medium { font-size: 13px; }
+body.font-large { font-size: 15px; }

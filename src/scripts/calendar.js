@@ -1,11 +1,14 @@
 const Calendar = {
   currentDate: new Date(),
-  currentView: 'day',
+  currentView: 'week', // day/week/month 保持日历内部子视图
+  calendarSubView: 'week', // 日历子视图（独立于 currentView，避免被其他视图覆盖）
+  calendarActive: false, // 日历标签是否激活
   draggedTask: null,
   isDragging: false,
   dragGhost: null,
 
   init() {
+    this.calendarActive = true; // 默认显示日历
     this.bindEvents();
     this.bindGlobalDragEvents();
     this.render();
@@ -14,9 +17,46 @@ const Calendar = {
   bindEvents() {
     document.querySelectorAll('.view-tab').forEach(tab => {
       tab.addEventListener('click', (e) => {
+        // 找到实际的 view-tab 按钮（避免点击 badge 等子元素时出错）
+        const viewTab = e.target.closest('.view-tab');
+        if (!viewTab) return;
+        
         document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+        viewTab.classList.add('active');
+        const view = viewTab.dataset.view;
+
+        if (view === 'calendar') {
+          this.calendarActive = true;
+          this.showCalendarView();
+          this.showDateNavigator();
+        } else if (view === 'documents') {
+          this.calendarActive = false;
+          this.currentView = 'documents';
+          this.hideCalendarView();
+          this.hideOtherViews('documents');
+          this.hideDateNavigator();
+          document.getElementById('documentsView')?.classList.remove('hidden');
+          this.updateDateDisplay();
+          if (window.Documents) Documents.onShow();
+        } else {
+          this.calendarActive = false;
+          this.currentView = view;
+          this.hideCalendarView();
+          this.hideOtherViews(view);
+          this.hideDateNavigator();
+          if (view === 'notebook') this.renderNotebookView();
+          else if (view === 'knowledge') this.renderKnowledgeView();
+        }
+      });
+    });
+
+    // 日历子视图切换（日/周/月）
+    document.querySelectorAll('.calendar-sub-tab').forEach(tab => {
+      tab.addEventListener('click', (e) => {
+        document.querySelectorAll('.calendar-sub-tab').forEach(t => t.classList.remove('active'));
         e.target.classList.add('active');
-        this.currentView = e.target.dataset.view;
+        this.currentView = e.target.dataset.cal;
+        this.calendarSubView = this.currentView; // 记住用户选择
         this.render();
       });
     });
@@ -26,6 +66,41 @@ const Calendar = {
     document.getElementById('todayBtn').addEventListener('click', () => this.goToToday());
   },
 
+  showCalendarView() {
+    document.getElementById('calendarView')?.classList.remove('hidden');
+    document.getElementById('documentsView')?.classList.add('hidden');
+    document.getElementById('notebookView')?.classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
+    // 恢复日历子视图（currentView 可能被其他视图标签覆盖过）
+    this.currentView = this.calendarSubView;
+    // 同步子标签激活状态
+    document.querySelectorAll('.calendar-sub-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.cal === this.currentView);
+    });
+    this.showDateNavigator();
+    this.render();
+  },
+
+  hideCalendarView() {
+    document.getElementById('calendarView')?.classList.add('hidden');
+  },
+
+  hideOtherViews(activeView) {
+    // 隐藏非当前激活的视图
+    document.getElementById('notebookView')?.classList.add('hidden');
+    document.getElementById('knowledgeView')?.classList.add('hidden');
+    document.getElementById('aiAssistantView')?.classList.add('hidden');
+    document.getElementById('documentsView')?.classList.add('hidden');
+    document.getElementById('calendarView')?.classList.add('hidden');
+
+    if (activeView === 'notebook') {
+      document.getElementById('notebookView')?.classList.remove('hidden');
+    } else if (activeView === 'knowledge') {
+      document.getElementById('knowledgeView')?.classList.remove('hidden');
+    }
+  },
+
   // 全局拖拽事件（监听 document 级别的 mousemove 和 mouseup）
   bindGlobalDragEvents() {
     document.addEventListener('mousemove', (e) => this.onDragMove(e));
@@ -33,6 +108,7 @@ const Calendar = {
   },
 
   navigate(direction) {
+    if (!this.calendarActive) return;
     switch (this.currentView) {
       case 'day':
         this.currentDate.setDate(this.currentDate.getDate() + direction);
@@ -48,12 +124,15 @@ const Calendar = {
   },
 
   goToToday() {
+    if (!this.calendarActive) return;
     this.currentDate = new Date();
     this.render();
   },
 
   render() {
     this.updateDateDisplay();
+
+    if (!this.calendarActive) return;
 
     switch (this.currentView) {
       case 'day':
@@ -65,12 +144,6 @@ const Calendar = {
       case 'month':
         this.renderMonthView();
         break;
-      case 'notebook':
-        this.renderNotebookView();
-        break;
-      case 'knowledge':
-        this.renderKnowledgeView();
-        break;
     }
   },
 
@@ -78,25 +151,33 @@ const Calendar = {
     const options = { year: 'numeric', month: 'long', day: 'numeric' };
     let displayText = '';
 
-    switch (this.currentView) {
-      case 'day':
-        displayText = this.currentDate.toLocaleDateString('zh-CN', options);
-        break;
-      case 'week':
-        const weekStart = this.getWeekStart(this.currentDate);
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 6);
-        displayText = `${weekStart.getMonth() + 1}月${weekStart.getDate()}日 - ${weekEnd.getMonth() + 1}月${weekEnd.getDate()}日`;
-        break;
-      case 'month':
-        displayText = this.currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
-        break;
-      case 'notebook':
-        displayText = '记事本';
-        break;
-      case 'knowledge':
-        displayText = '知识跟随';
-        break;
+    if (!this.calendarActive) {
+      switch (this.currentView) {
+        case 'notebook':
+          displayText = '记事本';
+          break;
+        case 'knowledge':
+          displayText = '知识';
+          break;
+        case 'documents':
+          displayText = '文档';
+          break;
+      }
+    } else {
+      switch (this.currentView) {
+        case 'day':
+          displayText = this.currentDate.toLocaleDateString('zh-CN', options);
+          break;
+        case 'week':
+          const weekStart = this.getWeekStart(this.currentDate);
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 6);
+          displayText = `${weekStart.getMonth() + 1}月${weekStart.getDate()}日 - ${weekEnd.getMonth() + 1}月${weekEnd.getDate()}日`;
+          break;
+        case 'month':
+          displayText = this.currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+          break;
+      }
     }
 
     document.getElementById('currentDate').textContent = displayText;
@@ -107,9 +188,6 @@ const Calendar = {
     document.getElementById('dayView').classList.remove('hidden');
     document.getElementById('weekView').classList.add('hidden');
     document.getElementById('monthView').classList.add('hidden');
-    document.getElementById('notebookView').classList.add('hidden');
-    document.getElementById('knowledgeView')?.classList.add('hidden');
-    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     const grid = document.getElementById('timeGrid');
     grid.innerHTML = '';
@@ -168,9 +246,15 @@ const Calendar = {
       let targetSlot = null;
       let minDiff = Infinity;
 
-      if (currentHour < 6 || currentHour > 22) {
-        targetSlot = slots[6];
+      // 根据当前时间段决定默认滚动位置
+      if (currentHour < 6) {
+        // 凌晨：滚动到早晨区域
+        targetSlot = slots[0]; // 06:00
+      } else if (currentHour > 22) {
+        // 深夜：滚动到晚间区域
+        targetSlot = slots[Math.floor(slots.length * 0.7)]; // 约20:00
       } else {
+        // 6-22点：找最近的时间槽
         slots.forEach(slot => {
           const slotHour = parseInt(slot.dataset.hour);
           const slotMinute = parseInt(slot.dataset.minute);
@@ -185,10 +269,10 @@ const Calendar = {
       }
 
       if (targetSlot) {
-        const gridRect = grid.getBoundingClientRect();
-        const slotRect = targetSlot.getBoundingClientRect();
-        const scrollTop = targetSlot.offsetTop - (gridRect.height / 2) + (slotRect.height / 2);
-        grid.scrollTop = Math.max(0, scrollTop);
+        // 将当前时间段定位在视口上方 1/4 处，方便看到前后内容
+        const slotHeight = targetSlot.offsetHeight || 30;
+        const offset = Math.max(0, targetSlot.offsetTop - slotHeight * 2);
+        grid.scrollTop = offset;
       } else {
         this.scrollToFirstTask();
       }
@@ -233,18 +317,20 @@ const Calendar = {
     // 超出可见范围则不渲染
     if (top + height < 0 || top > (22 - 6 + 1) * 60 * pxPerMinute) return;
 
+    const isCompleted = task.status === 'completed';
     const block = document.createElement('div');
-    block.className = `task-block ${task.priority}${task.isDraft ? ' draft' : ''}`;
+    block.className = `task-block ${task.priority}${task.isDraft ? ' draft' : ''}${isCompleted ? ' completed' : ''}`;
     block.style.height = `${Math.max(height, 28)}px`;
     block.style.top = `${top}px`;
     block.dataset.taskId = task.id;
-    block.draggable = true;
+    block.draggable = !isCompleted;
 
     const draftLabel = task.isDraft ? '<span class="task-draft-label">草稿</span>' : '';
+    const completedLabel = isCompleted ? '<span class="task-completed-label">✓ 已完成</span>' : '';
     const startTimeStr = startDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     const endTimeStr = dueDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     block.innerHTML = `
-      <div class="task-title">${task.title} ${draftLabel}</div>
+      <div class="task-title">${task.title} ${draftLabel} ${completedLabel}</div>
       <div class="task-time">${startTimeStr} - ${endTimeStr} · ${duration}分钟</div>
       <button class="task-delete-btn" title="删除任务">×</button>
     `;
@@ -404,9 +490,6 @@ const Calendar = {
     document.getElementById('dayView').classList.add('hidden');
     document.getElementById('weekView').classList.remove('hidden');
     document.getElementById('monthView').classList.add('hidden');
-    document.getElementById('notebookView').classList.add('hidden');
-    document.getElementById('knowledgeView')?.classList.add('hidden');
-    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     const container = document.getElementById('weekView');
     container.innerHTML = '';
@@ -446,8 +529,9 @@ const Calendar = {
         </div>
         <div class="week-day-tasks">
           ${dayTasks.map(task => `
-            <div class="week-task priority-${task.priority} draggable-task" data-id="${task.id}" draggable="true" title="${this.getTaskTooltip(task)}">
+            <div class="week-task priority-${task.priority}${task.status === 'completed' ? ' completed' : ''} draggable-task" data-id="${task.id}" draggable="${task.status !== 'completed'}" title="${this.getTaskTooltip(task)}">
               <span class="week-task-time">${new Date(task.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+              ${task.status === 'completed' ? '<span class="week-task-check">✓</span>' : ''}
               ${task.title}
               <button class="week-task-delete" data-task-id="${task.id}">×</button>
             </div>
@@ -493,8 +577,9 @@ const Calendar = {
       dayEl.querySelector('.week-day-header').addEventListener('dblclick', () => {
         this.currentDate = dayDate;
         this.currentView = 'day';
-        document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
-        document.querySelector('[data-view="day"]').classList.add('active');
+        this.calendarSubView = 'day';
+        document.querySelectorAll('.calendar-sub-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-cal="day"]').classList.add('active');
         this.render();
       });
 
@@ -535,9 +620,6 @@ const Calendar = {
     document.getElementById('dayView').classList.add('hidden');
     document.getElementById('weekView').classList.add('hidden');
     document.getElementById('monthView').classList.remove('hidden');
-    document.getElementById('notebookView').classList.add('hidden');
-    document.getElementById('knowledgeView')?.classList.add('hidden');
-    document.getElementById('aiAssistantView')?.classList.add('hidden');
 
     const container = document.getElementById('monthView');
     container.innerHTML = '';
@@ -587,7 +669,8 @@ const Calendar = {
       // 月视图显示任务标签（最多3个）
       const taskTags = dayTasks.slice(0, 3).map(task => {
         const priorityClass = task.priority || 'medium';
-        return `<div class="month-task-tag priority-${priorityClass}" data-id="${task.id}" draggable="true" title="${this.getTaskTooltip(task)}">${task.title}</div>`;
+        const completedClass = task.status === 'completed' ? ' completed' : '';
+        return `<div class="month-task-tag priority-${priorityClass}${completedClass}" data-id="${task.id}" draggable="${task.status !== 'completed'}" title="${this.getTaskTooltip(task)}">${task.status === 'completed' ? '✓ ' : ''}${task.title}</div>`;
       }).join('');
       const moreCount = dayTasks.length > 3 ? `<div class="month-task-more">+${dayTasks.length - 3}</div>` : '';
 
@@ -653,8 +736,9 @@ const Calendar = {
         if (e.target.classList.contains('month-task-tag')) return;
         this.currentDate = date;
         this.currentView = 'day';
-        document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
-        document.querySelector('[data-view="day"]').classList.add('active');
+        this.calendarSubView = 'day';
+        document.querySelectorAll('.calendar-sub-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-cal="day"]').classList.add('active');
         this.render();
       });
 
@@ -767,12 +851,9 @@ const Calendar = {
   },
 
   renderNotebookView() {
-    document.getElementById('dayView').classList.add('hidden');
-    document.getElementById('weekView').classList.add('hidden');
-    document.getElementById('monthView').classList.add('hidden');
-    document.getElementById('notebookView').classList.remove('hidden');
-    document.getElementById('knowledgeView')?.classList.add('hidden');
-    document.getElementById('aiAssistantView')?.classList.add('hidden');
+    this.hideOtherViews('notebook');
+    this.calendarActive = false;
+    this.currentView = 'notebook';
 
     document.getElementById('currentDate').textContent = '记事本';
 
@@ -784,20 +865,43 @@ const Calendar = {
   },
 
   renderKnowledgeView() {
-    document.getElementById('dayView').classList.add('hidden');
-    document.getElementById('weekView').classList.add('hidden');
-    document.getElementById('monthView').classList.add('hidden');
-    document.getElementById('notebookView').classList.add('hidden');
-    document.getElementById('aiAssistantView')?.classList.add('hidden');
-    document.getElementById('knowledgeView')?.classList.remove('hidden');
+    this.hideOtherViews('knowledge');
+    this.calendarActive = false;
+    this.currentView = 'knowledge';
 
-    document.getElementById('currentDate').textContent = '知识跟随';
+    document.getElementById('currentDate').textContent = '知识';
 
     // 初始化知识跟随模块
     if (window.knowledgeFollow) {
       window.knowledgeFollow.init();
       window.knowledgeFollow.onShow();
     }
+
+    // 初始化知识萃取模块
+    if (window.knowledgeDistillation) {
+      window.knowledgeDistillation.init();
+      window.knowledgeDistillation.onShow();
+    }
+  },
+
+  renderDocumentsView() {
+    this.hideOtherViews('documents');
+    this.calendarActive = false;
+    this.currentView = 'documents';
+
+    document.getElementById('currentDate').textContent = '文档';
+
+    if (window.Documents) Documents.onShow();
+  },
+
+  showDateNavigator() {
+    const nav = document.querySelector('.date-navigator');
+    if (nav) nav.style.display = '';
+  },
+
+  hideDateNavigator() {
+    const nav = document.querySelector('.date-navigator');
+    if (nav) nav.style.display = 'none';
   }
 };
 

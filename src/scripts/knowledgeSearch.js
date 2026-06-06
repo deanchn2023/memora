@@ -1,6 +1,6 @@
 /**
  * 知识跟随 - 本地知识搜索模块
- * 同时搜索记忆系统（MemoryStore）和笔记系统（Notebook）
+ * 同时搜索记忆系统（MemoryStore）、笔记系统（Notebook）、知识图谱（Atoms+Clusters）、知识文章（Articles）
  */
 
 class KnowledgeSearch {
@@ -69,7 +69,92 @@ class KnowledgeSearch {
       console.error('[KnowledgeSearch] Notebook search error:', e);
     }
 
-    // 3. 按相关度排序，取 Top N
+    try {
+      // 3. 搜索知识图谱（原子 + 簇），低优先级
+      const atomResult = await window.electronAPI.knowledgeGetAtoms({});
+      if (atomResult.atoms) {
+        atomResult.atoms.forEach(a => {
+          const score = this.calculateRelevance(query, a.content);
+          if (score > 0) {
+            results.push({
+              type: 'knowledge_atom',
+              id: a.id,
+              title: this.extractTitle(a.content),
+              content: a.content,
+              category: a.domain,
+              atomType: a.type,
+              clusterId: a.cluster_id,
+              createdAt: a.created_at,
+              // 低优先级：降低分数使图谱结果排在记忆和笔记之后
+              score: score * 0.8,
+              source: 'knowledge_graph'
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[KnowledgeSearch] Knowledge atoms search error:', e);
+    }
+
+    try {
+      // 4. 搜索知识图谱中的簇名称
+      const clusterResult = await window.electronAPI.knowledgeGetClusters({});
+      if (clusterResult.clusters) {
+        clusterResult.clusters.forEach(c => {
+          const score = this.calculateRelevance(query, c.name + ' ' + (c.domain || ''));
+          if (score > 0) {
+            results.push({
+              type: 'knowledge_cluster',
+              id: c.id,
+              title: c.name,
+              content: `知识簇: ${c.name}（${c.domain || '未分类'}），包含 ${c.atom_ids?.length || 0} 个知识原子`,
+              category: c.domain,
+              atomCount: c.atom_ids?.length || 0,
+              createdAt: c.created_at,
+              // 低优先级
+              score: score * 0.7,
+              source: 'knowledge_graph'
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[KnowledgeSearch] Knowledge clusters search error:', e);
+    }
+
+    try {
+      // 5. 搜索知识文章，低优先级
+      const articleResult = await window.electronAPI.knowledgeGetArticles({});
+      if (articleResult.articles) {
+        for (const a of articleResult.articles) {
+          // 文章标题和标签搜索
+          let score = this.calculateRelevance(query, a.title + ' ' + (a.tags || []).join(' '));
+          // 如果有摘要也搜索
+          if (a.summary) {
+            score = Math.max(score, this.calculateRelevance(query, a.summary) * 0.9);
+          }
+          if (score > 0) {
+            results.push({
+              type: 'knowledge_article',
+              id: a.id,
+              title: a.title,
+              content: a.summary || `知识文章: ${a.title}`,
+              category: a.tags?.[0] || '知识文章',
+              articleTags: a.tags,
+              clusterId: a.cluster_id,
+              createdAt: a.created_at,
+              // 低优先级
+              score: score * 0.75,
+              source: 'knowledge_article'
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[KnowledgeSearch] Knowledge articles search error:', e);
+    }
+
+    // 按相关度排序，取 Top N
     return results
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
@@ -135,6 +220,8 @@ class KnowledgeSearch {
     const labels = {
       'local_memory': '记忆',
       'local_notebook': '笔记',
+      'knowledge_graph': '知识图谱',
+      'knowledge_article': '知识文章',
       'adp_recommend': 'ADP推荐',
       'adp_search': 'ADP搜索'
     };
@@ -148,6 +235,8 @@ class KnowledgeSearch {
     const icons = {
       'local_memory': '📚',
       'local_notebook': '📝',
+      'knowledge_graph': '🧬',
+      'knowledge_article': '📖',
       'adp_recommend': '🔵',
       'adp_search': '🤖'
     };

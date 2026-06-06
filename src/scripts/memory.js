@@ -54,10 +54,8 @@ const BUSINESS_KEYWORDS = {
   personal: ['我', '我的', '个人', '自己', '习惯', '偏好']
 };
 
-// 记忆存储路径：打包后必须使用 userData 目录（ASAR 内只读）
-const MEMORY_PATH = app.isPackaged
-  ? path.join(app.getPath('userData'), 'memory')
-  : path.join(__dirname, 'memory');
+// 记忆存储路径：始终使用 userData 目录（避免用户数据写入源码目录被打包进 ASAR）
+const MEMORY_PATH = path.join(app.getPath('userData'), 'memory');
 
 class MemoryStore {
   constructor() {
