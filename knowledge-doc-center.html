@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>产品架构师知识文档中心</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+<style>
+  :root {
+    --bg-page: #f5f6fa;
+    --bg-card: #ffffff;
+    --bg-sidebar: #ffffff;
+    --bg-hover: #f0f4ff;
+    --bg-active: #e8eeff;
+    --primary: #3b5bdb;
+    --primary-light: #edf2ff;
+    --primary-dark: #2f4ac0;
+    --text-main: #1a1b2e;
+    --text-secondary: #5a5c7a;
+    --text-muted: #8b8ea3;
+    --border: #e2e4ef;
+    --border-light: #eef0f7;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-main);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .logo {
+    width: 40px; height: 40px;
+    background: var(--primary);
+    border-radius: var(--radius-sm);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 18px;
+  }
+  .header-title {
+    font-size: 18px; font-weight: 600; color: var(--text-main);
+  }
+  .header-title span {
+    font-size: 13px; font-weight: 400; color: var(--text-muted);
+    margin-left: 8px;
+  }
+  .header-right {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .search-box {
+    position: relative;
+    width: 360px;
+  }
+  .search-box input {
+    width: 100%;
+    padding: 10px 14px 10px 40px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    background: var(--bg-page);
+    outline: none;
+    transition: all 0.2s;
+  }
+  .search-box input:focus {
+    border-color: var(--primary);
+    background: var(--bg-card);
+    box-shadow: 0 0 0 3px var(--primary-light);
+  }
+  .search-box i {
+    position: absolute;
+    left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .view-toggle {
+    display: flex;
+    background: var(--bg-page);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    border: 1px solid var(--border);
+  }
+  .view-toggle button {
+    background: none; border: none;
+    padding: 7px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .view-toggle button.active {
+    background: var(--bg-card);
+    color: var(--primary);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Layout */
+  .main {
+    display: flex;
+    flex: 1;
+    max-width: 1440px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 24px 32px;
+    gap: 24px;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: var(--bg-sidebar);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    padding: 20px 0;
+    height: fit-content;
+    position: sticky;
+    top: 88px;
+  }
+  .sidebar-title {
+    font-size: 12px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 0 20px 12px;
+  }
+  .cat-group {
+    margin-bottom: 4px;
+  }
+  .cat-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 14px; font-weight: 500;
+    color: var(--text-main);
+    transition: background 0.15s;
+    user-select: none;
+  }
+  .cat-header:hover { background: var(--bg-hover); }
+  .cat-header.active { background: var(--bg-active); color: var(--primary); }
+  .cat-header.active .cat-icon { color: var(--primary); }
+  .cat-header .cat-left {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .cat-icon {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: var(--bg-page);
+  }
+  .cat-count {
+    font-size: 12px; color: var(--text-muted);
+    background: var(--bg-page);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 500;
+  }
+  .cat-children {
+    display: none;
+    padding: 4px 0;
+  }
+  .cat-children.open { display: block; }
+  .cat-child {
+    padding: 8px 20px 8px 58px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .cat-child:hover { color: var(--primary); background: var(--bg-hover); }
+  .cat-child.active { color: var(--primary); background: var(--bg-active); font-weight: 500; }
+  .cat-child .child-count {
+    font-size: 11px; color: var(--text-muted);
+  }
+
+  /* Content area */
+  .content {
+    flex: 1;
+    min-width: 0;
+  }
+  .content-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .content-title {
+    font-size: 20px; font-weight: 600;
+  }
+  .content-title .count-badge {
+    font-size: 13px; font-weight: 400;
+    color: var(--text-muted);
+    margin-left: 8px;
+  }
+  .sort-dropdown {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* Grid view */
+  .doc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .doc-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    transition: all 0.2s;
+    cursor: pointer;
+    position: relative;
+  }
+  .doc-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+    transform: translateY(-2px);
+  }
+  .doc-card-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .doc-type-icon {
+    width: 40px; height: 40px;
+    border-radius: var(--radius-sm);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .doc-type-icon.pdf { background: #ffeaea; color: #e24b4a; }
+  .doc-type-icon.word { background: #e6f1fb; color: #378add; }
+  .doc-type-icon.ppt { background: #faeeda; color: #ba7517; }
+  .doc-type-icon.excel { background: #eaf3de; color: #639922; }
+  .doc-type-icon.link { background: #e1f5ee; color: #1d9e75; }
+  .doc-actions {
+    display: flex; gap: 6px;
+  }
+  .doc-actions button {
+    width: 32px; height: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .doc-actions button:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light);
+  }
+  .doc-title {
+    font-size: 15px; font-weight: 600;
+    margin-bottom: 6px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .doc-desc {
+    font-size: 13px; color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 14px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .doc-meta {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 12px; color: var(--text-muted);
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+  }
+  .doc-meta span {
+    display: flex; align-items: center; gap: 4px;
+  }
+  .doc-tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px; font-weight: 500;
+    margin-bottom: 10px;
+  }
+  .tag-arch { background: #e6f1fb; color: #185fa5; }
+  .tag-tech { background: #eaf3de; color: #3b6d11; }
+  .tag-guide { background: #faeeda; color: #854f0b; }
+  .tag-api { background: #fbeaf0; color: #993556; }
+  .tag-ref { background: #f1efe8; color: #5f5e5a; }
+
+  /* List view */
+  .doc-list {
+    display: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+  .doc-list.active { display: block; }
+  .list-row {
+    display: grid;
+    grid-template-columns: 40px 1fr 140px 120px 100px 140px;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-light);
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+  .list-row:hover { background: var(--bg-hover); }
+  .list-row:last-child { border-bottom: none; }
+  .list-header {
+    background: var(--bg-page);
+    font-size: 12px; font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    cursor: default;
+  }
+  .list-header:hover { background: var(--bg-page); }
+  .list-title {
+    font-size: 14px; font-weight: 500;
+  }
+  .list-desc {
+    font-size: 12px; color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .list-type {
+    font-size: 12px; font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 4px;
+    display: inline-block;
+    text-align: center;
+  }
+  .list-actions {
+    display: flex; gap: 6px;
+  }
+  .list-actions button {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 4px;
+    transition: all 0.2s;
+  }
+  .list-actions button:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light);
+  }
+  .list-actions button.primary {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .list-actions button.primary:hover {
+    background: var(--primary-dark);
+  }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-muted);
+  }
+  .empty-state i {
+    font-size: 48px;
+    margin-bottom: 16px;
+    color: var(--border);
+  }
+  .empty-state h3 {
+    font-size: 16px; font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .empty-state p {
+    font-size: 14px;
+  }
+
+  /* Breadcrumb */
+  .breadcrumb {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .breadcrumb a {
+    color: var(--primary);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .breadcrumb a:hover { text-decoration: underline; }
+  .breadcrumb i { font-size: 10px; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 30px; right: 30px;
+    background: var(--text-main);
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    box-shadow: var(--shadow-md);
+    display: flex; align-items: center; gap: 10px;
+    transform: translateY(80px);
+    opacity: 0;
+    transition: all 0.3s;
+    z-index: 200;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast i { color: #5dcaa5; }
+
+  /* Responsive */
+  @media (max-width: 1024px) {
+    .sidebar { display: none; }
+    .search-box { width: 240px; }
+  }
+  @media (max-width: 768px) {
+    .header { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
+    .main { padding: 16px; }
+    .doc-grid { grid-template-columns: 1fr; }
+    .search-box { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-left">
+    <div class="logo"><i class="fas fa-layer-group"></i></div>
+    <div class="header-title">知识文档中心 <span>产品架构师专用</span></div>
+  </div>
+  <div class="header-right">
+    <div class="search-box">
+      <i class="fas fa-search"></i>
+      <input type="text" id="searchInput" placeholder="搜索文档名称、关键词...">
+    </div>
+    <div class="view-toggle">
+      <button class="active" onclick="setView('grid')" title="网格视图"><i class="fas fa-th-large"></i></button>
+      <button onclick="setView('list')" title="列表视图"><i class="fas fa-list"></i></button>
+    </div>
+  </div>
+</header>
+
+<!-- Main -->
+<div class="main">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-title">文档分类</div>
+    <div id="categoryTree"></div>
+  </aside>
+
+  <!-- Content -->
+  <section class="content">
+    <div class="breadcrumb" id="breadcrumb">
+      <a onclick="filterCategory('all')">全部文档</a>
+    </div>
+    <div class="content-header">
+      <div class="content-title">
+        <span id="currentCategory">全部文档</span>
+        <span class="count-badge" id="docCount">共 24 份</span>
+      </div>
+      <select class="sort-dropdown" id="sortSelect" onchange="sortDocs()">
+        <option value="newest">最新更新</option>
+        <option value="name">名称排序</option>
+        <option value="type">文件类型</option>
+      </select>
+    </div>
+
+    <!-- Grid View -->
+    <div class="doc-grid" id="docGrid"></div>
+
+    <!-- List View -->
+    <div class="doc-list" id="docList">
+      <div class="list-row list-header">
+        <div></div>
+        <div>文档名称</div>
+        <div>分类</div>
+        <div>类型</div>
+        <div>更新日期</div>
+        <div>操作</div>
+      </div>
+      <div id="docListBody"></div>
+    </div>
+
+    <div class="empty-state" id="emptyState" style="display:none;">
+      <i class="fas fa-file-circle-xmark"></i>
+      <h3>未找到相关文档</h3>
+      <p>请尝试更换关键词或选择其他分类</p>
+    </div>
+  </section>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"><i class="fas fa-check-circle"></i><span id="toastMsg">下载成功</span></div>
+
+<script>
+// ===== 文档数据 =====
+const categories = [
+  {
+    id: 'overview', name: '产品概述', icon: 'fa-book-open', count: 3, color: '#3b5bdb',
+    children: [
+      { id: 'product-intro', name: '产品介绍', count: 1 },
+      { id: 'vision', name: '愿景与路线图', count: 1 },
+      { id: 'glossary', name: '术语表', count: 1 }
+    ]
+  },
+  {
+    id: 'architecture', name: '架构设计', icon: 'fa-sitemap', count: 5, color: '#1d9e75',
+    children: [
+      { id: 'system-arch', name: '系统架构', count: 2 },
+      { id: 'data-arch', name: '数据架构', count: 1 },
+      { id: 'deploy-arch', name: '部署架构', count: 1 },
+      { id: 'security-arch', name: '安全架构', count: 1 }
+    ]
+  },
+  {
+    id: 'standards', name: '技术规范', icon: 'fa-ruler-combined', count: 4, color: '#ba7517',
+    children: [
+      { id: 'coding-std', name: '编码规范', count: 1 },
+      { id: 'api-std', name: '接口规范', count: 1 },
+      { id: 'naming-std', name: '命名规范', count: 1 },
+      { id: 'review-std', name: '评审规范', count: 1 }
+    ]
+  },
+  {
+    id: 'api', name: 'API 文档', icon: 'fa-plug', count: 4, color: '#d4537e',
+    children: [
+      { id: 'rest-api', name: 'REST API', count: 2 },
+      { id: 'graphql', name: 'GraphQL', count: 1 },
+      { id: 'webhook', name: 'Webhook', count: 1 }
+    ]
+  },
+  {
+    id: 'best-practices', name: '最佳实践', icon: 'fa-star', count: 3, color: '#7f77dd',
+    children: [
+      { id: 'perf-opt', name: '性能优化', count: 1 },
+      { id: 'reliability', name: '高可用设计', count: 1 },
+      { id: 'monitoring', name: '监控告警', count: 1 }
+    ]
+  },
+  {
+    id: 'guides', name: '操作指南', icon: 'fa-compass', count: 3, color: '#378add',
+    children: [
+      { id: 'onboarding', name: '新人入职', count: 1 },
+      { id: 'env-setup', name: '环境搭建', count: 1 },
+      { id: 'deployment', name: '发布流程', count: 1 }
+    ]
+  },
+  {
+    id: 'troubleshoot', name: '故障排查', icon: 'fa-bug', count: 2, color: '#d85a30',
+    children: [
+      { id: 'common-issues', name: '常见问题', count: 1 },
+      { id: 'incident', name: '应急手册', count: 1 }
+    ]
+  },
+  {
+    id: 'changelog', name: '发布说明', icon: 'fa-clock-rotate-left', count: 2, color: '#5f5e5a',
+    children: [
+      { id: 'release-notes', name: '版本发布', count: 1 },
+      { id: 'migration', name: '迁移指南', count: 1 }
+    ]
+  },
+  {
+    id: 'training', name: '培训材料', icon: 'fa-graduation-cap', count: 2, color: '#534ab7',
+    children: [
+      { id: 'tech-training', name: '技术培训', count: 1 },
+      { id: 'arch-training', name: '架构培训', count: 1 }
+    ]
+  }
+];
+
+const docs = [
+  { id: 1, title: '产品总体介绍白皮书', desc: '全面介绍产品定位、核心能力、目标用户及商业价值，面向架构师和决策者的战略级文档。', type: 'pdf', category: 'overview', subcategory: 'product-intro', tag: 'arch', size: '2.4 MB', date: '2026-05-20', updated: '2026-05-28' },
+  { id: 2, title: '2026年度产品路线图', desc: '涵盖Q1-Q4的产品演进规划，包含关键里程碑、技术预研方向及资源投入计划。', type: 'ppt', category: 'overview', subcategory: 'vision', tag: 'arch', size: '8.1 MB', date: '2026-01-15', updated: '2026-06-01' },
+  { id: 3, title: '产品术语与缩略语词典', desc: '统一团队内部术语定义，包含业务术语、技术缩略语及跨团队协作用语规范。', type: 'excel', category: 'overview', subcategory: 'glossary', tag: 'ref', size: '560 KB', date: '2026-03-10', updated: '2026-05-15' },
+  { id: 4, title: '系统整体架构设计文档 v3.2', desc: '微服务架构全景图，涵盖服务拆分原则、通信机制、数据流设计及容错策略。', type: 'pdf', category: 'architecture', subcategory: 'system-arch', tag: 'arch', size: '4.2 MB', date: '2026-04-01', updated: '2026-05-25' },
+  { id: 5, title: '服务间通信协议规范', desc: 'gRPC/HTTP双协议支持方案，包含序列化标准、超时策略、重试机制及熔断配置。', type: 'word', category: 'architecture', subcategory: 'system-arch', tag: 'tech', size: '1.8 MB', date: '2026-02-20', updated: '2026-04-10' },
+  { id: 6, title: '数据架构与存储方案', desc: '分库分表策略、缓存架构、数据一致性保障及灾备方案设计。', type: 'pdf', category: 'architecture', subcategory: 'data-arch', tag: 'arch', size: '3.5 MB', date: '2026-03-05', updated: '2026-05-20' },
+  { id: 7, title: '容器化部署架构', desc: 'Kubernetes集群设计、CI/CD流水线、蓝绿发布及灰度策略。', type: 'ppt', category: 'architecture', subcategory: 'deploy-arch', tag: 'arch', size: '6.3 MB', date: '2026-04-15', updated: '2026-05-30' },
+  { id: 8, title: '零信任安全架构方案', desc: '身份认证、权限控制、数据加密、审计日志及安全合规要求。', type: 'pdf', category: 'architecture', subcategory: 'security-arch', tag: 'tech', size: '2.9 MB', date: '2026-01-20', updated: '2026-03-25' },
+  { id: 9, title: '前端编码规范 v2.0', desc: 'TypeScript/React项目规范，包含目录结构、组件设计、状态管理及代码审查清单。', type: 'word', category: 'standards', subcategory: 'coding-std', tag: 'tech', size: '1.2 MB', date: '2026-02-01', updated: '2026-05-10' },
+  { id: 10, title: 'RESTful API 设计规范', desc: 'URL设计、HTTP方法使用、状态码规范、错误处理及版本控制策略。', type: 'pdf', category: 'standards', subcategory: 'api-std', tag: 'api', size: '1.5 MB', date: '2025-11-10', updated: '2026-04-20' },
+  { id: 11, title: '资源命名规范手册', desc: '数据库表名、字段名、API端点、消息队列Topic等统一命名约定。', type: 'word', category: 'standards', subcategory: 'naming-std', tag: 'ref', size: '890 KB', date: '2026-01-05', updated: '2026-02-28' },
+  { id: 12, title: '技术方案评审 checklist', desc: '架构评审标准流程，含可用性、扩展性、安全性、可维护性四维评估模板。', type: 'excel', category: 'standards', subcategory: 'review-std', tag: 'ref', size: '320 KB', date: '2026-03-20', updated: '2026-05-05' },
+  { id: 13, title: 'REST API 接口文档大全', desc: '全量接口定义，含请求/响应示例、错误码说明及SDK接入指南。', type: 'link', category: 'api', subcategory: 'rest-api', tag: 'api', size: '-', date: '2026-05-01', updated: '2026-06-02' },
+  { id: 14, title: 'OpenAPI 3.0 规范定义', desc: 'Swagger格式API定义文件，可直接导入Postman或生成客户端代码。', type: 'excel', category: 'api', subcategory: 'rest-api', tag: 'api', size: '450 KB', date: '2026-04-20', updated: '2026-05-28' },
+  { id: 15, title: 'GraphQL Schema 文档', desc: '类型系统定义、查询示例、Mutation操作及订阅机制说明。', type: 'link', category: 'api', subcategory: 'graphql', tag: 'api', size: '-', date: '2026-03-15', updated: '2026-05-20' },
+  { id: 16, title: 'Webhook 接入指南', desc: '事件推送机制、签名验证、重试策略及示例代码。', type: 'pdf', category: 'api', subcategory: 'webhook', tag: 'api', size: '1.1 MB', date: '2026-02-15', updated: '2026-04-15' },
+  { id: 17, title: '高并发场景性能优化手册', desc: '缓存策略、数据库优化、异步处理、连接池调优及压测方法论。', type: 'pdf', category: 'best-practices', subcategory: 'perf-opt', tag: 'tech', size: '2.8 MB', date: '2026-01-25', updated: '2026-05-15' },
+  { id: 18, title: '分布式系统高可用设计', desc: '多活架构、故障转移、限流降级、容量规划及SLA定义。', type: 'ppt', category: 'best-practices', subcategory: 'reliability', tag: 'arch', size: '5.2 MB', date: '2026-04-05', updated: '2026-05-25' },
+  { id: 19, title: '全链路监控与告警方案', desc: 'Metrics/Logs/Tracing三支柱，告警规则设计、值班响应及复盘流程。', type: 'pdf', category: 'best-practices', subcategory: 'monitoring', tag: 'tech', size: '3.1 MB', date: '2026-03-01', updated: '2026-04-30' },
+  { id: 20, title: '新人快速上手指南', desc: '开发环境搭建、代码仓库权限、CI/CD流程及第一周任务清单。', type: 'pdf', category: 'guides', subcategory: 'onboarding', tag: 'guide', size: '1.6 MB', date: '2026-01-10', updated: '2026-05-01' },
+  { id: 21, title: '本地开发环境搭建手册', desc: 'Docker Compose一键启动、IDE配置、调试技巧及常见问题排查。', type: 'word', category: 'guides', subcategory: 'env-setup', tag: 'guide', size: '2.0 MB', date: '2026-02-10', updated: '2026-04-20' },
+  { id: 22, title: '生产环境发布操作手册', desc: '发布前检查清单、灰度发布流程、回滚方案及发布窗口管理。', type: 'pdf', category: 'guides', subcategory: 'deployment', tag: 'guide', size: '1.9 MB', date: '2026-03-25', updated: '2026-05-22' },
+  { id: 23, title: '线上故障排查速查手册', desc: '按症状分类的排查路径，含日志查询命令、链路追踪使用方法。', type: 'pdf', category: 'troubleshoot', subcategory: 'common-issues', tag: 'ref', size: '1.4 MB', date: '2026-02-28', updated: '2026-05-18' },
+  { id: 24, title: '重大故障应急响应预案', desc: 'P0/P1故障定义、升级路径、War Room流程及对外沟通模板。', type: 'word', category: 'troubleshoot', subcategory: 'incident', tag: 'guide', size: '1.7 MB', date: '2025-12-15', updated: '2026-04-01' },
+  { id: 25, title: 'v3.0 版本发布说明', desc: '新特性列表、 Breaking Changes、升级步骤及兼容性说明。', type: 'pdf', category: 'changelog', subcategory: 'release-notes', tag: 'ref', size: '980 KB', date: '2026-05-15', updated: '2026-05-15' },
+  { id: 26, title: 'v2.x 到 v3.x 迁移指南', desc: '数据库迁移脚本、API变更对照、配置迁移及回滚方案。', type: 'word', category: 'changelog', subcategory: 'migration', tag: 'guide', size: '2.2 MB', date: '2026-04-25', updated: '2026-05-10' },
+  { id: 27, title: '微服务技术培训PPT', desc: '面向团队的服务拆分、通信模式、治理方案培训材料。', type: 'ppt', category: 'training', subcategory: 'tech-training', tag: 'guide', size: '9.5 MB', date: '2026-03-20', updated: '2026-04-15' },
+  { id: 28, title: '架构师能力模型与成长路径', desc: '技术深度、业务理解、团队协作三维能力模型及晋升标准。', type: 'pdf', category: 'training', subcategory: 'arch-training', tag: 'arch', size: '2.1 MB', date: '2026-01-30', updated: '2026-03-20' },
+];
+
+// ===== 状态 =====
+let currentView = 'grid';
+let currentFilter = 'all';
+let currentSubFilter = null;
+let searchQuery = '';
+let favorites = new Set();
+
+// ===== 初始化 =====
+function init() {
+  renderCategories();
+  renderDocs();
+  document.getElementById('searchInput').addEventListener('input', e => {
+    searchQuery = e.target.value.toLowerCase();
+    renderDocs();
+  });
+}
+
+// ===== 渲染分类树 =====
+function renderCategories() {
+  const tree = document.getElementById('categoryTree');
+  let html = `
+    <div class="cat-group">
+      <div class="cat-header ${currentFilter === 'all' ? 'active' : ''}" onclick="filterCategory('all')">
+        <div class="cat-left">
+          <div class="cat-icon" style="background:#edf2ff;color:#3b5bdb"><i class="fas fa-th-large"></i></div>
+          <span>全部文档</span>
+        </div>
+        <span class="cat-count">${docs.length}</span>
+      </div>
+    </div>
+  `;
+  categories.forEach(cat => {
+    const isActive = currentFilter === cat.id;
+    const isOpen = isActive || currentFilter === cat.id;
+    html += `
+      <div class="cat-group">
+        <div class="cat-header ${isActive ? 'active' : ''}" onclick="toggleCategory('${cat.id}')">
+          <div class="cat-left">
+            <div class="cat-icon" style="background:${cat.color}15;color:${cat.color}"><i class="fas ${cat.icon}"></i></div>
+            <span>${cat.name}</span>
+          </div>
+          <span class="cat-count">${cat.count}</span>
+        </div>
+        <div class="cat-children ${isOpen ? 'open' : ''}" id="children-${cat.id}">
+          ${cat.children.map(child => `
+            <div class="cat-child ${currentSubFilter === child.id ? 'active' : ''}" onclick="filterSubcategory('${cat.id}', '${child.id}', event)">
+              ${child.name}
+              <span class="child-count">${child.count}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  });
+  tree.innerHTML = html;
+}
+
+function toggleCategory(catId) {
+  const el = document.getElementById('children-' + catId);
+  el.classList.toggle('open');
+}
+
+// ===== 过滤逻辑 =====
+function filterCategory(catId) {
+  currentFilter = catId;
+  currentSubFilter = null;
+  renderCategories();
+  renderDocs();
+  updateBreadcrumb();
+}
+
+function filterSubcategory(catId, subId, event) {
+  event.stopPropagation();
+  currentFilter = catId;
+  currentSubFilter = subId;
+  renderCategories();
+  renderDocs();
+  updateBreadcrumb();
+}
+
+function getFilteredDocs() {
+  return docs.filter(doc => {
+    const matchCat = currentFilter === 'all' || doc.category === currentFilter;
+    const matchSub = !currentSubFilter || doc.subcategory === currentSubFilter;
+    const matchSearch = !searchQuery ||
+      doc.title.toLowerCase().includes(searchQuery) ||
+      doc.desc.toLowerCase().includes(searchQuery);
+    return matchCat && matchSub && matchSearch;
+  });
+}
+
+// ===== 渲染文档 =====
+function renderDocs() {
+  const filtered = getFilteredDocs();
+  document.getElementById('docCount').textContent = `共 ${filtered.length} 份`;
+
+  const grid = document.getElementById('docGrid');
+  const listBody = document.getElementById('docListBody');
+  const empty = document.getElementById('emptyState');
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '';
+    listBody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Grid
+  grid.innerHTML = filtered.map(doc => {
+    const typeInfo = getTypeInfo(doc.type);
+    const catName = getCategoryName(doc.category);
+    return `
+      <div class="doc-card" onclick="previewDoc(${doc.id})">
+        <div class="doc-card-header">
+          <div class="doc-type-icon ${doc.type}"><i class="fas ${typeInfo.icon}"></i></div>
+          <div class="doc-actions" onclick="event.stopPropagation()">
+            <button onclick="toggleFav(${doc.id})" title="收藏">
+              <i class="${favorites.has(doc.id) ? 'fas' : 'far'} fa-star" style="${favorites.has(doc.id) ? 'color:#ef9f27' : ''}"></i>
+            </button>
+            <button onclick="downloadDoc(${doc.id})" title="下载"><i class="fas fa-download"></i></button>
+          </div>
+        </div>
+        <div class="doc-tag tag-${doc.tag}">${getTagLabel(doc.tag)}</div>
+        <div class="doc-title">${doc.title}</div>
+        <div class="doc-desc">${doc.desc}</div>
+        <div class="doc-meta">
+          <span><i class="fas fa-folder" style="font-size:10px"></i> ${catName}</span>
+          <span><i class="fas fa-file" style="font-size:10px"></i> ${typeInfo.label}</span>
+          <span><i class="fas fa-calendar" style="font-size:10px"></i> ${doc.updated}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // List
+  listBody.innerHTML = filtered.map(doc => {
+    const typeInfo = getTypeInfo(doc.type);
+    const catName = getCategoryName(doc.category);
+    return `
+      <div class="list-row" onclick="previewDoc(${doc.id})">
+        <div class="doc-type-icon ${doc.type}" style="width:32px;height:32px;font-size:14px"><i class="fas ${typeInfo.icon}"></i></div>
+        <div>
+          <div class="list-title">${doc.title}</div>
+          <div class="list-desc">${doc.desc}</div>
+        </div>
+        <div style="font-size:13px;color:var(--text-secondary)">${catName}</div>
+        <div><span class="list-type" style="background:${typeInfo.bg};color:${typeInfo.color}">${typeInfo.label}</span></div>
+        <div style="font-size:13px;color:var(--text-muted)">${doc.updated}</div>
+        <div class="list-actions" onclick="event.stopPropagation()">
+          <button onclick="toggleFav(${doc.id})"><i class="${favorites.has(doc.id) ? 'fas' : 'far'} fa-star"></i></button>
+          <button class="primary" onclick="downloadDoc(${doc.id})"><i class="fas fa-download"></i> 下载</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ===== 辅助函数 =====
+function getTypeInfo(type) {
+  const map = {
+    pdf: { icon: 'fa-file-pdf', label: 'PDF', bg: '#ffeaea', color: '#e24b4a' },
+    word: { icon: 'fa-file-word', label: 'Word', bg: '#e6f1fb', color: '#378add' },
+    ppt: { icon: 'fa-file-powerpoint', label: 'PPT', bg: '#faeeda', color: '#ba7517' },
+    excel: { icon: 'fa-file-excel', label: 'Excel', bg: '#eaf3de', color: '#639922' },
+    link: { icon: 'fa-link', label: '在线', bg: '#e1f5ee', color: '#1d9e75' }
+  };
+  return map[type] || map.pdf;
+}
+
+function getTagLabel(tag) {
+  const map = { arch: '架构', tech: '技术', guide: '指南', api: 'API', ref: '参考' };
+  return map[tag] || tag;
+}
+
+function getCategoryName(catId) {
+  if (catId === 'all') return '全部';
+  const cat = categories.find(c => c.id === catId);
+  return cat ? cat.name : catId;
+}
+
+function getCurrentCategoryName() {
+  if (currentFilter === 'all') return '全部文档';
+  const cat = categories.find(c => c.id === currentFilter);
+  if (!cat) return '全部文档';
+  if (currentSubFilter) {
+    const sub = cat.children.find(c => c.id === currentSubFilter);
+    return sub ? `${cat.name} / ${sub.name}` : cat.name;
+  }
+  return cat.name;
+}
+
+function updateBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  const title = document.getElementById('currentCategory');
+  title.textContent = getCurrentCategoryName();
+  if (currentFilter === 'all') {
+    bc.innerHTML = `<a onclick="filterCategory('all')">全部文档</a>`;
+  } else {
+    const cat = categories.find(c => c.id === currentFilter);
+    if (currentSubFilter) {
+      const sub = cat.children.find(c => c.id === currentSubFilter);
+      bc.innerHTML = `<a onclick="filterCategory('all')">全部文档</a> <i class="fas fa-chevron-right"></i> <a onclick="filterCategory('${cat.id}')">${cat.name}</a> <i class="fas fa-chevron-right"></i> <span>${sub.name}</span>`;
+    } else {
+      bc.innerHTML = `<a onclick="filterCategory('all')">全部文档</a> <i class="fas fa-chevron-right"></i> <span>${cat.name}</span>`;
+    }
+  }
+}
+
+// ===== 视图切换 =====
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll('.view-toggle button').forEach(b => b.classList.toggle('active', false));
+  event.currentTarget.classList.add('active');
+  document.getElementById('docGrid').style.display = view === 'grid' ? 'grid' : 'none';
+  document.getElementById('docList').classList.toggle('active', view === 'list');
+}
+
+// ===== 排序 =====
+function sortDocs() {
+  const sort = document.getElementById('sortSelect').value;
+  if (sort === 'newest') {
+    docs.sort((a, b) => new Date(b.updated) - new Date(a.updated));
+  } else if (sort === 'name') {
+    docs.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+  } else if (sort === 'type') {
+    docs.sort((a, b) => a.type.localeCompare(b.type));
+  }
+  renderDocs();
+}
+
+// ===== 操作 =====
+function toggleFav(id) {
+  if (favorites.has(id)) favorites.delete(id);
+  else favorites.add(id);
+  renderDocs();
+}
+
+function downloadDoc(id) {
+  const doc = docs.find(d => d.id === id);
+  showToast(`「${doc.title}」开始下载...`);
+}
+
+function previewDoc(id) {
+  const doc = docs.find(d => d.id === id);
+  showToast(`正在打开「${doc.title}」...`);
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+// ===== 启动 =====
+init();
+</script>
+</body>
+</html>

@@ -7,6 +7,7 @@
   flex-direction: column;
   background: var(--bg-secondary);
   overflow: hidden;
+  position: relative; /* 确保伪元素不溢出 */
 }
 
 /* 搜索栏 */

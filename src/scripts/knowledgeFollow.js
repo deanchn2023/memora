@@ -53,7 +53,8 @@ class KnowledgeFollow {
     const searchInput = document.getElementById('knowledgeSearchInput');
     if (searchInput) {
       searchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') this.handleSearch();
+        // 中文输入法组合中不触发搜索（按回车确认输入法时 isComposing 为 true）
+        if (e.key === 'Enter' && !e.isComposing) this.handleSearch();
       });
     }
 
@@ -383,12 +384,51 @@ class KnowledgeFollow {
   }
 
   downloadPublicResource(id, type) {
+    // 查找该条目，判断是否在线文档
+    const item = this.publicResults.find(r => r.id === id && r.type === type);
+    const isOnline = this._isOnlinePublicResource(item, type);
+
+    if (isOnline && item) {
+      let openUrl = '';
+      if (type === 'learning' && item.htmlUrl) {
+        openUrl = item.htmlUrl.startsWith('http') ? item.htmlUrl : `${TOOLKIT_BASE_URL}${item.htmlUrl}`;
+      } else if (item.accessUrl) {
+        openUrl = item.accessUrl.startsWith('http') ? item.accessUrl : `${TOOLKIT_BASE_URL}${item.accessUrl}`;
+      } else if (type === 'document' && item.fileType) {
+        const ext = item.fileType.toLowerCase().replace('.', '');
+        if (['html', 'htm', 'md'].includes(ext)) {
+          const downloadUrl = `${TOOLKIT_BASE_URL}/api/public/download/${type}/${id}`;
+          openUrl = downloadUrl;
+        }
+      }
+      if (openUrl) {
+        if (window.electronAPI && window.electronAPI.openExternal) {
+          window.electronAPI.openExternal(openUrl);
+        } else {
+          window.open(openUrl, '_blank');
+        }
+        return;
+      }
+    }
+
+    // 非在线文档，走下载
     const url = `${TOOLKIT_BASE_URL}/api/public/download/${type}/${id}`;
     if (window.electronAPI && window.electronAPI.openExternal) {
       window.electronAPI.openExternal(url);
     } else {
       window.open(url, '_blank');
     }
+  }
+
+  _isOnlinePublicResource(item, type) {
+    if (!item) return false;
+    if (type === 'learning' && item.htmlUrl) return true;
+    if (type === 'document' && item.fileType) {
+      const ext = item.fileType.toLowerCase().replace('.', '');
+      if (['html', 'htm', 'md', 'markdown'].includes(ext)) return true;
+    }
+    if (type === 'demo' && item.accessUrl) return true;
+    return false;
   }
 
   // ============ 本地知识搜索 ============

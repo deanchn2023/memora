@@ -186,6 +186,8 @@ body {
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 0.5px solid var(--border-light);
   gap: 16px;
+  position: relative;
+  z-index: 100;
 }
 
 /* 视图切换 - Apple Segmented Control */
@@ -333,6 +335,249 @@ body {
   box-shadow: var(--shadow-xs);
 }
 
+/* 头部登录按钮 */
+.login-btn {
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.2s var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-btn:hover {
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.08), rgba(88, 86, 214, 0.08));
+  box-shadow: var(--shadow-xs);
+}
+
+/* 通知铃铛 */
+.notification-bell-btn {
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+}
+
+.notification-bell-btn:hover {
+  background: rgba(255, 159, 0, 0.08);
+  box-shadow: var(--shadow-xs);
+}
+
+.notification-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  background: #FF3B30;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+/* 通知面板 */
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 24px;
+  width: 360px;
+  max-height: 480px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  z-index: 9999;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.notification-panel.hidden {
+  display: none;
+}
+
+.notification-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.notification-mark-all {
+  background: none;
+  border: none;
+  color: #007AFF;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.notification-mark-all:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.notification-panel-body {
+  overflow-y: auto;
+  max-height: 420px;
+  padding: 4px 0;
+}
+
+.notification-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-tertiary, #aeaeb2);
+  font-size: 14px;
+}
+
+.notification-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.notification-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.notification-item.unread {
+  background: rgba(0, 122, 255, 0.04);
+}
+
+.notification-item.unread .notification-item-title {
+  font-weight: 600;
+}
+
+.notification-item-type {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.04));
+}
+
+.notification-item-type.warning { background: rgba(255, 149, 0, 0.1); }
+.notification-item-type.error { background: rgba(255, 59, 48, 0.1); }
+.notification-item-type.success { background: rgba(52, 199, 89, 0.1); }
+.notification-item-type.announcement { background: rgba(175, 82, 222, 0.1); }
+
+.notification-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-item-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.notification-item-body {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  line-height: 1.4;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notification-item-time {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  margin-top: 4px;
+}
+
+/* 头部用户徽章 */
+.user-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 6px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  max-width: 160px;
+}
+.user-badge:hover {
+  background: var(--bg-tertiary, #e8e8ed);
+}
+.user-badge-avatar {
+  font-size: 16px;
+}
+.user-badge-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary, #1d1d1f);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 环境选择下拉框 */
+.env-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #1d1d1f);
+  cursor: pointer;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%2386868b'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+.env-select:focus {
+  outline: none;
+  border-color: var(--primary-color, #007AFF);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+.env-hint {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  margin-top: 4px;
+}
+
 /* ============= 内容区 ============= */
 .content {
   display: flex;
@@ -468,15 +713,6 @@ body {
   padding: 20px;
 }
 
-.task-list-section h3 {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  margin-bottom: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-}
-
 .task-list {
   flex: 1;
   overflow-y: auto;
@@ -536,6 +772,61 @@ body {
 .month-view {
   height: 100%;
   overflow: auto;
+}
+
+/* 日历视图容器 */
+.calendar-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.calendar-view.hidden {
+  display: none;
+}
+
+/* 日历子视图切换 */
+.calendar-sub-tabs {
+  display: flex;
+  justify-content: center;
+  padding: 12px 24px 0;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.calendar-sub-tabs-inner {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  padding: 3px;
+  border-radius: 10px;
+}
+
+.calendar-sub-tab {
+  padding: 6px 18px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.25s var(--transition);
+  letter-spacing: 0.5px;
+}
+
+.calendar-sub-tab:hover {
+  color: var(--text-primary);
+}
+
+.calendar-sub-tab.active {
+  background: var(--bg-primary);
+  color: var(--primary-color);
+  box-shadow: var(--shadow-xs), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  font-weight: 600;
 }
 
 .hidden {
@@ -1503,12 +1794,23 @@ body {
   border-radius: var(--radius-md);
   border: 1px solid rgba(79, 142, 247, 0.08);
   transition: all 0.25s var(--transition);
+  cursor: pointer;
 }
 
 .feature-card:hover {
   transform: translateY(-3px);
   box-shadow: 0 6px 20px rgba(79, 142, 247, 0.12);
   border-color: rgba(79, 142, 247, 0.2);
+}
+
+.feature-card.active {
+  background: linear-gradient(135deg, rgba(79, 142, 247, 0.10), rgba(139, 92, 246, 0.10));
+  border-color: rgba(79, 142, 247, 0.35);
+  box-shadow: 0 4px 16px rgba(79, 142, 247, 0.15);
+}
+
+.feature-card.active .feature-icon {
+  transform: scale(1.1);
 }
 
 .feature-icon {
@@ -1613,11 +1915,6 @@ body {
   margin-right: 14px;
 }
 
-.message.user .message-avatar {
-  background: linear-gradient(135deg, #34D399, #059669);
-  margin-left: 14px;
-}
-
 .message-content {
   max-width: 70%;
   padding: 14px 18px;
@@ -1656,9 +1953,50 @@ body {
   margin-bottom: 4px;
 }
 
+/* 消息时间戳 */
+.message-time {
+  display: block;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 6px;
+  text-align: right;
+}
+
+.message.assistant .message-time,
+.message-time.assistant-time {
+  color: var(--text-tertiary);
+  text-align: left;
+}
+
+/* 用户头像样式 */
+.message.user .message-avatar {
+  background: linear-gradient(135deg, #A5D6A7, #66BB6A);
+  margin-left: 14px;
+  overflow: hidden;
+  padding: 0;
+}
+
+.message.user .message-avatar svg {
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+}
+
+.login-btn svg {
+  border-radius: 8px;
+}
+
+.user-badge-avatar svg {
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
 /* 复制按钮 */
 .message.assistant .message-content {
   position: relative;
+  padding-bottom: 40px; /* 为复制按钮留空间 */
 }
 
 .copy-btn {
@@ -1668,6 +2006,16 @@ body {
   width: 30px;
   height: 30px;
   border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: all 0.2s;
+}
   background: var(--bg-secondary);
   border-radius: 8px;
   color: var(--text-tertiary);
@@ -1694,6 +2042,369 @@ body {
 .copy-btn.copied {
   color: var(--success-color);
   opacity: 1 !important;
+}
+
+/* ADP 配置来源标识 */
+.adp-config-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 0.5px solid var(--border-light);
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+/* ADP 回复文本 */
+.adp-response-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+}
+
+/* ADP 流式回复（光标闪烁） */
+.adp-response-streaming::after {
+  content: '▊';
+  display: inline;
+  color: var(--primary-color);
+  animation: cursorBlink 0.8s steps(2) infinite;
+  margin-left: 1px;
+  font-size: 0.85em;
+}
+
+/* ===== ADP 进度步骤 ===== */
+.adp-progress {
+  padding: 2px 0;
+}
+
+.adp-progress.collapsed .adp-progress-header {
+  opacity: 0.65;
+  transition: opacity 0.2s;
+}
+
+.adp-progress.collapsed .adp-progress-header:hover {
+  opacity: 1;
+}
+
+.adp-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.adp-progress-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 122, 255, 0.2);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.adp-progress-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.adp-progress-timer {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.adp-progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.adp-progress-step {
+  display: flex;
+  flex-wrap: wrap;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  line-height: 1.4;
+  position: relative;
+}
+
+.adp-progress-step.active {
+  color: var(--primary-color);
+  font-weight: 500;
+}
+
+.adp-progress-step.active .adp-step-icon {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.adp-progress-step.done {
+  color: var(--text-tertiary);
+}
+
+.adp-progress-step.done .adp-step-icon {
+  filter: grayscale(0.3);
+}
+
+.adp-step-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  width: 100%;
+  cursor: default;
+  transition: background 0.2s;
+}
+
+.adp-progress-step.has-detail .adp-step-row {
+  cursor: pointer;
+}
+
+.adp-progress-step.has-detail .adp-step-row:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.adp-step-icon { font-size: 0.75rem; flex-shrink: 0; }
+.adp-step-text { flex: 1; min-width: 0; }
+.adp-step-status { flex-shrink: 0; font-size: 0.625rem; color: var(--text-tertiary); }
+
+.adp-step-loading {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(0, 122, 255, 0.2);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+
+.adp-progress-step.done .adp-step-status {
+  color: #34C759;
+  font-weight: 600;
+}
+
+.adp-step-expand {
+  flex-shrink: 0;
+  font-size: 0.5rem;
+  color: var(--text-tertiary);
+  transition: transform 0.2s;
+}
+
+.adp-progress-step.detail-expanded .adp-step-expand {
+  transform: rotate(90deg);
+}
+
+/* 步骤详情（可展开） */
+.adp-step-detail {
+  width: 100%;
+  margin: 0 10px 4px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: none;
+}
+
+.adp-progress-step.detail-expanded .adp-step-detail {
+  display: block;
+  animation: detailSlideIn 0.2s ease-out;
+}
+
+@keyframes detailSlideIn {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 200px; }
+}
+
+.adp-step-detail-json,
+.adp-step-detail-text {
+  max-height: 160px;
+  overflow-y: auto;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.025);
+  border: 0.5px solid var(--border-light);
+}
+
+.adp-step-detail-json::-webkit-scrollbar,
+.adp-step-detail-text::-webkit-scrollbar {
+  width: 3px;
+}
+
+.adp-step-detail-json::-webkit-scrollbar-thumb,
+.adp-step-detail-text::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.08);
+  border-radius: 2px;
+}
+
+.adp-step-detail-json pre {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 0.625rem;
+  font-family: 'SF Mono', Menlo, monospace;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.adp-step-detail-json code { background: none; padding: 0; font-size: inherit; }
+
+.adp-step-detail-text {
+  padding: 6px 8px;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+/* ===== ADP 思考过程 ===== */
+.adp-thinking-section {
+  margin-bottom: 10px;
+  border: 0.5px solid var(--border-light);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.adp-thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: rgba(0, 122, 255, 0.03);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.adp-thinking-header:hover { background: rgba(0, 122, 255, 0.06); }
+.adp-thinking-icon { font-size: 0.75rem; flex-shrink: 0; }
+.adp-thinking-label { font-size: 0.6875rem; font-weight: 600; color: var(--primary-color); flex-shrink: 0; }
+
+.adp-thinking-preview {
+  font-size: 0.625rem;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.adp-thinking-toggle {
+  margin-left: auto;
+  font-size: 0.5rem;
+  color: var(--text-tertiary);
+  transition: transform 0.25s;
+  flex-shrink: 0;
+}
+
+.adp-thinking-section.expanded .adp-thinking-toggle {
+  transform: rotate(90deg);
+}
+
+.adp-thinking-content {
+  display: none;
+  padding: 8px 10px;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-height: 250px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.015);
+  border-top: 0.5px solid var(--border-light);
+}
+
+.adp-thinking-section.expanded .adp-thinking-content { display: block; }
+
+/* ===== ADP 文件卡片 ===== */
+.adp-file-card {
+  margin: 6px 0;
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.05);
+  border: 0.5px solid rgba(0, 122, 255, 0.15);
+  overflow: hidden;
+  transition: all 0.2s;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.adp-file-card:hover {
+  border-color: rgba(0, 122, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
+  transform: translateY(-1px);
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.adp-file-icon { font-size: 1rem; flex-shrink: 0; }
+
+.adp-file-name {
+  flex: 1;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--primary-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adp-file-open {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.adp-file-card:hover .adp-file-open { opacity: 1; }
+
+.adp-files-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--border-light);
+}
+
+/* ===== ADP 链接 ===== */
+.adp-link {
+  color: var(--primary-color);
+  text-decoration: none;
+  border-bottom: 0.5px solid rgba(0, 122, 255, 0.3);
+  transition: all 0.2s;
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.adp-link:hover {
+  color: #0056CC;
+  border-bottom-color: var(--primary-color);
+}
+
+/* ADP 错误 */
+.adp-error-text {
+  color: var(--danger-color);
+  font-size: 0.8125rem;
+  padding: 8px 0;
+}
+
+/* ADP 配置来源标识 */
+.adp-config-source {
+  font-size: 0.625rem;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 0.5px solid var(--border-light);
 }
 
 /* 文件上传按钮 */
@@ -1966,11 +2677,13 @@ body {
 }
 
 /* 确保内容在光球之上 */
+.calendar-view,
 .day-view,
 .week-view,
 .month-view,
 .notebook-view,
-.ai-assistant-view {
+.ai-assistant-view,
+.documents-view {
   position: relative;
   z-index: 1;
 }
@@ -2222,6 +2935,8 @@ body {
 .quick-capsule.agent-knowledge:hover { background: rgba(78, 203, 113, 0.1); }
 .quick-capsule.agent-memory { border-color: rgba(108, 99, 255, 0.3); }
 .quick-capsule.agent-memory:hover { background: rgba(108, 99, 255, 0.1); }
+.quick-capsule.agent-bidding { border-color: rgba(245, 166, 35, 0.3); }
+.quick-capsule.agent-bidding:hover { background: rgba(245, 166, 35, 0.1); }
 
 /* ============================================
    Phase 2: Agent 结果可操作性样式
@@ -3175,6 +3890,199 @@ body {
 
 /* ============= v2.0 组织配置样式 ============= */
 
+/* 独立登录弹窗 */
+.login-modal-content {
+  max-width: 420px !important;
+}
+
+.login-profile-card {
+  padding: 8px 0;
+}
+
+.login-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+}
+
+.login-profile-avatar {
+  font-size: 36px;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(79, 142, 247, 0.08), rgba(139, 92, 246, 0.08));
+  border-radius: 16px;
+  flex-shrink: 0;
+}
+
+.login-profile-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.login-profile-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.login-profile-detail {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  margin-top: 2px;
+}
+
+.login-profile-env {
+  font-size: 11px;
+  color: var(--primary-color, #007AFF);
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: rgba(0, 122, 255, 0.06);
+  border-radius: 6px;
+  display: inline-block;
+}
+
+.login-profile-divider {
+  height: 1px;
+  background: var(--border-light, rgba(0, 0, 0, 0.04));
+  margin: 4px 16px;
+}
+
+.login-profile-config {
+  padding: 8px 16px;
+}
+
+.login-config-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.login-config-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.login-config-label {
+  color: var(--text-secondary, #86868b);
+  min-width: 36px;
+}
+
+.login-config-value {
+  color: var(--text-primary, #1d1d1f);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.login-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+}
+
+.login-sync-time {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.login-action-btn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  white-space: nowrap;
+  border: none;
+}
+
+.login-action-btn.sync {
+  background: rgba(0, 122, 255, 0.06);
+  color: var(--primary-color, #007AFF);
+  border: 1px solid rgba(0, 122, 255, 0.15);
+}
+
+.login-action-btn.sync:hover {
+  background: rgba(0, 122, 255, 0.12);
+}
+
+.login-action-btn.logout {
+  background: rgba(255, 59, 48, 0.06);
+  color: #FF3B30;
+  border: 1px solid rgba(255, 59, 48, 0.15);
+}
+
+.login-action-btn.logout:hover {
+  background: rgba(255, 59, 48, 0.12);
+}
+
+/* 配置来源切换 */
+.login-profile-config-source {
+  padding: 8px 16px;
+}
+
+.config-source-label {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.config-source-toggle {
+  display: flex;
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.04));
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.config-source-btn {
+  flex: 1;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: transparent;
+  color: var(--text-secondary, #86868b);
+}
+
+.config-source-btn.active {
+  background: #fff;
+  color: var(--text-primary, #1d1d1f);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+.config-source-btn:not(.active):hover {
+  color: var(--text-primary, #1d1d1f);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.config-source-hint {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  margin-top: 6px;
+}
+
+/* 原组织配置样式（登录卡片复用） */
 .org-login-card {
   text-align: center;
   padding: 32px 24px;
@@ -3241,6 +4149,37 @@ body {
 
 .login-error.hidden {
   display: none;
+}
+
+/* 记住登录状态 */
+.login-remember-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.login-remember-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary, #1d1d1f);
+  user-select: none;
+}
+
+.login-remember-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #007AFF;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.login-remember-hint {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
 }
 
 .org-info-card {

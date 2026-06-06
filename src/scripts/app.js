@@ -7,6 +7,20 @@ const App = {
   newNoteCount: 0, // 记事本角标：不在记事本页时新笔记的累加计数
   dbSyncTimer: null, // 数据库同步定时器
   _chatAttachments: [], // 聊天文件附件列表
+  _userAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="20" fill="#E8F5E9"/><circle cx="20" cy="15" r="7" fill="#81C784"/><ellipse cx="20" cy="32" rx="12" ry="9" fill="#81C784"/><circle cx="17" cy="14" r="1.2" fill="#2E7D32"/><circle cx="23" cy="14" r="1.2" fill="#2E7D32"/><path d="M18 17.5 Q20 19.5 22 17.5" stroke="#2E7D32" stroke-width="1" fill="none" stroke-linecap="round"/><circle cx="14" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/><circle cx="26" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/></svg>`,
+
+  // ADP SSE 流式状态
+  _adpStreaming: false,
+  _adpCurrentText: '',
+  _adpThinkingText: '',
+  _adpStepMap: {},
+  _adpToolStepCount: 0,
+  _adpFileItems: [],
+  _adpTimerStart: 0,
+  _adpTimerInterval: null,
+  _adpCurrentBubble: null,
+  _adpRenderPending: false,
+  _adpConfigSource: '',
 
   init() {
     console.log('[App] init() starting...');
@@ -104,6 +118,9 @@ const App = {
     
     setTimeout(() => this.updateInitTest(''), 2000);
     console.log('[App] init() finished');
+    
+    // 延迟检查更新（不阻塞初始化）
+    setTimeout(() => this._checkForUpdate(), 3000);
   },
 
   // 从数据库加载数据并同步到 Store
@@ -158,6 +175,7 @@ const App = {
     document.getElementById('ignoreBtn').addEventListener('click', () => this.hideClipboardDetector());
     document.getElementById('saveToNoteBtn').addEventListener('click', () => this.saveClipboardToNote());
     document.getElementById('saveToMemoryBtn').addEventListener('click', () => this.saveClipboardToMemory());
+    document.getElementById('saveAsQuestionBtn').addEventListener('click', () => this.saveClipboardAsQuestion());
     
     document.getElementById('closeModal').addEventListener('click', () => this.hideTaskModal());
     document.getElementById('cancelTask').addEventListener('click', () => this.hideTaskModal());
@@ -167,6 +185,7 @@ const App = {
     document.getElementById('aiAnalyzeBtn').addEventListener('click', () => this.analyzeTaskInput());
     document.getElementById('aiSaveToNoteBtn').addEventListener('click', () => this.saveAIToNote());
     document.getElementById('aiExtractMemoryBtn').addEventListener('click', () => this.extractAIMemory());
+    document.getElementById('aiSaveAsQuestionBtn').addEventListener('click', () => this.saveAIAsQuestion());
     
     // 番茄钟选择器
     document.querySelectorAll('.pomodoro-btn').forEach(btn => {
@@ -215,6 +234,44 @@ const App = {
     document.getElementById('openSettingsBtn').addEventListener('click', () => this.showSettingsModal());
     document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
     document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
+
+    // 头部登录按钮：打开独立登录弹窗
+    document.getElementById('headerLoginBtn')?.addEventListener('click', () => {
+      this.showLoginModal();
+    });
+
+    // 头部用户徽章：点击打开独立登录弹窗
+    document.getElementById('headerUserBadge')?.addEventListener('click', () => {
+      this.showLoginModal();
+    });
+
+    // 登录弹窗关闭按钮
+    document.getElementById('closeLoginBtn')?.addEventListener('click', () => {
+      this.hideLoginModal();
+    });
+
+    // 登录弹窗 overlay 点击关闭
+    document.querySelector('#loginModal .modal-overlay')?.addEventListener('click', () => {
+      this.hideLoginModal();
+    });
+
+    // 环境选择变化
+    document.getElementById('loginEnv')?.addEventListener('change', (e) => {
+      const env = e.target.value;
+      const hint = document.getElementById('loginEnvHint');
+      const emailLabel = document.querySelector('label[for="loginEmail"]');
+      const emailInput = document.getElementById('loginEmail');
+
+      if (env === 'production') {
+        if (hint) hint.textContent = '正式环境：ADPToolkit';
+        if (emailLabel) emailLabel.textContent = '用户名';
+        if (emailInput) emailInput.placeholder = '输入用户名';
+      } else {
+        if (hint) hint.textContent = '测试环境：config-server';
+        if (emailLabel) emailLabel.textContent = '邮箱';
+        if (emailInput) emailInput.placeholder = '输入邮箱';
+      }
+    });
     document.getElementById('resetPromptBtn').addEventListener('click', () => this.resetAIPrompt());
     document.getElementById('clearClipboardHashesBtn').addEventListener('click', () => this.clearClipboardHashes());
     document.getElementById('clearAPIKeyBtn').addEventListener('click', () => this.clearAPIKey());
@@ -230,6 +287,30 @@ const App = {
     
     // AI助手相关事件
     document.getElementById('openAIAssistantBtn').addEventListener('click', () => this.showAIAssistantView());
+
+    // 通知铃铛
+    document.getElementById('notificationBellBtn')?.addEventListener('click', () => this._toggleNotificationPanel());
+    document.getElementById('notificationMarkAllBtn')?.addEventListener('click', () => this._markAllNotificationsRead());
+
+    // 点击外部关闭通知面板
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('notificationPanel');
+      const bellBtn = document.getElementById('notificationBellBtn');
+      if (panel && !panel.classList.contains('hidden') && !panel.contains(e.target) && !bellBtn?.contains(e.target)) {
+        panel.classList.add('hidden');
+      }
+    });
+
+    // 监听服务端通知推送
+    if (window.electronAPI) {
+      window.electronAPI.onNotificationsUpdated?.((data) => {
+        this._renderNotifications(data.notifications || [], data.unreadCount || 0);
+      });
+      // 监听版本更新
+      window.electronAPI.onUpdateAvailable?.((data) => {
+        if (data.has_update) this._showUpdateModal(data);
+      });
+    }
     document.getElementById('sendAIMessageBtn').addEventListener('click', () => this.sendAIMessage());
     document.getElementById('aiChatInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
@@ -243,7 +324,10 @@ const App = {
       document.getElementById('chatFileInput').click();
     });
     document.getElementById('chatFileInput').addEventListener('change', (e) => this.handleChatFileSelect(e));
-    
+
+    // 输入框粘贴文件和图片支持
+    document.getElementById('aiChatInput').addEventListener('paste', (e) => this.handleChatPaste(e));
+
     // 搜索知识按钮（剪贴板检测弹窗中）
     document.getElementById('searchKnowledgeBtn').addEventListener('click', () => {
       const rawText = document.getElementById('rawText')?.textContent;
@@ -270,9 +354,13 @@ const App = {
     document.addEventListener('click', (e) => {
       if (e.target.classList.contains('quick-capsule')) {
         const question = e.target.dataset.question;
-        if (question) {
+        const category = e.target.dataset.category;
+        if (question === '__GENERATE_WEEKLY_REPORT__') {
+          this.generateWeeklyReport();
+        } else if (question) {
           document.getElementById('aiChatInput').value = question;
-          this.sendAIMessage();
+          // 招投标和知识助手走 ADP，任务分析走本地 Agent
+          this.sendAIMessage(category === 'bidding' || category === 'knowledge' ? 'adp' : 'agent');
         }
       }
       
@@ -407,7 +495,6 @@ const App = {
     // 延迟加载：只在首次切换到标签时加载数据
     if (!this._settingsTabLoaded[tabName]) {
       this._settingsTabLoaded[tabName] = true;
-      if (tabName === 'org') this._loadOrgConfig();
       if (tabName === 'api') this._loadApiConfig();
       if (tabName === 'adp') this._loadAdpConfig();
       if (tabName === 'memory') this.loadMemories();
@@ -422,7 +509,7 @@ const App = {
       document.getElementById('apiBaseUrl').value = config.baseUrl || '';
       document.getElementById('apiModel').value = config.model || '';
       document.getElementById('apiDailyLimit').value = config.dailyLimit || 1000;
-      document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '自定义密钥' : (config.fromServer ? '组织配置' : '内置密钥')}`;
+      document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '✏️ 自定义密钥' : (config.fromServer ? '🏢 组织配置' : '📦 内置密钥')}`;
       document.getElementById('currentDailyLimit').textContent = `每日限制: ${config.dailyLimit}次`;
       
       // v2.0: 登录状态时 API 面板显示提示
@@ -438,7 +525,14 @@ const App = {
       document.getElementById('adpSearchAppKey').value = config.searchAppKey || '';
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
-      document.getElementById('adpConfigStatus').textContent = `当前状态: ${config.appKey ? '已配置通用Key' : '未配置'}${config.knowledgeAppKey ? ' | 知识推荐Key已配置' : ''}${config.searchAppKey ? ' | 搜索Key已配置' : ''}`;
+      
+      // 显示详细配置来源信息
+      const src = config.configSource || {};
+      const sourceLabel = { server: '🏢 组织配置', custom: '✏️ 自定义', default: '📦 内置默认' };
+      const appKeySrc = sourceLabel[src.appKey] || '未知';
+      const knowledgeSrc = sourceLabel[src.knowledgeAppKey] || '未知';
+      const searchSrc = sourceLabel[src.searchAppKey] || '未知';
+      document.getElementById('adpConfigStatus').textContent = `通用Key: ${appKeySrc} | 知识Key: ${knowledgeSrc} | 搜索Key: ${searchSrc}`;
       
       // v2.0: 登录状态时 ADP 面板显示提示
       this._updateConfigServerHints(config.fromServer);
@@ -463,15 +557,62 @@ const App = {
       loggedInSection.classList.remove('hidden');
       
       // 填充用户信息
-      document.getElementById('orgUserName').textContent = state.user?.name || state.user?.email || '-';
-      document.getElementById('orgUserOrg').textContent = state.user?.org_name ? `${state.user.org_name} · ${state.user.email}` : state.user?.email || '-';
+      document.getElementById('orgUserName').textContent = state.user?.name || state.user?.email || state.user?.username || '-';
+      document.getElementById('orgUserOrg').textContent = state.user?.org_name ? `${state.user.org_name} · ${state.user?.email || state.user?.username}` : (state.user?.email || state.user?.username || '-');
       
+      // 环境信息
+      this._updateLoginProfileEnv(state.env);
+
+      // 配置来源状态
+      this._updateConfigSourceUI(state.forceLocalConfig || false);
+
+      // 恢复记住登录状态
+      const rememberCb = document.getElementById('loginRememberMe');
+      if (rememberCb) rememberCb.checked = state.rememberMe !== false;
+
       // 加载服务器配置摘要
       this._loadOrgConfigSummary();
+
+      // 更新头部用户徽章
+      this._updateHeaderUserBadge(true, state.user);
     } else {
       loginSection.classList.remove('hidden');
       loggedInSection.classList.add('hidden');
+
+      // 更新头部用户徽章
+      this._updateHeaderUserBadge(false);
     }
+  },
+
+  _updateHeaderUserBadge(isLoggedIn, user) {
+    const loginBtn = document.getElementById('headerLoginBtn');
+    const userBadge = document.getElementById('headerUserBadge');
+    const userAvatar = document.getElementById('headerUserAvatar');
+    const userName = document.getElementById('headerUserName');
+    const bellBtn = document.getElementById('notificationBellBtn');
+
+    if (isLoggedIn && user) {
+      loginBtn?.classList.add('hidden');
+      userBadge?.classList.remove('hidden');
+      bellBtn?.classList.remove('hidden');
+      if (userAvatar) userAvatar.innerHTML = user.avatar ? this.escapeHtml(user.avatar) : this._userAvatarSvg;
+      if (userName) userName.textContent = user.name || user.email || user.username || '-';
+      // 登录后拉取通知
+      this._fetchNotifications();
+    } else {
+      loginBtn?.classList.remove('hidden');
+      userBadge?.classList.add('hidden');
+      bellBtn?.classList.add('hidden');
+      // 隐藏通知面板
+      document.getElementById('notificationPanel')?.classList.add('hidden');
+    }
+  },
+
+  _updateLoginProfileEnv(env) {
+    const envEl = document.getElementById('orgUserEnv');
+    if (!envEl) return;
+    const serverNames = { beta: 'Beta 测试环境', production: '正式环境' };
+    envEl.textContent = serverNames[env] || env || '-';
   },
 
   async _loadOrgConfigSummary() {
@@ -485,8 +626,7 @@ const App = {
     
     // 从 getADPConfig 获取当前生效的 ADP 配置
     const adpConfig = await window.electronAPI.getADPConfig();
-    document.getElementById('orgAdpName').textContent = adpConfig.agentName || '-';
-    document.getElementById('orgAdpStatus').textContent = adpConfig.appKey ? '✅ 已配置' : '❌ 未配置';
+    document.getElementById('orgAdpStatus').textContent = adpConfig.appKey ? `✅ ${adpConfig.agentName || '已配置'}` : '❌ 未配置';
     
     // 同步时间
     const now = new Date();
@@ -515,28 +655,37 @@ const App = {
   async handleOrgLogin() {
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
+    const env = document.getElementById('loginEnv')?.value || 'beta';
+    const rememberMe = document.getElementById('loginRememberMe')?.checked !== false;
     const errorEl = document.getElementById('loginError');
     const btn = document.getElementById('orgLoginBtn');
-    
+
     if (!email || !password) {
-      errorEl.textContent = '请输入邮箱和密码';
+      errorEl.textContent = '请输入账号和密码';
       errorEl.classList.remove('hidden');
       return;
     }
-    
+
     errorEl.classList.add('hidden');
     btn.disabled = true;
     btn.textContent = '登录中...';
-    
+
     try {
-      const result = await window.electronAPI.authLogin(email, password);
-      
+      const result = await window.electronAPI.authLogin(email, password, env, rememberMe);
+
       if (result.success) {
-        this._updateOrgUI({ isLoggedIn: true, user: result.user });
+        this._updateOrgUI({ isLoggedIn: true, user: result.user, env: result.env, forceLocalConfig: false });
         this._loadOrgConfigSummary();
         this._updateConfigServerHints(true);
+        this._updateHeaderUserBadge(true, result.user);
+        this._updateLoginProfileEnv(result.env);
         this.showToast('登录成功，已同步组织配置');
-        
+
+        // 系统通知
+        if (window.electronAPI?.showNotification) {
+          window.electronAPI.showNotification('忆境 Memora', `欢迎回来，${result.user?.name || result.user?.email || ''}！`);
+        }
+
         // 刷新 API 和 ADP 配置显示
         this._settingsTabLoaded.api = false;
         this._settingsTabLoaded.adp = false;
@@ -555,13 +704,14 @@ const App = {
 
   async handleOrgLogout() {
     if (!window.electronAPI) return;
-    
+
     const result = await window.electronAPI.authLogout();
     if (result.success) {
       this._updateOrgUI({ isLoggedIn: false });
       this._updateConfigServerHints(false);
+      this._updateHeaderUserBadge(false);
       this.showToast('已退出登录，切换到本地配置');
-      
+
       // 刷新 API 和 ADP 配置显示
       this._settingsTabLoaded.api = false;
       this._settingsTabLoaded.adp = false;
@@ -578,6 +728,221 @@ const App = {
     } else {
       this.showToast(result.error || '同步失败', 'error');
     }
+  },
+
+  async setConfigSource(source) {
+    if (!window.electronAPI) return;
+
+    const forceLocal = source === 'local';
+    const result = await window.electronAPI.configSetSource(forceLocal);
+    if (result.success) {
+      this._updateConfigSourceUI(result.forceLocalConfig);
+      await this._loadOrgConfigSummary();
+      this.showToast(forceLocal ? '已切换到本地配置' : '已切换到云端配置');
+    }
+  },
+
+  _updateConfigSourceUI(forceLocal) {
+    const toggle = document.getElementById('configSourceToggle');
+    const hint = document.getElementById('configSourceHint');
+    const syncBtn = document.getElementById('syncConfigBtn');
+    if (!toggle) return;
+
+    toggle.querySelectorAll('.config-source-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.source === (forceLocal ? 'local' : 'cloud'));
+    });
+
+    if (hint) {
+      hint.textContent = forceLocal ? '使用本地自定义配置，忽略云端设置' : '使用组织管理员统一配置';
+    }
+
+    if (syncBtn) {
+      syncBtn.style.opacity = forceLocal ? '0.4' : '1';
+      syncBtn.style.pointerEvents = forceLocal ? 'none' : 'auto';
+    }
+  },
+
+  // ===== 通知功能 =====
+
+  async _fetchNotifications() {
+    if (!window.electronAPI?.notificationsFetch) return;
+    try {
+      const notifications = await window.electronAPI.notificationsFetch();
+      // 兼容 API 文档 read 字段和旧 is_read 字段
+      const unreadCount = notifications.filter(n => !(n.read || n.is_read)).length;
+      this._renderNotifications(notifications, unreadCount);
+    } catch (e) {
+      console.error('[App] Fetch notifications error:', e);
+    }
+  },
+
+  _renderNotifications(notifications, unreadCount) {
+    const badge = document.getElementById('notificationBadge');
+    const bellBtn = document.getElementById('notificationBellBtn');
+    const body = document.getElementById('notificationPanelBody');
+
+    // 更新 badge
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+
+    // 铃铛图标
+    if (bellBtn) {
+      bellBtn.textContent = unreadCount > 0 ? '🔔' : '🔕';
+      const badgeEl = document.getElementById('notificationBadge');
+      if (badgeEl && !badgeEl.parentNode) bellBtn.appendChild(badgeEl);
+    }
+
+    // 渲染通知列表
+    if (!body) return;
+    if (notifications.length === 0) {
+      body.innerHTML = '<div class="notification-empty">暂无通知</div>';
+      return;
+    }
+
+    body.innerHTML = notifications.map(n => `
+      <div class="notification-item ${(n.read || n.is_read) ? 'read' : 'unread'}" data-id="${n.id}">
+        <div class="notification-item-type ${n.type}">${this._getNotifTypeIcon(n.type)}</div>
+        <div class="notification-item-content">
+          <div class="notification-item-title">${n.title}${n.priority === 'urgent' ? ' <span style="color:#FF3B30">[紧急]</span>' : n.priority === 'high' ? ' <span style="color:#FF9500">[重要]</span>' : ''}</div>
+          ${n.content ? `<div class="notification-item-body">${n.content}</div>` : ''}
+          <div class="notification-item-time">${this._formatNotifTime(n.created_at)}</div>
+        </div>
+      </div>
+    `).join('');
+
+    // 点击标记已读
+    body.querySelectorAll('.notification-item.unread').forEach(el => {
+      el.addEventListener('click', async () => {
+        const id = el.dataset.id;
+        if (window.electronAPI?.notificationsMarkRead) {
+          await window.electronAPI.notificationsMarkRead(id);
+        }
+        el.classList.remove('unread');
+        el.classList.add('read');
+        // 更新 badge
+        const currentBadge = document.getElementById('notificationBadge');
+        const count = Math.max(0, parseInt(currentBadge?.textContent || '0') - 1);
+        if (currentBadge) {
+          if (count > 0) {
+            currentBadge.textContent = count;
+          } else {
+            currentBadge.classList.add('hidden');
+          }
+        }
+      });
+    });
+  },
+
+  _toggleNotificationPanel() {
+    const panel = document.getElementById('notificationPanel');
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+  },
+
+  async _markAllNotificationsRead() {
+    if (!window.electronAPI?.notificationsMarkAllRead) return;
+    await window.electronAPI.notificationsMarkAllRead();
+    this._fetchNotifications();
+    this.showToast('已全部标记为已读');
+  },
+
+  _getNotifTypeIcon(type) {
+    const icons = {
+      system: '🔧', update: '🚀', feature: '✨', warning: '⚠️',
+      info: 'ℹ️', error: '❌', success: '✅', announcement: '📢'
+    };
+    return icons[type] || 'ℹ️';
+  },
+
+  _formatNotifTime(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diff = now - date;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return '刚刚';
+    if (mins < 60) return `${mins}分钟前`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}小时前`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}天前`;
+    return date.toLocaleDateString('zh-CN');
+  },
+
+  _showUpdateModal(updateInfo) {
+    const existing = document.getElementById('updateModal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'updateModal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+          <h3>🚀 发现新版本</h3>
+          <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="padding:20px;">
+          <div style="text-align:center;margin-bottom:16px;">
+            <span style="font-size:48px;">🎉</span>
+            <h2 style="margin:8px 0 4px;font-size:22px;">v${updateInfo.latest_version}</h2>
+            <p style="color:#86868b;font-size:13px;">当前版本 v${updateInfo.current_version || ''}</p>
+          </div>
+          ${updateInfo.release_notes ? `
+            <div style="background:#f5f5f7;border-radius:12px;padding:14px;margin-bottom:16px;">
+              <h4 style="margin:0 0 8px;font-size:13px;color:#1d1d1f;">更新内容</h4>
+              <div style="font-size:12px;color:#86868b;white-space:pre-line;line-height:1.6;">${updateInfo.release_notes}</div>
+            </div>
+          ` : ''}
+          ${updateInfo.file_size ? `<p style="font-size:12px;color:#aeaeb2;text-align:center;">文件大小：${(updateInfo.file_size / 1024 / 1024).toFixed(1)} MB</p>` : ''}
+        </div>
+        <div class="modal-footer" style="display:flex;gap:10px;padding:0 20px 20px;">
+          <button class="modal-btn secondary" onclick="this.closest('.modal-overlay').remove()" style="flex:1;">稍后提醒</button>
+          ${updateInfo.download_url ? `<button class="modal-btn primary" style="flex:1;" onclick="App._downloadUpdate('${updateInfo.download_url}')">立即下载</button>` : ''}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  },
+
+  async _checkForUpdate() {
+    if (!window.electronAPI?.updatesCheck) return;
+    try {
+      const info = await window.electronAPI.updatesCheck();
+      if (info.has_update) {
+        this._showUpdateModal(info);
+      }
+    } catch (e) {
+      console.error('[App] Check update error:', e);
+    }
+  },
+
+  _downloadUpdate(downloadUrl) {
+    // 通过 IPC 用外部浏览器打开下载链接
+    const server = 'http://121.5.164.126:3450';
+    const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : server + downloadUrl;
+    if (window.electronAPI?.openExternal) {
+      window.electronAPI.openExternal(fullUrl);
+    }
+    // 关闭弹窗
+    document.getElementById('updateModal')?.remove();
+    this.showToast('正在浏览器中下载...');
+  },
+
+  showLoginModal() {
+    const modal = document.getElementById('loginModal');
+    modal.classList.remove('hidden');
+    this._loadOrgConfig();
+  },
+
+  hideLoginModal() {
+    document.getElementById('loginModal').classList.add('hidden');
   },
 
   showSettingsModal() {
@@ -598,24 +963,80 @@ const App = {
 
   showAIAssistantView() {
     // 隐藏其他视图
-    document.getElementById('dayView').classList.add('hidden');
-    document.getElementById('weekView').classList.add('hidden');
-    document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('calendarView')?.classList.add('hidden');
     document.getElementById('notebookView').classList.add('hidden');
     document.getElementById('knowledgeView').classList.add('hidden');
+    document.getElementById('documentsView')?.classList.add('hidden');
     
     // 显示AI助手视图
     document.getElementById('aiAssistantView').classList.remove('hidden');
     document.getElementById('aiChatInput').focus();
+
+    // 功能卡片点击切换快捷问题
+    this._initFeatureCards();
+  },
+
+  /** 功能卡片切换快捷问题 */
+  _initFeatureCards() {
+    const cards = document.querySelectorAll('.feature-card');
+    cards.forEach(card => {
+      if (card._boundClick) return; // 避免重复绑定
+      card._boundClick = true;
+      card.addEventListener('click', () => {
+        cards.forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        const category = card.dataset.category;
+        this._switchQuickQuestions(category);
+      });
+    });
+  },
+
+  /** 根据分类切换快捷问题 */
+  _switchQuickQuestions(category) {
+    const container = document.getElementById('quickCapsules');
+    if (!container) return;
+
+    const questions = {
+      task: [
+        { icon: '🎯', label: '今日排程', question: '今天该做什么？帮我排个优先级', cls: 'agent-priority' },
+        { icon: '📊', label: '生成日报', question: '生成今天的工作日报', cls: 'agent-report' },
+        { icon: '📋', label: '生成周报', question: '__GENERATE_WEEKLY_REPORT__', cls: 'agent-report' },
+        { icon: '📚', label: '整理笔记', question: '帮我整理一下最近的笔记', cls: 'agent-knowledge' },
+        { icon: '🧠', label: '整理记忆', question: '帮我整理一下记忆，看看哪些需要保留', cls: 'agent-memory' },
+        { icon: '🔥', label: '紧急事项', question: '最紧急的事项是什么？', cls: 'agent-priority' },
+        { icon: '⏰', label: '时间建议', question: '给我一些时间管理建议', cls: 'agent-report' },
+      ],
+      bidding: [
+        { icon: '📊', label: '技术偏离表', question: '请帮我生成技术偏离表', cls: 'agent-bidding' },
+        { icon: '📄', label: '技术标书', question: '请帮我生成技术标书', cls: 'agent-bidding' },
+        { icon: '📋', label: '投标方案PPT', question: '请帮我生成投标方案PPT', cls: 'agent-bidding' },
+        { icon: '✅', label: '点对点应答', question: '请帮我生成点对点应答', cls: 'agent-bidding' },
+        { icon: '📝', label: 'SOW', question: '请帮我生成SOW（工作说明书）', cls: 'agent-bidding' },
+        { icon: '✔️', label: '验收标准', question: '请帮我生成验收标准', cls: 'agent-bidding' },
+        { icon: '🏢', label: '私有化部署方案', question: '请帮我生成私有化部署方案', cls: 'agent-bidding' },
+      ],
+      knowledge: [
+        { icon: '📄', label: '文档列表', question: '获取文档列表', cls: 'agent-knowledge' },
+        { icon: '🚀', label: '产品升级规划', question: 'ADP 产品升级规划等产品知识', cls: 'agent-knowledge' },
+        { icon: '💡', label: '产品功能介绍', question: '介绍一下 ADP 平台的核心功能', cls: 'agent-knowledge' },
+        { icon: '🔧', label: '技术架构', question: 'ADP 的技术架构是怎样的？', cls: 'agent-knowledge' },
+        { icon: '📖', label: '最佳实践', question: 'ADP 项目实施的最佳实践有哪些？', cls: 'agent-knowledge' },
+        { icon: '❓', label: '常见问题', question: 'ADP 常见问题及解决方案', cls: 'agent-knowledge' },
+      ],
+    };
+
+    const items = questions[category] || questions.task;
+    container.innerHTML = items.map(q => 
+      `<button class="quick-capsule ${q.cls}" data-question="${q.question}" data-category="${category}">${q.icon} ${q.label}</button>`
+    ).join('');
   },
 
   showKnowledgeView() {
     // 隐藏其他视图
-    document.getElementById('dayView').classList.add('hidden');
-    document.getElementById('weekView').classList.add('hidden');
-    document.getElementById('monthView').classList.add('hidden');
+    document.getElementById('calendarView')?.classList.add('hidden');
     document.getElementById('notebookView').classList.add('hidden');
     document.getElementById('aiAssistantView').classList.add('hidden');
+    document.getElementById('documentsView')?.classList.add('hidden');
     
     // 显示知识跟随视图
     document.getElementById('knowledgeView').classList.remove('hidden');
@@ -625,9 +1046,15 @@ const App = {
       window.knowledgeFollow.init();
       window.knowledgeFollow.onShow();
     }
+
+    // 初始化知识萃取模块
+    if (window.knowledgeDistillation) {
+      window.knowledgeDistillation.init();
+      window.knowledgeDistillation.onShow();
+    }
   },
 
-  async sendAIMessage() {
+  async sendAIMessage(forceMode) {
     const input = document.getElementById('aiChatInput');
     const message = input.value.trim();
     
@@ -653,10 +1080,11 @@ const App = {
     }
     
     userMessage.innerHTML = `
-      <div class="message-avatar">👤</div>
+      <div class="message-avatar">${this._userAvatarSvg}</div>
       <div class="message-content">
         <p>${this.escapeHtml(message || '发送了文件')}</p>
         ${attachmentsHtml}
+        <span class="message-time">${this._formatChatTime(new Date())}</span>
       </div>
     `;
     chatMessages.appendChild(userMessage);
@@ -668,6 +1096,7 @@ const App = {
     // 添加助手消息占位符（带加载动画）
     const assistantMessage = document.createElement('div');
     assistantMessage.className = 'message assistant';
+    assistantMessage.dataset.sendTime = new Date().toISOString();
     assistantMessage.innerHTML = `
       <div class="message-avatar">🤖</div>
       <div class="message-content">
@@ -686,7 +1115,8 @@ const App = {
       const attachmentData = await this.buildAttachmentData(attachments);
       
       // 优先使用 Agent 系统（本地 AI），回退到 ADP
-      if (window.electronAPI?.agent?.invoke) {
+      // forceMode: 'adp' 强制走 ADP，'agent' 强制走本地 Agent
+      if (forceMode !== 'adp' && window.electronAPI?.agent?.invoke) {
         result = await window.electronAPI.agent.invoke(message, undefined, attachmentData);
         
         if (result.success) {
@@ -712,7 +1142,14 @@ const App = {
           
           // 添加复制按钮
           html += '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
-          
+
+          // 添加时间戳
+          const sendTime = assistantMessage.dataset.sendTime;
+          const timeLabel = sendTime
+            ? `${this._formatChatTime(new Date(sendTime))} → ${this._formatChatTime(new Date())}`
+            : this._formatChatTime(new Date());
+          html += `<span class="message-time assistant-time">${timeLabel}</span>`;
+
           messageContent.innerHTML = html;
           
           // 绑定复制按钮事件
@@ -757,7 +1194,7 @@ const App = {
           throw new Error(result.error || 'Agent 调用失败');
         }
       } else {
-        // 回退：ADP 消息
+        // ADP 流式消息 — 参考 ADP Agent SDK 渲染
         // 将附件信息加入消息
         let fullMessage = message;
         if (attachmentData.length > 0) {
@@ -768,19 +1205,58 @@ const App = {
           fullMessage = fileInfos.join('\n\n') + '\n\n' + message;
         }
         
+        // 替换占位符为进度指示器
+        const messageContent = assistantMessage.querySelector('.message-content');
+        messageContent.innerHTML = `
+          <div class="adp-progress" id="adpProgress">
+            <div class="adp-progress-header">
+              <div class="adp-progress-spinner"></div>
+              <span class="adp-progress-title">智能体处理中</span>
+              <span class="adp-progress-timer" id="adpProgressTimer">0s</span>
+            </div>
+            <div class="adp-progress-steps" id="adpProgressSteps"></div>
+          </div>`;
+
+        // 启动流式请求
         result = await window.electronAPI.sendADPMessage(fullMessage);
-        if (result.success) {
-          const messageContent = assistantMessage.querySelector('.message-content');
-          messageContent.innerHTML = `<p>${this.escapeHtml(result.content)}</p>`;
-          // 添加复制按钮
-          const copyBtnHtml = '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
-          messageContent.insertAdjacentHTML('beforeend', copyBtnHtml);
-          const copyBtn = messageContent.querySelector('.copy-btn');
-          if (copyBtn) {
-            copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
-          }
+        
+        if (result.success && result.streaming) {
+          // 流式模式：监听 SSE 事件
+          this._adpStreaming = true;
+          this._adpCurrentText = '';
+          this._adpThinkingText = '';
+          this._adpStepMap = {};
+          this._adpToolStepCount = 0;
+          this._adpFileItems = [];
+          this._adpCurrentBubble = null;
+          this._adpRenderPending = false;
+          this._adpConfigSource = result.configSource || '';
+          this._adpTimerStart = Date.now();
+          this._adpTimerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
+            const el = document.getElementById('adpProgressTimer');
+            if (el) el.textContent = elapsed + 's';
+          }, 1000);
+
+          // 等待流式完成
+          await new Promise((resolve) => {
+            this._adpStreamResolve = resolve;
+            window.electronAPI.onADPSSEEvent((evt) => {
+              this._handleADPSSEEvent(evt, assistantMessage);
+            });
+          });
+        } else if (result.success && !result.streaming) {
+          // 兼容旧模式（非流式返回）
+          const renderedContent = this.escapeHtml(result.content).replace(/\n/g, '<br>');
+          messageContent.innerHTML = `<div class="adp-response-text">${renderedContent}</div>`;
+          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
+          messageContent.insertAdjacentHTML('beforeend', `<div class="adp-config-source">${sourceLabel}</div>`);
+          this._addCopyButton(messageContent);
         } else {
-          throw new Error(result.error || '发送失败');
+          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
+          throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
         }
       }
     } catch (error) {
@@ -795,24 +1271,542 @@ const App = {
 
   // === 复制按钮 ===
   copyAssistantMessage(btn, messageContent) {
-    // 获取文本内容，排除复制按钮本身
+    // 获取文本内容，排除复制按钮、反馈按钮等非内容元素
     const clone = messageContent.cloneNode(true);
-    const copyBtnInClone = clone.querySelector('.copy-btn');
-    if (copyBtnInClone) copyBtnInClone.remove();
+    // 移除不需要复制的元素
+    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section').forEach(el => el.remove());
     const text = clone.innerText || clone.textContent || '';
     navigator.clipboard.writeText(text.trim()).then(() => {
       btn.classList.add('copied');
       btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+      this.showToast('已复制到剪贴板', 'success');
       setTimeout(() => {
         btn.classList.remove('copied');
         btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
       }, 2000);
     }).catch(err => {
       console.error('[Copy] Failed:', err);
+      this.showToast('复制失败', 'error');
     });
   },
 
-  // === 文件上传处理 ===
+  // ===== ADP SSE 流式渲染（参考 ADP Agent SDK） =====
+
+  _addCopyButton(messageContent) {
+    const copyBtnHtml = '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
+    messageContent.insertAdjacentHTML('beforeend', copyBtnHtml);
+    const copyBtn = messageContent.querySelector('.copy-btn:last-child');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
+    }
+  },
+
+  _handleADPSSEEvent(evt, assistantMessage) {
+    const { event, data, configSource, aborted } = evt;
+    const messageContent = assistantMessage.querySelector('.message-content');
+    if (!messageContent) return;
+
+    if (configSource) this._adpConfigSource = configSource;
+
+    // 完成 / 中止
+    if (event === 'done') {
+      this._finishADPMessage(messageContent, aborted);
+      return;
+    }
+
+    // 错误
+    if (event === 'error') {
+      const errMsg = data?.Error?.Message || data?.error?.message || '未知错误';
+      this._addErrorToADP(messageContent, errMsg);
+      this._finishADPMessage(messageContent);
+      return;
+    }
+
+    // ---- SSE 事件分派 ----
+    switch (event) {
+      case 'request_ack':
+        this._addADPProgressStep('', '📤', '请求已发送', 'done');
+        break;
+
+      case 'response.created':
+        this._addADPProgressStep('', '🤖', '智能体已接收', 'done');
+        break;
+
+      case 'response.processing':
+        if (data?.Response?.StatusDesc) {
+          // 可选：更新状态文字
+        }
+        break;
+
+      case 'message.added': {
+        const msg = data?.Message || {};
+        const msgId = data?.MessageId || msg.MessageId || '';
+        if (msg.Type === 'tool_call') {
+          const toolName = msg.ExtraInfo?.ToolName || '工具';
+          const icon = this._getADPToolIcon(toolName);
+          const label = this._getADPToolLabel(toolName);
+          this._addADPProgressStep(msgId, icon, label, 'active');
+        } else if (msg.Type === 'reply' || msg.Name === 'reply') {
+          this._startADPReply(messageContent);
+        }
+        break;
+      }
+
+      case 'message.processing': {
+        const msg = data?.Message || {};
+        if (msg.Type === 'tool_call' && msg.Contents?.[0]?.Text?.trim()) {
+          const msgId = data?.MessageId || msg.MessageId || '';
+          this._addADPStepDetail(msgId, msg.Contents[0].Text, 'text');
+        }
+        break;
+      }
+
+      case 'message.done': {
+        const msg = data?.Message || {};
+        const msgId = data?.MessageId || msg.MessageId || '';
+        if (msg.Type === 'tool_call') {
+          const toolName = msg.ExtraInfo?.ToolName || '工具';
+          const doneLabel = this._getADPToolLabel(toolName) + ' ✓';
+          this._updateADPProgressStep(msgId, doneLabel, 'done');
+          if (msg.Contents?.[0]?.Text) {
+            const resultText = msg.Contents[0].Text;
+            if (toolName === 'FileToURL') {
+              try {
+                const result = JSON.parse(resultText);
+                if (result.files) {
+                  result.files.forEach(f => this._adpFileItems.push(f));
+                  const cards = result.files.map(f => {
+                    const fn = f.file_path?.split('/').pop() || '文件';
+                    const ext = fn.split('.').pop()?.toLowerCase();
+                    const iconMap = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
+                    const ic = iconMap[ext] || '📄';
+                    return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}">
+                      <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">↗ 下载</span></div>`;
+                  }).join('');
+                  this._addADPStepDetail(msgId, cards, 'file');
+                }
+              } catch (e) { this._addADPStepDetail(msgId, resultText, 'json'); }
+            } else {
+              this._addADPStepDetail(msgId, resultText, 'json');
+            }
+          }
+        }
+        break;
+      }
+
+      case 'content.added':
+        if (!this._adpCurrentBubble) this._startADPReply(messageContent);
+        break;
+
+      case 'text.delta':
+        if (data?.Text) {
+          if (!this._adpCurrentBubble) this._startADPReply(messageContent);
+          // 过滤混入的 JSON 内容
+          const text = data.Text;
+          if (!/^\{"content":\[/i.test(text)) {
+            this._adpCurrentText += text;
+            this._renderADPBubble();
+          }
+        }
+        break;
+
+      case 'text.replace':
+        if (data?.Text) {
+          this._adpCurrentText = data.Text;
+          this._renderADPBubble();
+        }
+        break;
+
+      case 'response.completed':
+        if (data?.Response?.StatInfo) {
+          const stat = data.Response.StatInfo;
+          // 可选：显示 token 统计
+        }
+        break;
+
+      case 'thought':
+        if (data?.Text || data?.Content) {
+          this._adpThinkingText += (data.Text || data.Content || '');
+        }
+        break;
+    }
+
+    // 自动滚动
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  _startADPReply(messageContent) {
+    if (this._adpCurrentBubble) return; // 已有回复气泡
+
+    // 折叠进度区域
+    this._collapseADPProgress();
+
+    // 创建回复文本区域
+    const replyEl = document.createElement('div');
+    replyEl.className = 'adp-response-streaming';
+    replyEl.id = 'adpCurrentReply';
+    messageContent.appendChild(replyEl);
+    this._adpCurrentBubble = replyEl;
+  },
+
+  _renderADPBubble() {
+    if (!this._adpCurrentBubble || this._adpRenderPending) return;
+    this._adpRenderPending = true;
+    requestAnimationFrame(() => {
+      if (this._adpCurrentBubble) {
+        this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(this._adpCurrentText, this._adpThinkingText);
+      }
+      this._adpRenderPending = false;
+    });
+  },
+
+  _finishADPMessage(messageContent, aborted) {
+    // 停止计时器
+    if (this._adpTimerInterval) {
+      clearInterval(this._adpTimerInterval);
+      this._adpTimerInterval = null;
+    }
+
+    // 如果没有回复气泡，创建一个
+    if (!this._adpCurrentBubble && this._adpCurrentText) {
+      this._startADPReply(messageContent);
+    }
+
+    // 最终渲染
+    if (this._adpCurrentBubble) {
+      this._adpCurrentBubble.classList.remove('adp-response-streaming');
+      this._adpCurrentBubble.removeAttribute('id');
+      this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(this._adpCurrentText, this._adpThinkingText);
+
+      // 绑定文件卡片点击事件
+      this._adpCurrentBubble.querySelectorAll('.adp-file-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const url = card.dataset.url;
+          const name = card.dataset.name;
+          if (url && url !== '#') {
+            window.electronAPI?.openExternal(url);
+          }
+        });
+      });
+
+      // 绑定思考过程折叠/展开
+      this._adpCurrentBubble.querySelectorAll('.adp-thinking-header').forEach(header => {
+        header.addEventListener('click', () => {
+          header.parentElement.classList.toggle('expanded');
+          const toggle = header.querySelector('.adp-thinking-toggle');
+          if (toggle) toggle.textContent = header.parentElement.classList.contains('expanded') ? '▼' : '▶';
+        });
+      });
+    }
+
+    // 如果有文件输出，添加文件卡片区域
+    if (this._adpFileItems.length > 0) {
+      const filesHtml = this._adpFileItems.map(f => {
+        const fn = f.file_path?.split('/').pop() || '文件';
+        const ext = fn.split('.').pop()?.toLowerCase();
+        const iconMap = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
+        const ic = iconMap[ext] || '📄';
+        return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}">
+          <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">↗ 下载</span></div>`;
+      }).join('');
+      const filesEl = document.createElement('div');
+      filesEl.className = 'adp-files-section';
+      filesEl.innerHTML = filesHtml;
+      filesEl.querySelectorAll('.adp-file-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const url = card.dataset.url;
+          if (url && url !== '#') window.electronAPI?.openExternal(url);
+        });
+      });
+      messageContent.appendChild(filesEl);
+    }
+
+    // 配置来源标识
+    const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+    const sourceLabel = sourceLabels[this._adpConfigSource] || '📦 内置默认';
+    messageContent.insertAdjacentHTML('beforeend', `<div class="adp-config-source">${sourceLabel}</div>`);
+
+    // 复制按钮
+    this._addCopyButton(messageContent);
+
+    // 时间戳
+    const assistantMsg = messageContent.closest('.message.assistant');
+    const sendTime = assistantMsg?.dataset.sendTime;
+    const timeLabel = sendTime
+      ? `${this._formatChatTime(new Date(sendTime))} → ${this._formatChatTime(new Date())}`
+      : this._formatChatTime(new Date());
+    messageContent.insertAdjacentHTML('beforeend', `<span class="message-time assistant-time">${timeLabel}</span>`);
+
+    // 清理状态
+    this._adpStreaming = false;
+    this._adpCurrentBubble = null;
+    window.electronAPI?.removeADPListeners?.();
+    if (this._adpStreamResolve) {
+      this._adpStreamResolve();
+      this._adpStreamResolve = null;
+    }
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  _addErrorToADP(messageContent, errMsg) {
+    const errEl = document.createElement('div');
+    errEl.className = 'adp-error-text';
+    errEl.textContent = `❌ ${errMsg}`;
+    messageContent.appendChild(errEl);
+  },
+
+  // ---- 进度步骤 ----
+
+  _addADPProgressStep(msgId, icon, text, status) {
+    const stepsEl = document.getElementById('adpProgressSteps');
+    if (!stepsEl) return;
+    this._adpToolStepCount++;
+    const progressEl = document.getElementById('adpProgress');
+    if (progressEl && progressEl.classList.contains('collapsed')) {
+      const titleEl = progressEl.querySelector('.adp-progress-title');
+      if (titleEl) titleEl.textContent = `已完成 ${this._adpToolStepCount} 个步骤`;
+    }
+    const stepEl = document.createElement('div');
+    stepEl.className = 'adp-progress-step' + (status === 'active' ? ' active' : status === 'done' ? ' done' : '');
+    stepEl.dataset.msgId = msgId || '';
+    stepEl.innerHTML = `
+      <div class="adp-step-row">
+        <span class="adp-step-icon">${icon}</span>
+        <span class="adp-step-text">${this.escapeHtml(text)}</span>
+        <span class="adp-step-status">${status === 'active' ? '<span class="adp-step-loading"></span>' : status === 'done' ? '✓' : ''}</span>
+        <span class="adp-step-expand" style="display:none">▶</span>
+      </div>
+      <div class="adp-step-detail"></div>`;
+    stepsEl.appendChild(stepEl);
+    if (msgId) this._adpStepMap[msgId] = { el: stepEl, detailEl: stepEl.querySelector('.adp-step-detail') };
+
+    // 点击展开/折叠详情
+    const row = stepEl.querySelector('.adp-step-row');
+    row.addEventListener('click', () => {
+      const detail = stepEl.querySelector('.adp-step-detail');
+      if (!detail || !detail.innerHTML.trim()) return;
+      stepEl.classList.toggle('detail-expanded');
+      const exp = stepEl.querySelector('.adp-step-expand');
+      if (exp) exp.textContent = stepEl.classList.contains('detail-expanded') ? '▼' : '▶';
+    });
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  _updateADPProgressStep(msgId, text, status) {
+    const info = msgId ? this._adpStepMap[msgId] : null;
+    if (!info?.el) return;
+    if (text) info.el.querySelector('.adp-step-text').textContent = text;
+    const statusEl = info.el.querySelector('.adp-step-status');
+    info.el.className = 'adp-progress-step' + (status === 'active' ? ' active' : status === 'done' ? ' done' : '');
+    if (status === 'done') statusEl.innerHTML = '✓';
+    else if (status === 'active') statusEl.innerHTML = '<span class="adp-step-loading"></span>';
+  },
+
+  _addADPStepDetail(msgId, content, contentType) {
+    const info = msgId ? this._adpStepMap[msgId] : null;
+    if (!info?.detailEl) return;
+    const detailEl = info.detailEl;
+    const expandEl = info.el.querySelector('.adp-step-expand');
+    if (expandEl) expandEl.style.display = 'inline';
+
+    if (contentType === 'json') {
+      let formatted = content;
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.content && Array.isArray(parsed.content) && parsed.content[0]?.text) {
+          try { formatted = JSON.parse(parsed.content[0].text); } catch {}
+          formatted = typeof formatted === 'string' ? parsed.content[0].text : JSON.stringify(formatted, null, 2);
+        } else {
+          formatted = JSON.stringify(parsed, null, 2);
+        }
+      } catch (e) { formatted = content; }
+      if (formatted.length > 2000) formatted = formatted.substring(0, 2000) + '\n... (已截断)';
+      detailEl.innerHTML = `<div class="adp-step-detail-json"><pre><code>${this.escapeHtml(formatted)}</code></pre></div>`;
+    } else if (contentType === 'file') {
+      detailEl.innerHTML = content;
+      // 绑定文件卡片事件
+      detailEl.querySelectorAll('.adp-file-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const url = card.dataset.url;
+          if (url && url !== '#') window.electronAPI?.openExternal(url);
+        });
+      });
+    } else {
+      detailEl.innerHTML = `<div class="adp-step-detail-text">${this.escapeHtml(content).replace(/\n/g, '<br>')}</div>`;
+    }
+
+    info.el.classList.add('has-detail');
+  },
+
+  _collapseADPProgress() {
+    if (this._adpTimerInterval) {
+      clearInterval(this._adpTimerInterval);
+      this._adpTimerInterval = null;
+    }
+    const progressEl = document.getElementById('adpProgress');
+    if (!progressEl) return;
+    progressEl.classList.add('collapsed');
+    const stepsEl = document.getElementById('adpProgressSteps');
+    if (stepsEl) stepsEl.style.display = 'none';
+    const titleEl = progressEl.querySelector('.adp-progress-title');
+    const actualStepCount = stepsEl?.querySelectorAll('.adp-progress-step').length ?? this._adpToolStepCount;
+    if (titleEl) titleEl.textContent = `已完成 ${actualStepCount} 个步骤`;
+    const spinnerEl = progressEl.querySelector('.adp-progress-spinner');
+    if (spinnerEl) spinnerEl.style.display = 'none';
+    const headerEl = progressEl.querySelector('.adp-progress-header');
+    if (headerEl) {
+      headerEl.style.cursor = 'pointer';
+      headerEl.onclick = () => {
+        progressEl.classList.toggle('collapsed');
+        const collapsed = progressEl.classList.contains('collapsed');
+        if (stepsEl) stepsEl.style.display = collapsed ? 'none' : 'flex';
+        const tEl = progressEl.querySelector('.adp-progress-title');
+        if (tEl) tEl.textContent = collapsed ? `已完成 ${(stepsEl?.querySelectorAll('.adp-progress-step').length ?? this._adpToolStepCount)} 个步骤` : '智能体处理中';
+      };
+    }
+    const timerEl = document.getElementById('adpProgressTimer');
+    if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - this._adpTimerStart) / 1000)}s`;
+  },
+
+  // ---- ADP Markdown 渲染（简化版，参考 Agent SDK） ----
+
+  _renderADPMarkdown(text, thinkingText) {
+    if (!text && !thinkingText) return '';
+    text = (text || '').replace(/\\u0026/g, '&');
+
+    // 处理 <think/> 标签
+    const LT = String.fromCharCode(60), GT = String.fromCharCode(62);
+    const THINK_OPEN = LT + 'think' + GT, THINK_CLOSE = LT + '/think' + GT;
+    text = text.replace(new RegExp(THINK_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([\\s\\S]*?)' + THINK_CLOSE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), (_, c) => { thinkingText = (thinkingText || '') + c; return ''; });
+
+    // 提取 Markdown 链接
+    const mdLinks = [];
+    text = text.replace(/\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (match, linkText, url) => {
+      const idx = mdLinks.length;
+      let decodedUrl = url; try { decodedUrl = decodeURIComponent(url); } catch {}
+      let fileName = linkText;
+      const pathMatch = decodedUrl.match(/[?&]path=([^&]+)/);
+      if (pathMatch && linkText.length > 20) try { fileName = decodeURIComponent(pathMatch[1]).split('/').pop(); } catch {}
+      mdLinks.push({ url: decodedUrl, display: linkText, fileName, isHtml: decodedUrl.includes('.html') });
+      return `__MDLINK_${idx}__`;
+    });
+
+    // 提取文件 JSON
+    const fileCards = [];
+    text = text.replace(/\{"files"\s*:\s*\[[\s\S]*?\]\}/g, (match) => {
+      const idx = fileCards.length;
+      try { fileCards.push(JSON.parse(match).files || []); } catch { fileCards.push(null); }
+      return `\n__FILE_CARD_${idx}__\n`;
+    });
+
+    // 过滤 content JSON 混入
+    text = text.replace(/\{"content"\s*:\s*\[\s*\{\s*"type"\s*:\s*"text"\s*,\s*"text"\s*:\s*"[^"]*"\s*\}\s*\]\s*\}/g, '');
+    text = text.replace(/\{"content"\s*:\s*\[[\s\S]*?\]\s*\}(?=\s*[^\s{]|$)/g, (match) => {
+      try { const p = JSON.parse(match); if (p.content && Array.isArray(p.content)) return ''; } catch {}
+      return match;
+    });
+
+    // 提取裸链接
+    const links = [];
+    text = text.replace(/https?:\/\/[^\s"'<>\]}|\\^`]+/g, (url) => {
+      const idx = links.length;
+      let du = url; try { du = decodeURIComponent(url); } catch {}
+      let display = url;
+      const pm = du.match(/[?&]path=([^&]+)/);
+      if (pm) try { display = decodeURIComponent(pm[1]).split('/').pop(); } catch {}
+      else if (url.length > 60) display = url.substring(0, 40) + '…' + url.substring(url.length - 15);
+      links.push({ url: du, display });
+      return `__LINK_${idx}__`;
+    });
+
+    let html = this.escapeHtml(text);
+
+    // 还原 Markdown 链接
+    mdLinks.forEach((link, idx) => {
+      const ph = `__MDLINK_${idx}__`, su = this.escapeHtml(link.url), sd = this.escapeHtml(link.display);
+      html = html.replace(ph, link.isHtml
+        ? `<div class="adp-file-card" data-url="${su}" data-name="${this.escapeHtml(link.fileName)}"><span class="adp-file-icon">🌐</span><span class="adp-file-name">${sd}</span><span class="adp-file-open">↗ 打开</span></div>`
+        : `<a href="${su}" class="adp-link" onclick="event.preventDefault();window.electronAPI?.openExternal('${su}')">${sd}</a>`);
+    });
+
+    // 还原文件卡片
+    fileCards.forEach((files, idx) => {
+      const ph = `__FILE_CARD_${idx}__`;
+      if (files && files.length > 0) {
+        html = html.replace(ph, files.map(f => {
+          const fn = f.file_path?.split('/').pop() || '文件';
+          const ext = fn.split('.').pop()?.toLowerCase();
+          const im = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
+          return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">↗ 下载</span></div>`;
+        }).join(''));
+      } else html = html.replace(ph, '');
+    });
+
+    // 还原裸链接
+    links.forEach((link, idx) => {
+      const ph = `__LINK_${idx}__`;
+      html = html.replace(ph, `<a href="${this.escapeHtml(link.url)}" class="adp-link" onclick="event.preventDefault();window.electronAPI?.openExternal('${this.escapeHtml(link.url)}')">${this.escapeHtml(link.display)}</a>`);
+    });
+
+    // Markdown 基础格式
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code.trim()}</code></pre>`);
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    html = '<p>' + html + '</p>';
+    html = html.replace(/<p><\/p>/g, '');
+    html = html.replace(/<p><br><\/p>/g, '');
+
+    // 思考过程
+    if (thinkingText && thinkingText.trim()) html = this._renderADPThinking(thinkingText) + html;
+    return html;
+  },
+
+  _renderADPThinking(text) {
+    const trimmed = text.trim();
+    const preview = trimmed.length > 80 ? trimmed.substring(0, 80) + '…' : trimmed;
+    return `<div class="adp-thinking-section">
+      <div class="adp-thinking-header">
+        <span class="adp-thinking-icon">💭</span>
+        <span class="adp-thinking-label">思考过程</span>
+        <span class="adp-thinking-preview">${this.escapeHtml(preview)}</span>
+        <span class="adp-thinking-toggle">▶</span>
+      </div>
+      <div class="adp-thinking-content">${this.escapeHtml(trimmed).replace(/\n/g, '<br>')}</div>
+    </div>`;
+  },
+
+  _getADPToolIcon(toolName) {
+    const icons = {
+      get_feature_rates: '📊',
+      get_brand_summary: '📋',
+      render_chart: '📈',
+      write: '📝',
+      FileToURL: '🔗',
+      search: '🔍',
+      default: '🔧'
+    };
+    return icons[toolName] || icons.default;
+  },
+
+  _getADPToolLabel(toolName) {
+    const labels = {
+      get_feature_rates: '查询标配率',
+      get_brand_summary: '查询概览',
+      render_chart: '渲染图表',
+      write: '生成报告',
+      FileToURL: '获取文件链接',
+      search: '搜索数据'
+    };
+    return labels[toolName] || `调用 ${toolName}`;
+  },
   handleChatFileSelect(e) {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -851,6 +1845,44 @@ const App = {
     
     this.renderChatAttachments();
     e.target.value = ''; // 重置 input 以便重复选择同一文件
+  },
+
+  handleChatPaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const maxFiles = 5;
+    let hasFiles = false;
+    for (const item of items) {
+      if (item.kind === 'file') {
+        hasFiles = true;
+        const file = item.getAsFile();
+        if (!file) continue;
+        if (this._chatAttachments.length >= maxFiles) {
+          this.showToast(`最多上传 ${maxFiles} 个文件`, 'error');
+          break;
+        }
+        const maxSize = 20 * 1024 * 1024; // 粘贴文件 20MB 限制
+        if (file.size > maxSize) {
+          this.showToast(`文件 ${file.name || '粘贴内容'} 超过 20MB 限制`, 'error');
+          continue;
+        }
+        // 粘贴的图片可能没有文件名
+        const name = file.name || `粘贴图片_${new Date().toLocaleTimeString('zh-CN').replace(/:/g, '-')}.${file.type.split('/')[1] || 'png'}`;
+        const fileType = this.getFileType(name, file.type);
+        this._chatAttachments.push({
+          name: name,
+          size: file.size,
+          mimeType: file.type,
+          type: fileType,
+          file: file
+        });
+      }
+    }
+    if (hasFiles) {
+      e.preventDefault(); // 阻止粘贴文件名到输入框
+      this.renderChatAttachments();
+      this.showToast('已添加粘贴的文件', 'success');
+    }
   },
 
   getFileType(filename, mimeType) {
@@ -1087,6 +2119,15 @@ const App = {
     
     // 清空附件
     this.clearChatAttachments();
+
+    // 停止 ADP 流式
+    if (this._adpStreaming) {
+      this._adpStreaming = false;
+      if (this._adpTimerInterval) { clearInterval(this._adpTimerInterval); this._adpTimerInterval = null; }
+      window.electronAPI?.stopADPMessage?.();
+      window.electronAPI?.removeADPListeners?.();
+      if (this._adpStreamResolve) { this._adpStreamResolve(); this._adpStreamResolve = null; }
+    }
     
     // 保留功能提示卡片和快捷问题胶囊，只清空对话消息
     const featureCards = chatMessages.querySelector('.feature-cards');
@@ -1107,9 +2148,110 @@ const App = {
         <div class="message-avatar">🤖</div>
         <div class="message-content">
           <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
+          <span class="message-time assistant-time">${this._formatChatTime(new Date())}</span>
         </div>
       </div>
     `;
+  },
+
+  _formatChatTime(date) {
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  },
+
+  async generateWeeklyReport() {
+    const tasks = Store.getTasks();
+    const now = new Date();
+
+    // 计算本周范围（周一到周日）
+    const dayOfWeek = now.getDay() || 7; // 周日=7
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - dayOfWeek + 1);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    const periodStart = monday.toISOString().slice(0, 10);
+    const periodEnd = sunday.toISOString().slice(0, 10);
+
+    // 过滤本周任务
+    const weekTasks = tasks.filter(t => {
+      const created = new Date(t.createdAt);
+      const due = t.dueDate ? new Date(t.dueDate) : null;
+      const completed = t.completedAt ? new Date(t.completedAt) : null;
+      return (created >= monday && created <= sunday) ||
+             (due && due >= monday && due <= sunday) ||
+             (completed && completed >= monday && completed <= sunday);
+    });
+
+    // 统计
+    const completed = weekTasks.filter(t => t.status === 'completed');
+    const inProgress = weekTasks.filter(t => t.status === 'in-progress' || t.status === 'in_progress');
+    const pending = weekTasks.filter(t => t.status === 'pending');
+
+    // 番茄钟时长
+    let focusMinutes = 0;
+    weekTasks.forEach(t => {
+      if (t.pomodoroSessions) {
+        t.pomodoroSessions.forEach(s => {
+          if (s.type === 'work' && s.completed && s.startTime) {
+            const start = new Date(s.startTime);
+            if (start >= monday && start <= sunday) {
+              focusMinutes += s.duration || 25;
+            }
+          }
+        });
+      }
+    });
+
+    // 构造数据
+    const reportData = {
+      period: `${periodStart} ~ ${periodEnd}`,
+      stats: {
+        total: weekTasks.length,
+        completed: completed.length,
+        inProgress: inProgress.length,
+        pending: pending.length,
+        focusMinutes
+      },
+      tasks: weekTasks.map(t => ({
+        title: t.title,
+        priority: t.priority,
+        status: t.status,
+        dueDate: t.dueDate ? t.dueDate.slice(0, 10) : null,
+        tags: t.tags || [],
+        actualDuration: t.pomodoroSessions
+          ? t.pomodoroSessions.filter(s => s.type === 'work' && s.completed).reduce((sum, s) => sum + (s.duration || 25), 0)
+          : 0
+      })),
+      highlights: weekTasks.filter(t => t.priority === 'high' || t.priority === 'urgent')
+    };
+
+    // 构造 prompt
+    const prompt = `📋 生成周报（${periodStart} ~ ${periodEnd}）
+
+你是一个周报生成助手。根据用户本周的工作数据，生成一份专业的周报。
+
+要求：
+1. 用 Markdown 格式输出
+2. 包含以下结构：
+   - 📊 本周概览（一句话总结 + 关键数据）
+   - ✅ 已完成事项（按优先级排列，标注标签）
+   - 🔄 进行中事项（进展描述）
+   - ⏳ 待推进事项（下周重点）
+   - 💡 本周洞察（从任务数据中提炼的工作模式/建议）
+3. 语言简洁专业，避免空话套话
+4. 如果有高优先级任务未完成，需要特别提醒
+
+本周数据：
+${JSON.stringify(reportData, null, 2)}`;
+
+    // 设置到输入框并走 ADP 流式
+    const input = document.getElementById('aiChatInput');
+    input.value = prompt;
+    await this.sendAIMessage('adp');
   },
 
   generateId(len = 32) {
@@ -1687,10 +2829,12 @@ const App = {
         });
         
         if (result.success) {
-          // 不在记事本页时增加角标，否则刷新列表
-          this.incrementNewNoteCount();
-          
-          this.showToast(`笔记已添加（${this.getNoteCategoryLabel(category)}）`);
+          if (result.duplicate) {
+            this.showToast('今天已有相同内容，已跳过', 'info');
+          } else {
+            this.incrementNewNoteCount();
+            this.showToast(`笔记已添加（${this.getNoteCategoryLabel(category)}）`);
+          }
         }
       }
     } catch (error) {
@@ -2462,10 +3606,12 @@ const App = {
         });
         
         if (result.success) {
-          // 不在记事本页时增加角标，否则刷新列表
-          this.incrementNewNoteCount();
-          
-          this.showToast(`已保存到笔记（${this.getNoteCategoryLabel(category)}）`);
+          if (result.duplicate) {
+            this.showToast('今天已有相同内容，已跳过', 'info');
+          } else {
+            this.incrementNewNoteCount();
+            this.showToast(`已保存到笔记（${this.getNoteCategoryLabel(category)}）`);
+          }
           this.hideClipboardDetector();
         }
       }
@@ -2494,6 +3640,31 @@ const App = {
     } catch (error) {
       console.error('保存到记忆失败:', error);
       this.showToast('保存到记忆失败', 'error');
+    }
+  },
+
+  async saveClipboardAsQuestion() {
+    if (!this.pendingClipboardTask) return;
+    const content = this.pendingClipboardTask.rawText;
+
+    try {
+      if (window.electronAPI?.knowledgeAddAtom) {
+        const result = await window.electronAPI.knowledgeAddAtom({
+          content: content.trim(),
+          domain: '通用',
+          type: 'question',
+          importance: 0.7
+        });
+        if (result.success) {
+          this.showToast('❓ 问题已记录到知识库');
+          this.hideClipboardDetector();
+        } else {
+          this.showToast('记录问题失败');
+        }
+      }
+    } catch (error) {
+      console.error('记录问题失败:', error);
+      this.showToast('记录问题失败');
     }
   },
 
@@ -2752,10 +3923,12 @@ const App = {
         });
         
         if (result.success) {
-          // 不在记事本页时增加角标，否则刷新列表
-          this.incrementNewNoteCount();
-          
-          this.showToast(`已保存到记事本（${this.getNoteCategoryLabel(category)}）`);
+          if (result.duplicate) {
+            this.showToast('今天已有相同内容，已跳过', 'info');
+          } else {
+            this.incrementNewNoteCount();
+            this.showToast(`已保存到记事本（${this.getNoteCategoryLabel(category)}）`);
+          }
           document.getElementById('aiTaskInput').value = '';
         }
       }
@@ -2788,6 +3961,34 @@ const App = {
     } catch (error) {
       console.error('提炼记忆失败:', error);
       this.showToast('提炼记忆失败', 'error');
+    }
+  },
+
+  async saveAIAsQuestion() {
+    const input = document.getElementById('aiTaskInput').value.trim();
+    if (!input) {
+      this.showToast('请输入问题内容', 'error');
+      return;
+    }
+
+    try {
+      if (window.electronAPI?.knowledgeAddAtom) {
+        const result = await window.electronAPI.knowledgeAddAtom({
+          content: input,
+          domain: '通用',
+          type: 'question',
+          importance: 0.7
+        });
+        if (result.success) {
+          this.showToast('❓ 问题已记录到知识库');
+          document.getElementById('aiTaskInput').value = '';
+        } else {
+          this.showToast('记录问题失败', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('记录问题失败:', error);
+      this.showToast('记录问题失败', 'error');
     }
   },
   
@@ -2826,21 +4027,58 @@ const App = {
       return;
     }
     
+    // 排序：默认按截止时间，可切换按优先级
+    const sortBy = this._taskSortBy || 'dueDate';
     const sortedTasks = tasks.sort((a, b) => {
-      const priorityOrder = { high: 0, medium: 1, low: 2 };
-      if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+      if (sortBy === 'priority') {
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+          return priorityOrder[a.priority] - priorityOrder[b.priority];
+        }
+        // 优先级相同时按截止时间
+        if (a.dueDate && b.dueDate) {
+          return new Date(a.dueDate) - new Date(b.dueDate);
+        }
+        return 0;
+      } else {
+        // 默认：按截止时间排序（临近的在前）
+        const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+        const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+        if (aDate !== bDate) return aDate - bDate;
+        // 截止时间相同时按优先级
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
         return priorityOrder[a.priority] - priorityOrder[b.priority];
       }
-      if (a.dueDate && b.dueDate) {
-        return new Date(a.dueDate) - new Date(b.dueDate);
-      }
-      return 0;
     });
     
     container.innerHTML = sortedTasks.map(task => this.renderTaskItem(task)).join('');
     
+    // 绑定排序切换按钮
+    const sortToggle = document.getElementById('taskSortToggle');
+    if (sortToggle) {
+      sortToggle.querySelectorAll('.sort-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this._taskSortBy = btn.dataset.sort;
+          sortToggle.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this.renderTaskList();
+        });
+      });
+    }
+    
     container.querySelectorAll('.task-item').forEach(item => {
       const taskId = item.dataset.id;
+      
+      // hover 预览浮层
+      item.addEventListener('mouseenter', (e) => {
+        this._showTaskHoverPreview(item, e);
+      });
+      item.addEventListener('mouseleave', () => {
+        this._hideTaskHoverPreview();
+      });
+      item.addEventListener('mousemove', (e) => {
+        this._moveTaskHoverPreview(e);
+      });
       
       item.querySelector('.task-checkbox').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2890,8 +4128,14 @@ const App = {
     const completedPomodoros = (task.pomodoroSessions || []).filter(s => s.type === 'work' && s.completed).length;
     const pomodoroCountHtml = completedPomodoros > 0 ? `<span class="pomodoro-count">🍅×${completedPomodoros}</span>` : '';
     
+    // 构造 hover 预览内容
+    const dueDateStr = dueDate ? dueDate.toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '无截止时间';
+    const priorityLabel = { high: '🔴 高', medium: '🟡 中', low: '🟢 低' }[task.priority] || '🟡 中';
+    const descPreview = task.description ? task.description.substring(0, 200) + (task.description.length > 200 ? '...' : '') : '';
+    const hoverContent = `${task.title}\n⏰ ${dueDateStr}\n🔥 优先级: ${priorityLabel}\n⏱ 预计: ${task.estimatedDuration || 60}分钟${descPreview ? '\n\n' + descPreview : ''}`;
+    
     return `
-      <div class="task-item${task.isDraft ? ' draft-item' : ''}" data-id="${task.id}">
+      <div class="task-item${task.isDraft ? ' draft-item' : ''}" data-id="${task.id}" data-hover-content="${this.escapeHtml(hoverContent)}">
         <div class="task-checkbox"></div>
         <div class="task-info">
           <div class="title">${task.title} ${draftBadge}</div>
@@ -2915,6 +4159,52 @@ const App = {
     this.renderTaskList();
     Calendar.render();
     this.showToast('任务已完成');
+  },
+
+  // === 待办列表 hover 预览 ===
+  _showTaskHoverPreview(item, e) {
+    const content = item.dataset.hoverContent;
+    if (!content) return;
+    
+    this._hideTaskHoverPreview();
+    
+    const preview = document.createElement('div');
+    preview.className = 'task-hover-preview';
+    preview.innerHTML = content.split('\n').map(line => {
+      if (line.startsWith('⏰') || line.startsWith('🔥') || line.startsWith('⏱')) {
+        return `<div class="task-preview-meta">${line}</div>`;
+      }
+      return `<div class="task-preview-title">${line}</div>`;
+    }).join('');
+    
+    document.body.appendChild(preview);
+    this._moveTaskHoverPreview(e);
+  },
+
+  _moveTaskHoverPreview(e) {
+    const preview = document.querySelector('.task-hover-preview');
+    if (!preview) return;
+    
+    const padding = 12;
+    const previewRect = preview.getBoundingClientRect();
+    let x = e.clientX + padding;
+    let y = e.clientY + padding;
+    
+    // 防止超出视口
+    if (x + previewRect.width > window.innerWidth) {
+      x = e.clientX - previewRect.width - padding;
+    }
+    if (y + previewRect.height > window.innerHeight) {
+      y = e.clientY - previewRect.height - padding;
+    }
+    
+    preview.style.left = x + 'px';
+    preview.style.top = y + 'px';
+  },
+
+  _hideTaskHoverPreview() {
+    const preview = document.querySelector('.task-hover-preview');
+    if (preview) preview.remove();
   },
 
   getRelativeTime(date) {
@@ -3152,7 +4442,8 @@ const App = {
       case 'save-to-note':
         if (result && window.electronAPI) {
           window.electronAPI.notebookAddNote({ content: JSON.stringify(result, null, 2), category: 'general' }).then(r => {
-            if (r.success) this.showToast('已保存到笔记');
+            if (r.success && r.duplicate) this.showToast('今天已有相同内容，已跳过', 'info');
+            else if (r.success) this.showToast('已保存到笔记');
           });
         }
         break;

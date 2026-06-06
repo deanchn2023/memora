@@ -50,12 +50,165 @@ const AI_CALLS_DATE_KEY = 'taskflow_ai_calls_date';
 let authState = {
   isLoggedIn: false,
   token: null,
-  user: null  // { id, email, name, org_id, org_name, role }
+  user: null,  // { id, email, name, org_id, org_name, role }
+  env: 'beta',  // 'beta' | 'production'
+  forceLocalConfig: false  // 已登录但强制使用本地配置
 };
 
 let remoteConfig = null;  // 服务器配置（仅内存，不写磁盘，退出登录即清空）
 
-const CONFIG_SERVER_URL = 'http://121.5.164.126:3450';  // 配置服务器地址
+// 环境配置
+const AUTH_SERVERS = {
+  beta: {
+    name: 'Beta 版本（测试）',
+    authUrl: 'http://121.5.164.126:3450',    // config-server（v2.0 自建认证）
+    configUrl: 'http://121.5.164.126:3450',   // 配置服务
+    loginPath: '/auth/login',                  // 登录路径
+    loginField: 'email',                       // 使用 email 登录
+    configPath: '/config',                     // 配置路径
+    validatePath: '/auth/validate'             // 验证路径
+  },
+  production: {
+    name: '正式版本',
+    authUrl: 'http://21.91.29.59:3000',       // ADPToolkit（username 登录）
+    configUrl: 'http://121.5.164.126:3450',   // 配置仍走 config-server
+    loginPath: '/api/auth/login',              // ADPToolkit 登录路径
+    loginField: 'username',                    // 使用 username 登录
+    configPath: '/memora/config',              // v2.1 配置路径
+    validatePath: '/api/auth/me'               // ADPToolkit 验证路径
+  }
+};
+
+// 获取当前环境的服务器配置
+const APP_VERSION = require('./package.json').version;
+
+// 上报登录活动
+async function reportLoginActivity(configLoaded = true) {
+  if (!authState.isLoggedIn || !authState.token) return;
+  const server = getAuthServer();
+  try {
+    const baseUrl = server.configUrl || server.authUrl;
+    await fetch(`${baseUrl}/memora/activity/login`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        login_source: 'memora_client',
+        config_loaded: configLoaded,
+        app_version: APP_VERSION,
+        platform: process.platform
+      })
+    });
+    console.log('[Auth] Login activity reported');
+  } catch (err) {
+    console.error('[Auth] Report login activity failed:', err.message);
+  }
+}
+
+// 上报登出活动
+async function reportLogoutActivity() {
+  if (!authState.token) return;
+  const server = getAuthServer();
+  try {
+    const baseUrl = server.configUrl || server.authUrl;
+    await fetch(`${baseUrl}/memora/activity/logout`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        login_source: 'memora_client',
+        app_version: APP_VERSION,
+        platform: process.platform
+      })
+    });
+    console.log('[Auth] Logout activity reported');
+  } catch (err) {
+    console.error('[Auth] Report logout activity failed:', err.message);
+  }
+}
+
+// 拉取服务端通知
+async function fetchServerNotifications() {
+  if (!authState.isLoggedIn || !authState.token) return [];
+  const server = getAuthServer();
+  try {
+    const baseUrl = server.configUrl || server.authUrl;
+    const res = await fetch(`${baseUrl}/memora/notifications`, {
+      headers: { 'Authorization': `Bearer ${authState.token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      // API 文档响应格式：{ notifications: [...], unread_count: N }
+      return data.notifications || [];
+    }
+    return [];
+  } catch (err) {
+    console.error('[Notifications] Fetch error:', err.message);
+    return [];
+  }
+}
+
+// 获取未读通知数
+async function fetchUnreadNotificationCount() {
+  if (!authState.isLoggedIn || !authState.token) return 0;
+  const server = getAuthServer();
+  try {
+    const baseUrl = server.configUrl || server.authUrl;
+    const res = await fetch(`${baseUrl}/memora/notifications/unread-count`, {
+      headers: { 'Authorization': `Bearer ${authState.token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.unread_count || 0;
+    }
+    return 0;
+  } catch (err) {
+    console.error('[Notifications] Unread count error:', err.message);
+    return 0;
+  }
+}
+
+// 标记通知已读
+async function markNotificationRead(notificationId) {
+  if (!authState.isLoggedIn || !authState.token) return false;
+  const server = getAuthServer();
+  try {
+    const baseUrl = server.configUrl || server.authUrl;
+    const res = await fetch(`${baseUrl}/memora/notifications/${notificationId}/read`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${authState.token}` }
+    });
+    return res.ok;
+  } catch (err) {
+    console.error('[Notifications] Mark read error:', err.message);
+    return false;
+  }
+}
+
+// 标记所有通知已读
+async function markAllNotificationsRead() {
+  if (!authState.isLoggedIn || !authState.token) return false;
+  const server = getAuthServer();
+  try {
+    const baseUrl = server.configUrl || server.authUrl;
+    const res = await fetch(`${baseUrl}/memora/notifications/read-all`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${authState.token}` }
+    });
+    return res.ok;
+  } catch (err) {
+    console.error('[Notifications] Mark all read error:', err.message);
+    return false;
+  }
+}
+
+function getAuthServer() {
+  return AUTH_SERVERS[authState.env || 'beta'];
+}
 
 // 记忆系统
 const { MemoryStore, MEMORY_TYPES, MEMORY_CATEGORIES, BUSINESS_CATEGORIES, BUSINESS_KEYWORDS } = require('./src/scripts/memory');
@@ -64,6 +217,9 @@ let memoryStore;
 // 记事本系统
 const { Notebook } = require('./src/scripts/notebook');
 let notebook;
+
+// 知识萃取系统
+let knowledgeStore;
 
 // Prompt 引擎
 const PromptEngine = require('./src/scripts/promptEngine');
@@ -375,8 +531,8 @@ const DEFAULT_MEMORY_EXTRACTION_PROMPT = `你是一个个人上下文记忆系�
 
 // 获取当前API配置
 function getAPIConfig() {
-  // v2.0: 登录状态优先使用服务器配置
-  if (authState.isLoggedIn && remoteConfig?.api) {
+  // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
+  if (authState.isLoggedIn && remoteConfig?.api && !authState.forceLocalConfig) {
     return {
       apiKey: remoteConfig.api.api_key,
       baseUrl: remoteConfig.api.base_url,
@@ -542,12 +698,11 @@ const FILTER_CONFIG = {
   confidenceThreshold: 0.9, // 自动弹出建议的置信度阈值
   lowConfidenceThreshold: 0.7, // 静默候选的置信度阈值
   
-  // 黑名单关键词（优先过滤）
+  // 纯代码/纯技术格式黑名单（只过滤明显不是人类自然语言的内容，其余全交给AI判断）
   blacklistPatterns: [
-    /^https?:\/\//i, // URL链接
+    /^https?:\/\/\S+$/i, // 纯URL
     /^SELECT\s+/i, // SQL查询
-    /^Error:/i, // 错误信息
-    /^{.*}$/, // JSON对象
+    /^{[\s\S]*}$/, // JSON对象
     /^function\s+/i, // 函数定义
     /^const\s+/i, // 常量定义
     /^let\s+/i, // 变量定义
@@ -556,86 +711,8 @@ const FILTER_CONFIG = {
     /^export\s+/i, // 导出语句
     /^def\s+/i, // Python函数
     /^class\s+/i, // 类定义
-    /^public\s+/i, // Java/C#修饰符
-    /^private\s+/i, // Java/C#修饰符
-    /^\/\/.*$/, // 注释
-    /^#.*$/, // 注释
     /^```/, // 代码块
-    /^\d{6,}/, // 长数字（股票代码等）
-    /^0x[0-9a-fA-F]+$/, // 十六进制
-    /^[\w-]+\.[\w-]+$/ // 域名
-  ],
-  
-  // 白名单关键词（更可能是任务）
-  whitelistPatterns: [
-    // 行动动词
-    /提醒/i,
-    /记得/i,
-    /需要/i,
-    /应该/i,
-    /必须/i,
-    /完成/i,
-    /发送/i,
-    /回复/i,
-    /处理/i,
-    /联系/i,
-    /预约/i,
-    /安排/i,
-    /准备/i,
-    /整理/i,
-    /编写/i,
-    /修改/i,
-    /提交/i,
-    /审核/i,
-    /审批/i,
-    /跟进/i,
-    /汇报/i,
-    /开会/i,
-    /会议/i,
-    /收集/i,
-    /反馈/i,
-    /简化/i,
-    /评审/i,
-    /确认/i,
-    /讨论/i,
-    /沟通/i,
-    /梳理/i,
-    /优化/i,
-    /推动/i,
-    /落实/i,
-    /执行/i,
-    /部署/i,
-    /上线/i,
-    /推动/i,
-    /推进/i,
-    /协调/i,
-    /汇总/i,
-    /统计/i,
-    /分析/i,
-    /调研/i,
-    // 时间词
-    /周五之前/i,
-    /明天/i,
-    /今天/i,
-    /下周/i,
-    /月底/i,
-    /年底/i,
-    /之前/i,
-    /之前完成/i,
-    /尽快/i,
-    /尽早/i,
-    /来得及/i,
-    // 标签
-    /【工作流】/i,
-    /【任务】/i,
-    /【待办】/i,
-    // @提及（强待办信号）
-    /@\S+/,
-    // 编号列表（1）2）3）等格式，典型任务列表）
-    /\d+[）\).]\s*/,
-    // 看看怎么/想想怎么（隐含待办）
-    /看看怎么/i,
-    /想想怎么/i
+    /^0x[0-9a-fA-F]+$/ // 十六进制
   ]
 };
 
@@ -658,33 +735,12 @@ function preClassify(text) {
     }
   }
   
-  // 4. 检查是否看起来像任务（白名单匹配）
-  let hasWhitelistMatch = false;
-  let matchedPatterns = [];
-  let hasAtMention = false;
-  let hasNumberedList = false;
+  // 4. 检测强信号用于辅助提示（不作为过滤条件）
+  let hasAtMention = /@\S+/.test(text);
+  let hasNumberedList = /\d+[）\).]\s*/.test(text);
   
-  for (const pattern of FILTER_CONFIG.whitelistPatterns) {
-    if (pattern.test(text)) {
-      hasWhitelistMatch = true;
-      matchedPatterns.push(pattern.toString());
-      // 检测 @提及（强信号）
-      if (pattern.source === /@\S+/.source) hasAtMention = true;
-      // 检测编号列表（强信号）
-      if (pattern.source === /\d+[）\).]\s*/.source) hasNumberedList = true;
-    }
-  }
-  
-  // 如果没有匹配任何白名单关键词，可能是普通文本
-  if (!hasWhitelistMatch) {
-    return { 
-      shouldAnalyze: false, 
-      reason: '未匹配任务相关关键词，跳过分析以节省token' 
-    };
-  }
-  
-  const matchInfo = hasAtMention ? '含@提及' : hasNumberedList ? '含编号列表' : '关键词匹配';
-  console.log('[PreClassify] Whitelist matched:', matchedPatterns.join(', '), '- Signal:', matchInfo);
+  // 通过预分类，交给AI判断（不再用白名单硬过滤）
+  const matchInfo = hasAtMention ? '含@提及' : hasNumberedList ? '含编号列表' : '自然语言文本';
   
   return { 
     shouldAnalyze: true, 
@@ -979,7 +1035,7 @@ async function analyzeClipboardText(text) {
           analysis: {
             reason: '每日调用次数已达上限'
           }
-        });
+        }); // addNote 自动去重，返回 null 表示重复
       }
       isAnalyzing = false;
       return;
@@ -1183,6 +1239,13 @@ async function analyzeClipboardText(text) {
           mainWindow.webContents.send('new-note-added', {
             source: 'clipboard',
             title: result.title || text.substring(0, 30)
+          });
+        }
+
+        // 知识萃取：异步提取知识原子（不阻塞主流程）
+        if (knowledgeStore && savedNoteId) {
+          extractKnowledgeAtoms(text, savedNoteId, result.tags).catch(err => {
+            console.error('[Knowledge] Atom extraction error:', err);
           });
         }
       } else {
@@ -1848,6 +1911,11 @@ ipcMain.handle('get-clipboard-text', async () => {
   return clipboard.readText();
 });
 
+ipcMain.handle('write-clipboard-text', async (event, text) => {
+  clipboard.writeText(text);
+  return true;
+});
+
 // 获取AI每日调用统计
 ipcMain.handle('get-ai-stats', async () => {
   initAICallCount();
@@ -1891,7 +1959,8 @@ ipcMain.handle('get-api-config', async () => {
     model: config.model,
     dailyLimit: config.dailyLimit,
     isCustomKey: config.isCustomKey,
-    fromServer: authState.isLoggedIn && !!remoteConfig?.api  // v2.0: 标记是否来自服务器
+    fromServer: authState.isLoggedIn && !!remoteConfig?.api && !authState.forceLocalConfig,  // v2.0: 标记是否来自服务器
+    forceLocalConfig: authState.forceLocalConfig || false
     // 不返回apiKey，防止泄露
   };
 });
@@ -1921,28 +1990,45 @@ ipcMain.handle('clear-api-key', async () => {
 });
 
 // ADP配置相关
+const DEFAULT_ADP_APP_KEY = 'EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm';
+
 ipcMain.handle('get-adp-config', async () => {
-  // v2.0: 登录状态优先使用服务器配置
-  if (authState.isLoggedIn && remoteConfig?.adp) {
+  // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+    const serverAppKey = remoteConfig.adp.app_key || '';
+    const serverKnowledgeAppKey = remoteConfig.adp.knowledge_app_key || '';
+    const serverSearchAppKey = remoteConfig.adp.search_app_key || '';
     return {
-      appKey: remoteConfig.adp.app_key || '',
+      appKey: serverAppKey || DEFAULT_ADP_APP_KEY,
       url: remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
       agentName: remoteConfig.adp.agent_name || '我的AI助手',
-      knowledgeAppKey: remoteConfig.adp.knowledge_app_key || '',
-      searchAppKey: remoteConfig.adp.search_app_key || '',
-      fromServer: true  // 标记来自服务器
+      knowledgeAppKey: serverKnowledgeAppKey || DEFAULT_ADP_APP_KEY,
+      searchAppKey: serverSearchAppKey || DEFAULT_ADP_APP_KEY,
+      fromServer: true,
+      // 详细标注每个 Key 的真实来源：server=服务器配置, default=本地默认值, custom=用户自定义
+      configSource: {
+        appKey: serverAppKey ? 'server' : 'default',
+        knowledgeAppKey: serverKnowledgeAppKey ? 'server' : 'default',
+        searchAppKey: serverSearchAppKey ? 'server' : 'default',
+      }
     };
   }
-  
+
+  const localAppKey = getSetting('adp_app_key') || '';
+  const localKnowledgeAppKey = getSetting('adp_knowledge_app_key') || '';
+  const localSearchAppKey = getSetting('adp_search_app_key') || '';
   return {
-    appKey: getSetting('adp_app_key') || '',
+    appKey: localAppKey || DEFAULT_ADP_APP_KEY,
     url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
     agentName: getSetting('adp_agent_name') || '我的AI助手',
-    // 知识跟随专用 AppKey
-    knowledgeAppKey: getSetting('adp_knowledge_app_key') || '',
-    // 搜索问答专用 AppKey
-    searchAppKey: getSetting('adp_search_app_key') || '',
-    fromServer: false
+    knowledgeAppKey: localKnowledgeAppKey || '',
+    searchAppKey: localSearchAppKey || '',
+    fromServer: false,
+    configSource: {
+      appKey: localAppKey ? 'custom' : 'default',
+      knowledgeAppKey: localKnowledgeAppKey ? 'custom' : 'default',
+      searchAppKey: localSearchAppKey ? 'custom' : 'default',
+    }
   };
 });
 
@@ -1979,12 +2065,13 @@ ipcMain.handle('clear-adp-config', async () => {
 // 拉取远程配置到内存（不写磁盘）
 async function fetchRemoteConfig() {
   if (!authState.isLoggedIn || !authState.token) return;
-  
+
+  const server = getAuthServer();
   try {
-    const res = await fetch(`${CONFIG_SERVER_URL}/config`, {
+    const res = await fetch(`${server.configUrl}${server.configPath}`, {
       headers: { 'Authorization': `Bearer ${authState.token}` }
     });
-    
+
     if (res.ok) {
       const data = await res.json();
       // 仅存内存，不写磁盘，退出登录即消失
@@ -2004,14 +2091,24 @@ async function fetchRemoteConfig() {
 }
 
 // 退出登录处理
-async function handleLogout() {
-  authState = { isLoggedIn: false, token: null, user: null };
+async function handleLogout(clearToken = true) {
+  const env = authState.env;  // 保留环境选择
+  // 退出前先上报登出活动
+  if (authState.isLoggedIn && authState.token) {
+    await reportLogoutActivity();
+  }
+  // 停止通知轮询
+  stopNotificationPolling();
+  authState = { isLoggedIn: false, token: null, user: null, env, forceLocalConfig: false };
   remoteConfig = null;  // 清空内存中的服务器配置
-  
-  // 清除持久化的 token
-  deleteSetting('auth_token');
-  deleteSetting('auth_user');
-  
+
+  if (clearToken) {
+    // 清除持久化的 token
+    deleteSetting('auth_token');
+    deleteSetting('auth_user');
+    deleteSetting('auth_remember_me');
+  }
+
   // 通知渲染进程
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('auth:changed', { isLoggedIn: false });
@@ -2022,21 +2119,60 @@ async function handleLogout() {
 async function autoLogin() {
   const token = getSetting('auth_token');
   const userStr = getSetting('auth_user');
-  
+  const savedEnv = getSetting('auth_env') || 'beta';
+  const savedForceLocal = getSetting('auth_force_local') === '1';
+  const rememberMe = getSetting('auth_remember_me') !== '0';  // 默认 true
+
+  // 如果用户未勾选记住登录，清除 token 不自动登录
+  if (!rememberMe && token) {
+    deleteSetting('auth_token');
+    deleteSetting('auth_user');
+    deleteSetting('auth_remember_me');
+    console.log('[Auth] Remember me disabled, cleared token');
+    return;
+  }
+
   if (!token || !userStr) return;
-  
+
+  authState.env = savedEnv;
+  authState.forceLocalConfig = savedForceLocal;
+  const server = getAuthServer();
+
   try {
-    const res = await fetch(`${CONFIG_SERVER_URL}/auth/validate`, {
+    const res = await fetch(`${server.authUrl}${server.validatePath}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    
+
     if (res.ok) {
       const data = await res.json();
       authState.isLoggedIn = true;
       authState.token = token;
-      authState.user = data.user;
+      authState.user = data.user || data;
       await fetchRemoteConfig();
-      console.log('[Auth] Auto login success:', authState.user?.email);
+      console.log('[Auth] Auto login success:', authState.user?.email || authState.user?.username);
+      // 自动登录成功通知
+      showNotification('忆境 Memora', `欢迎回来，${authState.user?.name || authState.user?.email || ''}！`);
+      // 上报自动登录活动
+      await reportLoginActivity(!!remoteConfig);
+      // 拉取服务端通知并显示
+      const serverNotifs = await fetchServerNotifications();
+      if (serverNotifs.length > 0) {
+        const unread = serverNotifs.filter(n => !n.read);
+        if (unread.length > 0) {
+          showNotification('忆境 Memora', `你有 ${unread.length} 条未读通知`);
+        }
+        // 通知渲染进程
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('notifications:updated', { notifications: serverNotifs, unreadCount: unread.length });
+        }
+      }
+      // 启动通知轮询
+      startNotificationPolling();
+      // 检查更新
+      const updateInfo = await checkForUpdate();
+      if (updateInfo.has_update && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update:available', updateInfo);
+      }
     } else {
       // token 失效，清理
       deleteSetting('auth_token');
@@ -2049,40 +2185,73 @@ async function autoLogin() {
   }
 }
 
-// 登录
-ipcMain.handle('auth:login', async (event, { email, password }) => {
+// 登录（支持双环境）
+ipcMain.handle('auth:login', async (event, { email, password, env, rememberMe }) => {
   try {
-    const res = await fetch(`${CONFIG_SERVER_URL}/auth/login`, {
+    // 设置环境
+    authState.env = env || 'beta';
+    const server = getAuthServer();
+
+    // 根据环境构建登录请求
+    const loginBody = server.loginField === 'username'
+      ? { username: email, password }  // 正式环境用 username
+      : { email, password };           // Beta 环境用 email
+
+    const res = await fetch(`${server.authUrl}${server.loginPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify(loginBody)
     });
-    
+
     const data = await res.json();
-    
+
     if (!res.ok) {
-      return { success: false, error: data.message || '登录失败' };
+      return { success: false, error: data.message || data.error || '登录失败' };
     }
-    
+
     // 保存认证状态到内存
     authState.isLoggedIn = true;
     authState.token = data.token;
     authState.user = data.user;
-    
-    // 持久化 token（仅 token，不含配置）
+    authState.forceLocalConfig = false;  // 新登录默认使用云端配置
+
+    // 持久化 token 和环境
     setSetting('auth_token', data.token);
     setSetting('auth_user', JSON.stringify(data.user));
-    
+    setSetting('auth_env', authState.env);
+    setSetting('auth_force_local', '0');
+    setSetting('auth_remember_me', rememberMe !== false ? '1' : '0');  // 记住登录状态
+
     // 拉取服务器配置到内存
     await fetchRemoteConfig();
-    
+
     // 通知渲染进程
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('auth:changed', { isLoggedIn: true, user: data.user });
+      mainWindow.webContents.send('auth:changed', { isLoggedIn: true, user: data.user, env: authState.env });
     }
-    
-    console.log('[Auth] Login success:', data.user.email);
-    return { success: true, user: data.user };
+
+    console.log('[Auth] Login success:', data.user?.email || data.user?.username, 'env:', authState.env);
+    // 上报登录活动
+    await reportLoginActivity(!!remoteConfig);
+    // 拉取服务端通知并显示
+    const serverNotifs = await fetchServerNotifications();
+    if (serverNotifs.length > 0) {
+      const unread = serverNotifs.filter(n => !n.read);
+      if (unread.length > 0) {
+        showNotification('忆境 Memora', `你有 ${unread.length} 条未读通知`);
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('notifications:updated', { notifications: serverNotifs, unreadCount: unread.length });
+      }
+    }
+    // 启动通知轮询
+    startNotificationPolling();
+    // 检查更新
+    const updateInfo = await checkForUpdate();
+    if (updateInfo.has_update && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:available', updateInfo);
+    }
+    return { success: true, user: data.user, env: authState.env };
   } catch (err) {
     console.error('[Auth] Login error:', err);
     return { success: false, error: '网络错误，请检查连接' };
@@ -2097,11 +2266,99 @@ ipcMain.handle('auth:logout', async () => {
 
 // 获取当前认证状态
 ipcMain.handle('auth:get-state', async () => {
+  const server = getAuthServer();
   return {
     isLoggedIn: authState.isLoggedIn,
     user: authState.user,
-    serverUrl: CONFIG_SERVER_URL
+    env: authState.env || 'beta',
+    forceLocalConfig: authState.forceLocalConfig || false,
+    rememberMe: getSetting('auth_remember_me') !== '0',
+    serverName: server.name,
+    authUrl: server.authUrl
   };
+});
+
+// 配置源切换（云端/本地）
+ipcMain.handle('config:set-source', async (event, { forceLocal }) => {
+  authState.forceLocalConfig = !!forceLocal;
+  setSetting('auth_force_local', authState.forceLocalConfig ? '1' : '0');
+  console.log('[Auth] Config source set to:', authState.forceLocalConfig ? 'local' : 'cloud');
+  return { success: true, forceLocalConfig: authState.forceLocalConfig };
+});
+
+ipcMain.handle('config:get-source', async () => {
+  return {
+    forceLocalConfig: authState.forceLocalConfig || false,
+    isLoggedIn: authState.isLoggedIn,
+    hasRemoteConfig: !!remoteConfig
+  };
+});
+
+// 通知相关 IPC
+ipcMain.handle('notifications:fetch', async () => {
+  return await fetchServerNotifications();
+});
+
+ipcMain.handle('notifications:unread-count', async () => {
+  return await fetchUnreadNotificationCount();
+});
+
+ipcMain.handle('notifications:mark-read', async (event, notificationId) => {
+  return await markNotificationRead(notificationId);
+});
+
+ipcMain.handle('notifications:mark-all-read', async () => {
+  return await markAllNotificationsRead();
+});
+
+// ===== 版本更新 =====
+
+// 检查更新（公开接口，无需登录）
+async function checkForUpdate() {
+  const server = getAuthServer();
+  const baseUrl = server.configUrl || server.authUrl;
+  try {
+    const url = `${baseUrl}/memora/updates/check?version=${APP_VERSION}&platform=${process.platform}&arch=${process.arch}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      return await res.json();
+    }
+    return { has_update: false };
+  } catch (err) {
+    console.error('[Updates] Check error:', err.message);
+    return { has_update: false, error: err.message };
+  }
+}
+
+// 通知轮询定时器
+let notificationPollTimer = null;
+
+function startNotificationPolling(intervalMs = 5 * 60 * 1000) {
+  stopNotificationPolling();
+  // 立即拉取一次
+  fetchAndNotifyNotifications();
+  notificationPollTimer = setInterval(fetchAndNotifyNotifications, intervalMs);
+  console.log('[Notifications] Polling started, interval:', intervalMs / 1000, 's');
+}
+
+function stopNotificationPolling() {
+  if (notificationPollTimer) {
+    clearInterval(notificationPollTimer);
+    notificationPollTimer = null;
+  }
+}
+
+async function fetchAndNotifyNotifications() {
+  if (!authState.isLoggedIn || !authState.token) return;
+  const serverNotifs = await fetchServerNotifications();
+  const unread = serverNotifs.filter(n => !n.read);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('notifications:updated', { notifications: serverNotifs, unreadCount: unread.length });
+  }
+}
+
+ipcMain.handle('updates:check', async () => {
+  return await checkForUpdate();
 });
 
 // 手动同步配置
@@ -2111,112 +2368,155 @@ ipcMain.handle('config:sync', async () => {
   return { success: true };
 });
 
-// ADP消息发送（主进程处理，使用WebSocket协议）
+// ADP消息发送（流式SSE推送，参考 knowledge:search-adp 架构）
+let activeChatADPController = null;
+
 ipcMain.handle('send-adp-message', async (event, message) => {
-  // v2.0: 登录状态优先使用服务器配置
-  let appKey, url;
-  if (authState.isLoggedIn && remoteConfig?.adp) {
+  // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
+  let appKey, url, configSource = 'default';
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
     appKey = remoteConfig.adp.app_key;
     url = remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+    configSource = appKey ? 'cloud' : 'default';
   } else {
     appKey = getSetting('adp_app_key');
     url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+    configSource = appKey ? 'local' : 'default';
   }
   
-  console.log('[ADP Main] send-adp-message called');
-  console.log('[ADP Main] appKey exists:', !!appKey);
-  console.log('[ADP Main] URL:', url);
-  console.log('[ADP Main] Message:', message);
-  
+  // AppKey 回退
   if (!appKey || appKey.trim() === '') {
-    console.error('[ADP Main] AppKey not configured');
-    return { success: false, error: '请先配置ADP AppKey' };
+    appKey = DEFAULT_ADP_APP_KEY;
+    configSource = 'default';
   }
   
-  // 将https转换为wss协议
-  const wsUrl = url.replace(/^https?:\/\//, 'wss://');
-  console.log('[ADP Main] WebSocket URL:', wsUrl);
+  console.log('[ADP Chat] send-adp-message called, configSource:', configSource);
   
+  const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
   const requestBody = {
-    RequestId: Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join(''),
-    ConversationId: Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join(''),
+    RequestId: requestId,
+    ConversationId: convId,
     AppKey: appKey.trim(),
-    VisitorId: Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join(''),
+    VisitorId: getDeviceFingerprint(),
     Contents: [{ Type: 'text', Text: message }],
     Incremental: true,
     Stream: 'enable',
-    StreamingThrottle: 5,
+    StreamingThrottle: 5
   };
   
-  console.log('[ADP Main] Request body:', JSON.stringify(requestBody, null, 2));
-  
   try {
-    const WebSocket = require('ws');
-    
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
-      let fullText = '';
-      let timeout = null;
-      
-      console.log('[ADP Main] WebSocket connecting...');
-      
-      ws.on('open', () => {
-        console.log('[ADP Main] WebSocket connected');
-        ws.send(JSON.stringify(requestBody));
-        console.log('[ADP Main] Request sent');
-        
-        // 设置超时时间（60秒）
-        timeout = setTimeout(() => {
-          console.error('[ADP Main] Request timeout');
-          ws.close();
-          reject({ success: false, error: '请求超时' });
-        }, 60000);
-      });
-      
-      ws.on('message', (data) => {
-        const messageStr = data.toString();
-        console.log('[ADP Main] Message received:', messageStr.substring(0, 300));
-        
-        try {
-          const parsed = JSON.parse(messageStr);
-          
-          if (parsed.event === 'message.added' && parsed.content?.text) {
-            fullText += parsed.content.text;
-            console.log('[ADP Main] Text received:', parsed.content.text);
-          } else if (parsed.event === 'text.delta' && parsed.content?.text) {
-            fullText += parsed.content.text;
-            console.log('[ADP Main] Delta received:', parsed.content.text);
-          } else if (parsed.event === 'message.finish' || parsed.event === 'response.completed') {
-            console.log('[ADP Main] Message finished');
-            clearTimeout(timeout);
-            ws.close();
-          } else if (parsed.error) {
-            console.error('[ADP Main] Error:', parsed.error);
-            clearTimeout(timeout);
-            ws.close();
-            reject({ success: false, error: parsed.error });
-          }
-        } catch (e) {
-          console.error('[ADP Main] Parse error:', e);
-        }
-      });
-      
-      ws.on('error', (error) => {
-        console.error('[ADP Main] WebSocket error:', error);
-        clearTimeout(timeout);
-        reject({ success: false, error: error.message });
-      });
-      
-      ws.on('close', () => {
-        console.log('[ADP Main] WebSocket closed');
-        clearTimeout(timeout);
-        resolve({ success: true, content: fullText });
-      });
+    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+
+    const controller = new AbortController();
+    activeChatADPController = controller;
+
+    const response = await fetch(httpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
     });
+
+    if (!response.ok) {
+      activeChatADPController = null;
+      return { success: false, error: `ADP请求失败: HTTP ${response.status}`, configSource };
+    }
+
+    // 立即返回成功，后续通过 IPC 事件流式推送每个 SSE event
+    // 异步处理 SSE 流
+    (async () => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentData = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.replace(/\r$/, '');
+            if (trimmed.startsWith(':')) continue; // 心跳注释
+            else if (trimmed.startsWith('event:')) {
+              currentEvent = trimmed.substring(6).trim();
+            }
+            else if (trimmed.startsWith('data:')) {
+              currentData += trimmed.substring(5).trim();
+            }
+            else if (trimmed === '') {
+              // SSE 事件边界
+              if (currentData) {
+                if (currentData === '[DONE]') {
+                  mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource });
+                  activeChatADPController = null;
+                  return;
+                }
+                try {
+                  const parsed = JSON.parse(currentData);
+                  // 推送完整的 {event, data} 给前端，让前端处理渲染
+                  mainWindow.webContents.send('adp:sse-event', {
+                    event: currentEvent || parsed.Type || '',
+                    data: parsed,
+                    configSource
+                  });
+                } catch (e) {
+                  // 非 JSON 忽略
+                }
+                currentEvent = '';
+                currentData = '';
+              }
+            }
+          }
+        }
+
+        // 流结束，发送兜底 done
+        if (currentData && currentData !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(currentData);
+            mainWindow.webContents.send('adp:sse-event', {
+              event: currentEvent || parsed.Type || '',
+              data: parsed,
+              configSource
+            });
+          } catch (e) {}
+        }
+        mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource });
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource, aborted: true });
+        } else {
+          mainWindow.webContents.send('adp:sse-event', { event: 'error', data: { Error: { Message: e.message } }, configSource });
+        }
+      }
+      activeChatADPController = null;
+    })();
+
+    return { success: true, streaming: true, configSource };
   } catch (error) {
-    console.error('[ADP Main] Error:', error);
-    return { success: false, error: error.message };
+    activeChatADPController = null;
+    if (error.name === 'AbortError') {
+      return { success: false, error: '请求超时', configSource };
+    }
+    return { success: false, error: error.message || '连接失败', configSource };
   }
+});
+
+// 停止 ADP 聊天流
+ipcMain.handle('adp:stop-message', async () => {
+  if (activeChatADPController) {
+    activeChatADPController.abort();
+    activeChatADPController = null;
+    return { success: true };
+  }
+  return { success: false, error: '没有进行中的请求' };
 });
 
 // 记忆系统相关
@@ -2282,6 +2582,8 @@ ipcMain.handle('get-clipboard-hash-count', async () => {
 ipcMain.handle('notebook-add-note', async (event, note) => {
   if (!notebook) return { success: false };
   const result = notebook.addNote(note);
+  // addNote 返回 null 表示当天重复内容
+  if (!result) return { success: true, duplicate: true, note: null };
   return { success: true, note: result };
 });
 
@@ -2375,7 +2677,166 @@ ipcMain.handle('notebook-save-categories', async (event, categories) => {
   return { success: true };
 });
 
-// ========== 记忆提取Prompt配置 ==========
+// ========== 知识萃取IPC处理器 ==========
+
+// 知识原子
+ipcMain.handle('knowledge:get-atoms', async (event, filter) => {
+  if (!knowledgeStore) return { atoms: [] };
+  return { atoms: knowledgeStore.getAtoms(filter) };
+});
+
+ipcMain.handle('knowledge:get-atom-by-id', async (event, id) => {
+  if (!knowledgeStore) return { atom: null };
+  return { atom: knowledgeStore.getAtomById(id) };
+});
+
+ipcMain.handle('knowledge:add-atom', async (event, atom) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.addAtom(atom);
+  return { success: !!result, atom: result };
+});
+
+ipcMain.handle('knowledge:delete-atom', async (event, id) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.deleteAtom(id);
+  return { success: !!result };
+});
+
+ipcMain.handle('knowledge:update-atom', async (event, id, updates) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.updateAtom(id, updates);
+  return { success: !!result, atom: result };
+});
+
+// 知识簇
+ipcMain.handle('knowledge:get-clusters', async (event, filter) => {
+  if (!knowledgeStore) return { clusters: [] };
+  return { clusters: knowledgeStore.getClusters(filter) };
+});
+
+ipcMain.handle('knowledge:get-cluster-by-id', async (event, id) => {
+  if (!knowledgeStore) return { cluster: null, atoms: [] };
+  const cluster = knowledgeStore.getClusterById(id);
+  if (!cluster) return { cluster: null, atoms: [] };
+  const atoms = (cluster.atom_ids || []).map(aid => knowledgeStore.getAtomById(aid)).filter(Boolean);
+  return { cluster, atoms };
+});
+
+ipcMain.handle('knowledge:create-cluster', async (event, cluster) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.addCluster(cluster);
+  return { success: !!result, cluster: result };
+});
+
+ipcMain.handle('knowledge:update-cluster', async (event, id, updates) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.updateCluster(id, updates);
+  return { success: !!result, cluster: result };
+});
+
+ipcMain.handle('knowledge:delete-cluster', async (event, id, atomAction) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.deleteCluster(id, atomAction || 'release');
+  return { success: !!result };
+});
+
+ipcMain.handle('knowledge:cluster-atom', async (event, atomId, clusterId) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.clusterAtom(atomId, clusterId);
+  return { success: !!result };
+});
+
+ipcMain.handle('knowledge:auto-cluster', async () => {
+  if (!knowledgeStore) return { clustersCreated: 0, atomsAssigned: 0 };
+  // 先合并相似簇和清理空簇
+  const mergeResult = knowledgeStore.mergeSimilarClusters();
+  const cleanupResult = knowledgeStore.cleanupEmptyClusters();
+  // 更新簇状态
+  for (const cluster of knowledgeStore.getClusters()) {
+    if (cluster.status === 'growing' && cluster.atom_ids.length >= 3) {
+      knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
+    }
+  }
+  return await autoClusterAtoms();
+});
+
+// 知识文章
+ipcMain.handle('knowledge:get-articles', async (event, filter) => {
+  if (!knowledgeStore) return { articles: [] };
+  return { articles: knowledgeStore.getArticles(filter) };
+});
+
+ipcMain.handle('knowledge:get-article', async (event, id) => {
+  if (!knowledgeStore) return { article: null };
+  return { article: knowledgeStore.getArticleById(id) };
+});
+
+ipcMain.handle('knowledge:generate-article', async (event, clusterId) => {
+  return await generateArticle(clusterId);
+});
+
+ipcMain.handle('knowledge:update-article', async (event, id, updates) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.updateArticle(id, updates);
+  return { success: !!result, article: result };
+});
+
+ipcMain.handle('knowledge:delete-article', async (event, id) => {
+  if (!knowledgeStore) return { success: false };
+  const result = knowledgeStore.deleteArticle(id);
+  return { success: !!result };
+});
+
+// 统计与领域
+ipcMain.handle('knowledge:get-stats', async () => {
+  if (!knowledgeStore) return {};
+  return knowledgeStore.getStats();
+});
+
+ipcMain.handle('knowledge:get-domains', async () => {
+  if (!knowledgeStore) return { domains: [] };
+  return { domains: knowledgeStore.getDomains() };
+});
+
+// 一键萃取：提取+聚类+合成
+ipcMain.handle('knowledge:distill-all', async () => {
+  if (!knowledgeStore) return { success: false };
+  // 先合并相似簇和清理空簇
+  knowledgeStore.mergeSimilarClusters();
+  knowledgeStore.cleanupEmptyClusters();
+  // 更新簇状态（合并后可能有新 mature 簇）
+  for (const cluster of knowledgeStore.getClusters()) {
+    if (cluster.status === 'growing' && cluster.atom_ids.length >= 3) {
+      knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
+    }
+  }
+  const clusterResult = await autoClusterAtoms();
+  // 自动合成成熟簇的文章
+  const matureClusters = knowledgeStore.getClusters({ status: 'mature' });
+  const articlesGenerated = [];
+  for (const cluster of matureClusters) {
+    if (!cluster.article_id) {
+      const result = await generateArticle(cluster.id);
+      if (result.success) articlesGenerated.push(result.article);
+    }
+  }
+  return {
+    success: true,
+    clustersCreated: clusterResult.clustersCreated,
+    atomsAssigned: clusterResult.atomsAssigned,
+    articlesGenerated: articlesGenerated.length,
+    articles: articlesGenerated
+  };
+});
+
+// 从指定笔记提取原子
+ipcMain.handle('knowledge:extract-atoms', async (event, noteId) => {
+  if (!knowledgeStore || !notebook) return { success: false };
+  const note = notebook.getNoteById(noteId);
+  if (!note) return { success: false, error: '笔记不存在' };
+  await extractKnowledgeAtoms(note.content, noteId, note.tags || []);
+  return { success: true };
+});
 
 ipcMain.handle('get-memory-prompt', async () => {
   return getCurrentMemoryPrompt();
@@ -2646,6 +3107,11 @@ app.whenReady().then(() => {
   notebook = new Notebook();
   console.log('[Notebook] Notebook initialized');
   
+  // 初始化知识萃取系统
+  const { KnowledgeStore } = require('./src/scripts/knowledgeStore');
+  knowledgeStore = new KnowledgeStore();
+  console.log('[KnowledgeStore] Knowledge distillation store initialized');
+
   // 初始化反馈系统
   feedbackLogger = new FeedbackLogger();
   console.log('[Feedback] Feedback logger initialized');
@@ -2701,6 +3167,16 @@ app.on('before-quit', () => {
   // 保存数据库
   if (db) {
     try { db.save(); } catch (e) { console.error('[Database] Save on quit failed:', e); }
+  }
+  // 退出应用时：上报登出活动
+  if (authState.isLoggedIn && authState.token) {
+    reportLogoutActivity();
+  }
+  // 退出应用时：如果未勾选"记住登录"，清除 token
+  if (getSetting('auth_remember_me') === '0' && authState.isLoggedIn) {
+    console.log('[Auth] App quitting, remember me disabled - clearing token');
+    deleteSetting('auth_token');
+    deleteSetting('auth_user');
   }
 });
 
@@ -3843,12 +4319,360 @@ function classifyClipboardIntent(text, aiResult) {
   return maxIntents[0][0];
 }
 
+// ========== 知识萃取系统 ==========
+
+// 知识原子提取：从笔记内容中提取知识原子
+async function extractKnowledgeAtoms(content, sourceNoteId, tags) {
+  try {
+    const apiConfig = getAPIConfig();
+    const promptPath = path.join(PROMPT_DIR, 'knowledge_atom_extraction.md');
+    let promptTemplate;
+    try {
+      promptTemplate = fs.readFileSync(promptPath, 'utf8');
+    } catch (e) {
+      // Prompt 文件不存在，使用内置模板
+      promptTemplate = `从以下笔记内容中提取1-3个知识原子（最小可复用知识单元）。
+
+规则：
+- 每个原子是一句独立的、可脱离原文理解的知识点
+- 类型：fact(事实)/rule(规则)/insight(洞察)/procedure(步骤)/question(未解决问题)
+- 如果笔记中有疑问或未解决的问题，务必提取为 question 类型
+- 领域分类：技术-ADP/技术-部署/技术-数据库/技术-前端/技术-后端/技术-网络/产品-智能体/产品-知识库/项目-管理/商务-招投标/通用
+- 重要度 0-1（关键规则0.9+，重要事实0.7+，有用信息0.5+，辅助0.3+）
+
+输出严格JSON：
+{"atoms":[{"content":"...","type":"fact","domain":"技术-XX","importance":0.8}]}
+
+笔记内容：
+{content}`;
+    }
+
+    const prompt = promptTemplate
+      .replace('{title}', '')
+      .replace('{content}', content.substring(0, 1500));
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 1000
+      })
+    });
+
+    if (!response.ok) {
+      console.error('[Knowledge] Atom extraction API error:', response.status);
+      return;
+    }
+
+    const data = await response.json();
+    const rawText = data.choices?.[0]?.message?.content || '';
+
+    // 解析 JSON
+    let parsed;
+    try {
+      const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('[Knowledge] Atom extraction parse error:', e, 'raw:', rawText.substring(0, 200));
+      return;
+    }
+
+    if (!parsed.atoms || !Array.isArray(parsed.atoms)) return;
+
+    // 保存提取的原子
+    const savedAtoms = [];
+    for (const atomData of parsed.atoms) {
+      if (!atomData.content || atomData.content.trim().length < 5) continue;
+      const atom = knowledgeStore.addAtom({
+        content: atomData.content.trim(),
+        source_note_ids: [sourceNoteId],
+        domain: atomData.domain || '通用',
+        type: atomData.type || 'fact',
+        importance: atomData.importance ?? 0.5
+      });
+      if (atom) savedAtoms.push(atom);
+    }
+
+    if (savedAtoms.length > 0) {
+      console.log('[Knowledge] Extracted', savedAtoms.length, 'atoms from note:', sourceNoteId);
+      // 通知前端知识图谱更新
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:atoms-updated', { count: savedAtoms.length });
+      }
+    }
+  } catch (e) {
+    console.error('[Knowledge] extractKnowledgeAtoms error:', e);
+  }
+}
+
+// 知识聚类：将未归簇的原子智能分组
+async function autoClusterAtoms() {
+  try {
+    const unclustered = knowledgeStore.getAtoms({ unclustered: true });
+    if (unclustered.length < 3) {
+      console.log('[Knowledge] Too few unclustered atoms for clustering:', unclustered.length);
+      return { clustersCreated: 0, atomsAssigned: 0 };
+    }
+
+    const apiConfig = getAPIConfig();
+    const promptPath = path.join(PROMPT_DIR, 'knowledge_clustering.md');
+    let promptTemplate;
+    try {
+      promptTemplate = fs.readFileSync(promptPath, 'utf8');
+    } catch (e) {
+      promptTemplate = `将以下知识原子按主题聚类。
+
+重要规则：
+1. 优先归入已有簇，只有确实无法归入时才新建簇
+2. 同一主题的原子应归入同一个簇，不要拆分到多个新建簇
+3. 尽量减少新建簇的数量，宁可归入稍相关的已有簇
+4. 新建簇时确保名称不与已有簇重复
+
+已有知识簇：
+{existing_clusters}
+
+待聚类原子：
+{unclustered_atoms}
+
+输出严格JSON：
+{"assignments":[{"atom_id":"...","cluster_id":"已有簇ID或null","new_cluster_name":"新建时","new_cluster_description":"新建时","new_cluster_keywords":["新建时"]}],"mature_cluster_ids":[]}`;
+    }
+
+    const existingClusters = knowledgeStore.getClusters().map(c =>
+      `ID: ${c.id} | 名称: ${c.name} | 领域: ${c.domain} | 关键词: ${c.keywords.join('/')}`
+    ).join('\n');
+
+    const unclusteredStr = unclustered.map(a =>
+      `ID: ${a.id} | 内容: ${a.content} | 类型: ${a.type} | 领域: ${a.domain}`
+    ).join('\n');
+
+    const prompt = promptTemplate
+      .replace('{existing_clusters}', existingClusters || '（暂无）')
+      .replace('{unclustered_atoms}', unclusteredStr);
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 2000
+      })
+    });
+
+    if (!response.ok) return { clustersCreated: 0, atomsAssigned: 0 };
+
+    const data = await response.json();
+    const rawText = data.choices?.[0]?.message?.content || '';
+
+    let parsed;
+    try {
+      const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('[Knowledge] Clustering parse error:', e);
+      return { clustersCreated: 0, atomsAssigned: 0 };
+    }
+
+    let clustersCreated = 0;
+    let atomsAssigned = 0;
+    const newClusterMap = {};
+
+    for (const assignment of (parsed.assignments || [])) {
+      let clusterId = assignment.cluster_id;
+
+      // 新建簇前检查：是否已有同名簇？如有则直接归入
+      if (!clusterId && assignment.new_cluster_name) {
+        const existingCluster = knowledgeStore.getClusters().find(
+          c => c.name === assignment.new_cluster_name
+        );
+        if (existingCluster) {
+          // 同名簇已存在，直接归入
+          clusterId = existingCluster.id;
+          console.log('[Knowledge] Reusing existing cluster:', existingCluster.name);
+        } else {
+          const cluster = knowledgeStore.addCluster({
+            name: assignment.new_cluster_name,
+            description: assignment.new_cluster_description || '',
+            keywords: assignment.new_cluster_keywords || [],
+            atom_ids: [],
+            domain: unclustered.find(a => a.id === assignment.atom_id)?.domain || '通用'
+          });
+          if (cluster) {
+            newClusterMap[assignment.atom_id] = cluster.id;
+            clusterId = cluster.id;
+            clustersCreated++;
+          }
+        }
+      }
+
+      // 归入簇
+      if (clusterId) {
+        const result = knowledgeStore.clusterAtom(assignment.atom_id, clusterId);
+        if (result) atomsAssigned++;
+      }
+    }
+
+    // 更新成熟簇状态
+    for (const clusterId of (parsed.mature_cluster_ids || [])) {
+      const cluster = knowledgeStore.getClusterById(clusterId);
+      if (cluster && cluster.status === 'growing') {
+        knowledgeStore.updateCluster(clusterId, { status: 'mature' });
+      }
+    }
+
+    // 合并相似簇 + 清理空簇
+    const mergeResult = knowledgeStore.mergeSimilarClusters();
+    const cleanupResult = knowledgeStore.cleanupEmptyClusters();
+
+    // 合并后再检查 mature 状态（合并后原子数可能增加）
+    for (const cluster of knowledgeStore.getClusters()) {
+      if (cluster.status === 'growing' && cluster.atom_ids.length >= 3) {
+        knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
+      }
+    }
+
+    console.log('[Knowledge] Clustering done:', clustersCreated, 'clusters created,', atomsAssigned, 'atoms assigned,',
+      mergeResult.mergeCount, 'merged,', cleanupResult.removed, 'emptied');
+
+    // 通知前端
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('knowledge:clusters-updated', { clustersCreated, atomsAssigned });
+    }
+
+    return { clustersCreated, atomsAssigned };
+  } catch (e) {
+    console.error('[Knowledge] autoClusterAtoms error:', e);
+    return { clustersCreated: 0, atomsAssigned: 0 };
+  }
+}
+
+// 知识文章合成：从簇中生成文章
+async function generateArticle(clusterId) {
+  try {
+    const cluster = knowledgeStore.getClusterById(clusterId);
+    if (!cluster) return { success: false, error: '簇不存在' };
+
+    const atoms = (cluster.atom_ids || []).map(id => knowledgeStore.getAtomById(id)).filter(Boolean);
+    if (atoms.length === 0) return { success: false, error: '簇内无知识原子' };
+
+    // 检查簇是否已有文章，如有则返回已有文章（避免重复生成）
+    if (cluster.article_id) {
+      const existingArticle = knowledgeStore.getArticleById(cluster.article_id);
+      if (existingArticle) {
+        console.log('[Knowledge] Cluster already has article, returning existing:', existingArticle.title);
+        return { success: true, article: existingArticle, isExisting: true };
+      }
+    }
+
+    const apiConfig = getAPIConfig();
+    const promptPath = path.join(PROMPT_DIR, 'knowledge_article_synthesis.md');
+    let promptTemplate;
+    try {
+      promptTemplate = fs.readFileSync(promptPath, 'utf8');
+    } catch (e) {
+      promptTemplate = `根据以下知识原子合成一篇结构化的Markdown知识文章。
+
+簇名称：{cluster_name}
+领域：{cluster_domain}
+
+知识原子：
+{atoms}
+
+输出严格JSON：
+{"title":"...","content":"# Markdown文章","tags":["..."]}`;
+    }
+
+    const atomsStr = atoms.map(a =>
+      `[${a.id}] [${a.type}] [重要度:${a.importance}] ${a.content}`
+    ).join('\n');
+
+    const prompt = promptTemplate
+      .replace('{cluster_name}', cluster.name)
+      .replace('{cluster_description}', cluster.description || '')
+      .replace('{cluster_domain}', cluster.domain || '通用')
+      .replace('{atoms}', atomsStr);
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.4,
+        max_tokens: 3000
+      })
+    });
+
+    if (!response.ok) return { success: false, error: 'API调用失败' };
+
+    const data = await response.json();
+    const rawText = data.choices?.[0]?.message?.content || '';
+
+    let parsed;
+    try {
+      const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('[Knowledge] Article synthesis parse error:', e);
+      return { success: false, error: 'AI返回格式错误' };
+    }
+
+    if (!parsed.title || !parsed.content) {
+      return { success: false, error: 'AI返回内容不完整' };
+    }
+
+    // 统计来源笔记数
+    const sourceNoteIds = new Set();
+    for (const atom of atoms) {
+      for (const nid of (atom.source_note_ids || [])) sourceNoteIds.add(nid);
+    }
+
+    const article = knowledgeStore.addArticle({
+      cluster_id: clusterId,
+      title: parsed.title,
+      content: parsed.content,
+      tags: parsed.tags || cluster.keywords || [],
+      atom_count: atoms.length,
+      source_note_count: sourceNoteIds.size,
+      version: 1
+    });
+
+    if (!article) return { success: false, error: '文章保存失败' };
+
+    console.log('[Knowledge] Article generated:', article.title);
+
+    // 通知前端
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('knowledge:article-generated', { article });
+    }
+
+    return { success: true, article };
+  } catch (e) {
+    console.error('[Knowledge] generateArticle error:', e);
+    return { success: false, error: e.message };
+  }
+}
+
 // 知识跟随：基于剪贴板意图异步触发 ADP 推荐搜索
 async function triggerKnowledgeRecommendation(text, intent) {
   try {
-    // v2.0: 登录状态优先使用服务器配置
+    // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
     let searchAppKey, knowledgeAppKey, generalAppKey, url;
-    if (authState.isLoggedIn && remoteConfig?.adp) {
+    if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
       searchAppKey = remoteConfig.adp.search_app_key || '';
       knowledgeAppKey = remoteConfig.adp.knowledge_app_key || '';
       generalAppKey = remoteConfig.adp.app_key || '';
@@ -3861,8 +4685,12 @@ async function triggerKnowledgeRecommendation(text, intent) {
     }
     const defaultAppKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
 
-    // 推荐使用知识专用 AppKey，其次通用
-    const appKey = (knowledgeAppKey && knowledgeAppKey.trim()) || (generalAppKey && generalAppKey.trim()) || defaultAppKey;
+    // 优先级：searchAppKey > knowledgeAppKey > generalAppKey > default（与手动搜索一致）
+    let appKeySource = 'default';
+    let appKey = defaultAppKey;
+    if (searchAppKey && searchAppKey.trim()) { appKey = searchAppKey.trim(); appKeySource = 'search'; }
+    else if (knowledgeAppKey && knowledgeAppKey.trim()) { appKey = knowledgeAppKey.trim(); appKeySource = 'knowledge'; }
+    else if (generalAppKey && generalAppKey.trim()) { appKey = generalAppKey.trim(); appKeySource = 'general'; }
 
     const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
     const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
@@ -3892,7 +4720,7 @@ async function triggerKnowledgeRecommendation(text, intent) {
 
     const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
-    console.log('[Knowledge] Calling ADP for recommendation, url:', httpUrl, 'appKey:', appKey.substring(0, 8) + '...', 'query:', query.substring(0, 60));
+    console.log('[Knowledge] Calling ADP for recommendation, url:', httpUrl, 'appKey source:', appKeySource, 'appKey:', appKey.substring(0, 10) + '...', 'query:', query.substring(0, 60));
 
     const response = await fetch(httpUrl, {
       method: 'POST',
@@ -4019,9 +4847,9 @@ ipcMain.handle('open-external', async (event, url) => {
 
 // 知识跟随：ADP 搜索（SSE 流式）
 ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversationId }) => {
-  // v2.0: 登录状态优先使用服务器配置
+  // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
   let searchAppKey, knowledgeAppKey, generalAppKey, url;
-  if (authState.isLoggedIn && remoteConfig?.adp) {
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
     searchAppKey = remoteConfig.adp.search_app_key || '';
     knowledgeAppKey = remoteConfig.adp.knowledge_app_key || '';
     generalAppKey = remoteConfig.adp.app_key || '';
@@ -4035,8 +4863,9 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
   const defaultAppKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
 
   const appKey = (searchAppKey && searchAppKey.trim()) || (knowledgeAppKey && knowledgeAppKey.trim()) || (generalAppKey && generalAppKey.trim()) || defaultAppKey;
+  const appKeySource = (searchAppKey && searchAppKey.trim()) ? 'search' : (knowledgeAppKey && knowledgeAppKey.trim()) ? 'knowledge' : (generalAppKey && generalAppKey.trim()) ? 'general' : 'default';
 
-  console.log('[Knowledge] ADP search:', query, 'using appKey prefix:', appKey.substring(0, 10) + '...');
+  console.log('[Knowledge] ADP search:', query, 'appKey source:', appKeySource, 'appKey:', appKey.substring(0, 10) + '...');
 
   const convId = conversationId || Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
   const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
@@ -4487,3 +5316,294 @@ function checkWeeklyOptimizer() {
   });
   proc.unref();
 }
+
+// ===== 本地文件索引服务 =====
+const LOCAL_INDEX_PATH = path.join(app.getPath('userData'), 'local-file-index.json');
+// 安全获取系统路径，不支持的名称返回 null
+function getSafeSystemPath(name) {
+  try { return app.getPath(name); } catch { return null; }
+}
+
+// macOS/Linux 影片目录：home 下的 Movies 或 Videos
+function getMoviesPath() {
+  const p = getSafeSystemPath('movies');
+  if (p) return p;
+  const home = getSafeSystemPath('home');
+  if (!home) return null;
+  // macOS: Movies, Linux: Videos
+  for (const dir of ['Movies', 'Videos']) {
+    const candidate = path.join(home, dir);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+const DIRECTORY_MAP = {
+  desktop: { label: '🖥 桌面', path: () => getSafeSystemPath('desktop') },
+  downloads: { label: '📥 下载', path: () => getSafeSystemPath('downloads') },
+  documents: { label: '📝 文档', path: () => getSafeSystemPath('documents') },
+  pictures: { label: '🖼 图片', path: () => getSafeSystemPath('pictures') },
+  movies: { label: '🎬 影片', path: () => getMoviesPath() },
+  home: { label: '🏠 主目录', path: () => getSafeSystemPath('home') },
+};
+
+const FILE_TYPE_MAP = {
+  document: { label: '文档', icon: '📄', exts: ['pdf','doc','docx','txt','rtf','odt','pages','md'] },
+  spreadsheet: { label: '表格', icon: '📊', exts: ['xls','xlsx','csv','numbers'] },
+  presentation: { label: '演示', icon: '📑', exts: ['ppt','pptx','key'] },
+  image: { label: '图片', icon: '🖼', exts: ['jpg','jpeg','png','gif','webp','svg','heic','bmp','tiff'] },
+  video: { label: '影片', icon: '🎬', exts: ['mp4','mov','avi','mkv','wmv','flv'] },
+  code: { label: '代码', icon: '💻', exts: ['js','ts','py','java','go','html','css','json','xml','yaml','yml','sh','rb','c','cpp','h','rs','swift','kt'] },
+  archive: { label: '压缩包', icon: '📦', exts: ['zip','rar','7z','tar','gz','bz2','dmg'] },
+  audio: { label: '音频', icon: '🎵', exts: ['mp3','wav','aac','flac','m4a','ogg'] },
+};
+
+const IGNORE_DIRS = new Set([
+  'node_modules', '.git', '.svn', '__pycache__', '.Trash', '.cache',
+  'Library', '.npm', '.cache', '.vscode', '.idea', 'dist', 'build',
+  '.next', '.nuxt', 'coverage', '.DS_Store', 'target', 'vendor',
+  'Applications', '.local', '.docker', '.cursor', '.cursor-tutor',
+  '.gradle', '.m2', '.cargo', '.rustup', '.pub-cache', '.yarn',
+  'VirtualBox VMs', 'Android', '.android', '.nuget', '.dotnet',
+  '.tooling', 'go', '.conda', '.pyenv', '.jenv', '.sdkman',
+  '.cache', '.iterm2', '.putty', '.ssh', '.gnupg', '.config'
+]);
+
+// home 目录下只扫描这些子目录（避免扫描整个 home 导致超时和重复索引）
+const HOME_SCAN_SUBDIRS = new Set([
+  'Desktop', 'Documents', 'Downloads', 'Pictures', 'Movies', 'Music',
+  'Videos' // Linux 下影片目录
+]);
+
+let localFileIndex = null; // 内存缓存
+
+function getFileType(ext) {
+  ext = ext.toLowerCase().replace(/^\./, '');
+  for (const [type, config] of Object.entries(FILE_TYPE_MAP)) {
+    if (config.exts.includes(ext)) return type;
+  }
+  return 'other';
+}
+
+function loadLocalFileIndex() {
+  if (localFileIndex) return localFileIndex;
+  try {
+    if (fs.existsSync(LOCAL_INDEX_PATH)) {
+      localFileIndex = JSON.parse(fs.readFileSync(LOCAL_INDEX_PATH, 'utf-8'));
+      return localFileIndex;
+    }
+  } catch (e) {
+    console.error('[LocalFiles] Failed to load index:', e);
+  }
+  localFileIndex = { version: 1, lastUpdated: null, directories: {}, files: [] };
+  return localFileIndex;
+}
+
+function saveLocalFileIndex() {
+  try {
+    fs.writeFileSync(LOCAL_INDEX_PATH, JSON.stringify(localFileIndex, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('[LocalFiles] Failed to save index:', e);
+  }
+}
+
+function scanDirectory(dirPath, maxDepth = 3, currentDepth = 0, maxFiles = 5000, isHome = false) {
+  const files = [];
+  if (currentDepth > maxDepth) return files;
+
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+      if (entry.name.startsWith('.') || IGNORE_DIRS.has(entry.name) || entry.name.startsWith('~$')) continue;
+
+      // home 目录根层只扫描指定子目录，跳过其他目录避免扫描量爆炸
+      if (isHome && currentDepth === 0 && entry.isDirectory() && !HOME_SCAN_SUBDIRS.has(entry.name)) {
+        continue;
+      }
+
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...scanDirectory(fullPath, maxDepth, currentDepth + 1, maxFiles - files.length, isHome));
+      } else if (entry.isFile()) {
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.size === 0) continue;
+          const ext = path.extname(entry.name).replace(/^\./, '');
+          files.push({
+            path: fullPath,
+            name: entry.name,
+            ext: ext,
+            size: stat.size,
+            createdAt: stat.birthtime ? stat.birthtime.toISOString() : stat.mtime.toISOString(),
+            modifiedAt: stat.mtime.toISOString(),
+            type: getFileType(ext)
+          });
+        } catch (e) { /* skip inaccessible files */ }
+      }
+    }
+  } catch (e) { /* skip inaccessible dirs */ }
+  return files;
+}
+
+ipcMain.handle('local-files:index', async (event, { directories, forceRebuild }) => {
+  try {
+    const index = loadLocalFileIndex();
+    const dirsToScan = directories || Object.keys(DIRECTORY_MAP);
+    let newFiles = [];
+    let scannedCount = 0;
+
+    // 先扫描非 home 目录，再扫描 home（home 可能包含重复）
+    const sortedDirs = dirsToScan.filter(d => d !== 'home').concat(dirsToScan.filter(d => d === 'home'));
+
+    for (const dirKey of sortedDirs) {
+      const dirConfig = DIRECTORY_MAP[dirKey];
+      if (!dirConfig) continue;
+      const dirPath = dirConfig.path();
+      if (!dirPath || !fs.existsSync(dirPath)) continue;
+
+      const dirMeta = index.directories[dirKey];
+      // 增量索引：如果目录已索引且不强制重建，跳过
+      if (!forceRebuild && dirMeta && dirMeta.lastScanned) {
+        continue;
+      }
+
+      // home 目录标记 isHome，限制扫描范围
+      const isHome = dirKey === 'home';
+      const files = scanDirectory(dirPath, isHome ? 2 : 3, 0, 5000, isHome);
+      // 给文件标记归属目录
+      files.forEach(f => f.directory = dirKey);
+      newFiles = newFiles.concat(files);
+      scannedCount += files.length;
+
+      // 从总索引中移除该目录旧文件，加入新文件
+      index.files = index.files.filter(f => f.directory !== dirKey);
+      index.directories[dirKey] = {
+        lastScanned: new Date().toISOString(),
+        fileCount: files.length
+      };
+    }
+
+    // 去重：home 目录可能与其他目录重复，保留非 home 的记录
+    const pathSet = new Set();
+    const dedupedFiles = [];
+    // 先放非 home 的文件
+    for (const f of index.files) {
+      if (f.directory !== 'home') {
+        pathSet.add(f.path);
+        dedupedFiles.push(f);
+      }
+    }
+    // 再放 home 的文件（跳过已存在的路径）
+    for (const f of index.files) {
+      if (f.directory === 'home' && !pathSet.has(f.path)) {
+        pathSet.add(f.path);
+        dedupedFiles.push(f);
+      }
+    }
+    index.files = dedupedFiles.concat(newFiles.filter(f => !pathSet.has(f.path)));
+    index.lastUpdated = new Date().toISOString();
+    saveLocalFileIndex();
+
+    return {
+      success: true,
+      totalFiles: index.files.length,
+      newScanned: scannedCount,
+      directories: index.directories
+    };
+  } catch (e) {
+    console.error('[LocalFiles] Index failed:', e);
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('local-files:search', async (event, { keyword, directory, timeRange, fileType, page, pageSize }) => {
+  const index = loadLocalFileIndex();
+  let results = [...index.files];
+
+  // 目录筛选
+  if (directory && directory !== 'all') {
+    results = results.filter(f => f.directory === directory);
+  }
+
+  // 文件类型筛选
+  if (fileType && fileType !== 'all') {
+    results = results.filter(f => f.type === fileType);
+  }
+
+  // 时间筛选
+  if (timeRange && timeRange !== 'all') {
+    const now = new Date();
+    let cutoff;
+    switch (timeRange) {
+      case 'today':
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        break;
+      case 'week':
+        cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case 'month':
+        cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+    }
+    if (cutoff) results = results.filter(f => new Date(f.modifiedAt) >= cutoff);
+  }
+
+  // 关键词搜索（文件名匹配）
+  if (keyword && keyword.trim()) {
+    const kw = keyword.toLowerCase().trim();
+    results = results.filter(f =>
+      f.name.toLowerCase().includes(kw) ||
+      f.path.toLowerCase().includes(kw)
+    );
+  }
+
+  // 按修改时间倒序
+  results.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+
+  // 分页
+  const p = page || 1;
+  const ps = pageSize || 50;
+  const total = results.length;
+  const start = (p - 1) * ps;
+  const paginated = results.slice(start, start + ps);
+
+  return {
+    success: true,
+    files: paginated,
+    total,
+    page: p,
+    pageSize: ps,
+    hasMore: start + ps < total
+  };
+});
+
+ipcMain.handle('local-files:index-status', async () => {
+  const index = loadLocalFileIndex();
+  return {
+    success: true,
+    totalFiles: index.files.length,
+    lastUpdated: index.lastUpdated,
+    directories: index.directories
+  };
+});
+
+ipcMain.handle('local-files:open', async (event, filePath) => {
+  try {
+    const { shell } = require('electron');
+    await shell.openPath(filePath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('local-files:reveal', async (event, filePath) => {
+  try {
+    const { shell } = require('electron');
+    shell.showItemInFolder(filePath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});

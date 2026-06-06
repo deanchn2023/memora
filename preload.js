@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addToCalendar: (task) => ipcRenderer.invoke('add-to-calendar', task),
   showNotification: (title, body) => ipcRenderer.invoke('show-notification', title, body),
   getClipboardText: () => ipcRenderer.invoke('get-clipboard-text'),
+  writeClipboardText: (text) => ipcRenderer.invoke('write-clipboard-text', text),
   
   // AI统计和配置
   getAIStats: () => ipcRenderer.invoke('get-ai-stats'),
@@ -22,15 +23,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getADPConfig: () => ipcRenderer.invoke('get-adp-config'),
   setADPConfig: (config) => ipcRenderer.invoke('set-adp-config', config),
   sendADPMessage: (message) => ipcRenderer.invoke('send-adp-message', message),
+  stopADPMessage: () => ipcRenderer.invoke('adp:stop-message'),
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
+  onADPSSEEvent: (callback) => {
+    ipcRenderer.on('adp:sse-event', (event, data) => callback(data));
+  },
+  removeADPListeners: () => {
+    ipcRenderer.removeAllListeners('adp:sse-event');
+  },
 
   // v2.0 认证与远程配置
-  authLogin: (email, password) => ipcRenderer.invoke('auth:login', { email, password }),
+  authLogin: (email, password, env, rememberMe) => ipcRenderer.invoke('auth:login', { email, password, env, rememberMe }),
   authLogout: () => ipcRenderer.invoke('auth:logout'),
   authGetState: () => ipcRenderer.invoke('auth:get-state'),
   configSync: () => ipcRenderer.invoke('config:sync'),
+  configSetSource: (forceLocal) => ipcRenderer.invoke('config:set-source', { forceLocal }),
+  configGetSource: () => ipcRenderer.invoke('config:get-source'),
+  notificationsFetch: () => ipcRenderer.invoke('notifications:fetch'),
+  notificationsUnreadCount: () => ipcRenderer.invoke('notifications:unread-count'),
+  notificationsMarkRead: (id) => ipcRenderer.invoke('notifications:mark-read', id),
+  notificationsMarkAllRead: () => ipcRenderer.invoke('notifications:mark-all-read'),
+  updatesCheck: () => ipcRenderer.invoke('updates:check'),
   onAuthChanged: (callback) => {
     ipcRenderer.on('auth:changed', (_, data) => callback(data));
+  },
+  onNotificationsUpdated: (callback) => {
+    ipcRenderer.on('notifications:updated', (_, data) => callback(data));
+  },
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on('update:available', (_, data) => callback(data));
   },
 
   // 知识跟随
@@ -49,6 +70,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onKnowledgeRecommendation: (callback) => {
     ipcRenderer.on('knowledge:recommendation-new', (event, data) => callback(data));
+  },
+  
+  // 知识萃取系统
+  knowledgeGetAtoms: (filter) => ipcRenderer.invoke('knowledge:get-atoms', filter),
+  knowledgeGetAtomById: (id) => ipcRenderer.invoke('knowledge:get-atom-by-id', id),
+  knowledgeAddAtom: (atom) => ipcRenderer.invoke('knowledge:add-atom', atom),
+  knowledgeDeleteAtom: (id) => ipcRenderer.invoke('knowledge:delete-atom', id),
+  knowledgeUpdateAtom: (id, updates) => ipcRenderer.invoke('knowledge:update-atom', id, updates),
+  knowledgeGetClusters: (filter) => ipcRenderer.invoke('knowledge:get-clusters', filter),
+  knowledgeGetClusterById: (id) => ipcRenderer.invoke('knowledge:get-cluster-by-id', id),
+  knowledgeCreateCluster: (cluster) => ipcRenderer.invoke('knowledge:create-cluster', cluster),
+  knowledgeUpdateCluster: (id, updates) => ipcRenderer.invoke('knowledge:update-cluster', id, updates),
+  knowledgeDeleteCluster: (id, atomAction) => ipcRenderer.invoke('knowledge:delete-cluster', id, atomAction),
+  knowledgeClusterAtom: (atomId, clusterId) => ipcRenderer.invoke('knowledge:cluster-atom', atomId, clusterId),
+  knowledgeAutoCluster: () => ipcRenderer.invoke('knowledge:auto-cluster'),
+  knowledgeGetArticles: (filter) => ipcRenderer.invoke('knowledge:get-articles', filter),
+  knowledgeGetArticle: (id) => ipcRenderer.invoke('knowledge:get-article', id),
+  knowledgeGenerateArticle: (clusterId) => ipcRenderer.invoke('knowledge:generate-article', clusterId),
+  knowledgeUpdateArticle: (id, updates) => ipcRenderer.invoke('knowledge:update-article', id, updates),
+  knowledgeDeleteArticle: (id) => ipcRenderer.invoke('knowledge:delete-article', id),
+  knowledgeGetStats: () => ipcRenderer.invoke('knowledge:get-stats'),
+  knowledgeGetDomains: () => ipcRenderer.invoke('knowledge:get-domains'),
+  knowledgeDistillAll: () => ipcRenderer.invoke('knowledge:distill-all'),
+  knowledgeExtractAtoms: (noteId) => ipcRenderer.invoke('knowledge:extract-atoms', noteId),
+  onKnowledgeAtomsUpdated: (callback) => {
+    ipcRenderer.on('knowledge:atoms-updated', (event, data) => callback(data));
+  },
+  onKnowledgeClustersUpdated: (callback) => {
+    ipcRenderer.on('knowledge:clusters-updated', (event, data) => callback(data));
+  },
+  onKnowledgeArticleGenerated: (callback) => {
+    ipcRenderer.on('knowledge:article-generated', (event, data) => callback(data));
   },
   
   // 记忆系统
@@ -176,5 +229,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   i18nGetLocale: () => ipcRenderer.invoke('i18n-get-locale'),
   i18nSetLocale: (locale) => ipcRenderer.invoke('i18n-set-locale', locale),
   i18nGetTranslations: () => ipcRenderer.invoke('i18n-get-translations'),
-  i18nT: (key, params) => ipcRenderer.invoke('i18n-t', key, params)
+  i18nT: (key, params) => ipcRenderer.invoke('i18n-t', key, params),
+
+  // 本地文件索引
+  localFilesIndex: (params) => ipcRenderer.invoke('local-files:index', params),
+  localFilesSearch: (params) => ipcRenderer.invoke('local-files:search', params),
+  localFilesIndexStatus: () => ipcRenderer.invoke('local-files:index-status'),
+  localFilesOpen: (filePath) => ipcRenderer.invoke('local-files:open', filePath),
+  localFilesReveal: (filePath) => ipcRenderer.invoke('local-files:reveal', filePath)
 });

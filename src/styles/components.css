@@ -20,7 +20,7 @@
 
 .time-slot {
   display: flex;
-  min-height: 64px;
+  height: 64px;
   border-bottom: 1px solid var(--border-light);
   transition: background 0.15s ease;
 }
@@ -93,6 +93,11 @@
   letter-spacing: -0.1px;
 }
 
+.task-block:hover .task-title {
+  white-space: normal;
+  overflow: visible;
+}
+
 .task-block .task-time {
   font-size: 11px;
   opacity: 0.85;
@@ -161,6 +166,26 @@
   opacity: 0.65;
   border: 2px dashed rgba(142, 142, 147, 0.4);
   box-shadow: none;
+}
+
+/* 已完成任务 - 日视图 */
+.task-block.completed {
+  background: linear-gradient(135deg, #c7c7cc, #aeaeb2) !important;
+  box-shadow: none !important;
+  opacity: 0.5;
+}
+
+.task-block.completed .task-title {
+  text-decoration: line-through;
+}
+
+.task-completed-label {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.3);
+  padding: 1px 6px;
+  border-radius: 6px;
+  margin-left: 6px;
+  font-weight: 500;
 }
 
 .task-draft-label {
@@ -349,6 +374,94 @@
 .task-item.draft-item {
   opacity: 0.7;
   border-left: 3px solid #8e8e93;
+}
+
+/* ============= 待办列表排序切换 ============= */
+.task-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.task-list-header h3 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 0;
+}
+
+.task-sort-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.sort-btn {
+  width: 28px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  transition: all 0.2s;
+}
+
+.sort-btn.active {
+  background: var(--bg-primary);
+  opacity: 1;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.sort-btn:hover:not(.active) {
+  opacity: 0.7;
+}
+
+/* ============= 待办列表 hover 预览 ============= */
+.task-hover-preview {
+  position: fixed;
+  z-index: 9999;
+  background: rgba(30, 30, 30, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 12px;
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.6;
+  pointer-events: none;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.1);
+  animation: taskPreviewIn 0.15s ease-out;
+}
+
+@keyframes taskPreviewIn {
+  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.task-preview-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-preview-meta {
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ============= 剪贴板检测器 ============= */
@@ -712,19 +825,23 @@
 .week-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
+  grid-template-rows: 1fr;
   gap: 1px;
   background: var(--border-light);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-xl);
   overflow: hidden;
-  margin: 24px;
+  margin: 12px 24px;
   box-shadow: var(--shadow-xs);
+  height: calc(100vh - 220px);
 }
 
 .week-day {
   background: var(--bg-primary);
   padding: 14px;
-  min-height: 200px;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
   transition: all 0.2s var(--transition);
 }
 
@@ -786,11 +903,20 @@
   transition: all 0.2s var(--transition);
   border-left: 3px solid var(--primary-color);
   position: relative;
+  height: 28px;
+  line-height: 16px;
+  box-sizing: border-box;
 }
 
 .week-task:hover {
   background: var(--primary-light);
   transform: translateX(2px);
+  white-space: normal;
+  overflow: visible;
+  height: auto;
+  min-height: 28px;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .week-task:active {
@@ -819,6 +945,22 @@
 
 .week-task.priority-low {
   border-left-color: var(--success-color);
+}
+
+/* 已完成任务 - 周视图 */
+.week-task.completed {
+  opacity: 0.45;
+  background: var(--bg-tertiary, #e5e5ea);
+}
+
+.week-task.completed .week-task-time {
+  text-decoration: line-through;
+}
+
+.week-task-check {
+  color: var(--success-color, #34C759);
+  font-weight: 700;
+  margin-right: 3px;
 }
 
 .week-task-delete {
@@ -870,6 +1012,8 @@
   background: var(--bg-primary);
   padding: 10px;
   min-height: 90px;
+  max-height: 90px;
+  overflow: hidden;
   cursor: pointer;
   transition: all 0.2s var(--transition);
 }
@@ -942,6 +1086,17 @@
   transition: all 0.15s var(--transition);
   color: white;
   line-height: 1.4;
+  height: 18px;
+  box-sizing: border-box;
+}
+
+.month-task-tag:hover {
+  white-space: normal;
+  overflow: visible;
+  height: auto;
+  min-height: 18px;
+  z-index: 10;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .month-task-tag:active {
@@ -963,6 +1118,13 @@
 
 .month-task-tag.priority-low {
   background: linear-gradient(135deg, #4ECB71, #2ECC71);
+}
+
+/* 已完成任务 - 月视图 */
+.month-task-tag.completed {
+  background: #c7c7cc !important;
+  opacity: 0.5;
+  text-decoration: line-through;
 }
 
 .month-task-more {
