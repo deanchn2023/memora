@@ -2667,10 +2667,22 @@ ${JSON.stringify(reportData, null, 2)}`;
       const result = await window.electronAPI.dataImportConfirm(this._pendingImportData, mergeMode);
       if (result.success) {
         const modeLabel = mergeMode === 'replace' ? '替换' : '合并';
-        if (resultEl) resultEl.innerHTML += `<div style="margin-top:12px;padding:12px;background:rgba(52,199,89,0.1);border-radius:8px;color:var(--success-color);">✅ 数据${modeLabel}导入成功！建议重启应用以刷新所有数据。</div>`;
+        if (resultEl) resultEl.innerHTML += `<div style="margin-top:12px;padding:12px;background:rgba(52,199,89,0.1);border-radius:8px;color:var(--success-color);">✅ 数据${modeLabel}导入成功！</div>`;
         confirmArea.innerHTML = '';
-        this.showToast(`数据${modeLabel}导入成功，建议重启应用`);
+        this.showToast(`数据${modeLabel}导入成功`);
         this._pendingImportData = null;
+        // 刷新所有模块数据
+        try {
+          await this.initDatabaseSync();
+          this.renderTaskList();
+          this.loadMemories();
+          this.loadNotes();
+          this.loadCustomCategories();
+          this.loadProfileEditor();
+          if (window.knowledgeFollow?.onShow) window.knowledgeFollow.onShow();
+        } catch (e) {
+          console.warn('[Import] 刷新部分模块失败:', e);
+        }
       } else {
         confirmArea.innerHTML = `<div style="color:var(--danger-color)">❌ 导入失败: ${this.escapeHtml(result.error)}</div>`;
         this.showToast('导入失败: ' + result.error, 'error');
