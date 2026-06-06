@@ -89,6 +89,9 @@ const App = {
     // 恢复视觉偏好（主题、字体大小、效果开关）
     this._restoreVisualPrefs();
     
+    // i18n：恢复语言偏好 + 绑定切换 + 注册 UI 更新
+    this._initI18n();
+    
     // v2.0: 监听认证状态变化
     try {
       if (window.electronAPI?.onAuthChanged) {
@@ -238,6 +241,13 @@ const App = {
     document.getElementById('openSettingsBtn').addEventListener('click', () => this.showSettingsModal());
     document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
     document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
+
+    // 语言切换按钮
+    document.getElementById('langToggleBtn')?.addEventListener('click', () => {
+      if (window.i18n) {
+        window.i18n.toggle();
+      }
+    });
 
     // 头部登录按钮：打开独立登录弹窗
     document.getElementById('headerLoginBtn')?.addEventListener('click', () => {
@@ -6201,6 +6211,103 @@ ${JSON.stringify(reportData, null, 2)}`;
 
     const fontSize = localStorage.getItem('memora-font-size') || 'medium';
     document.body.classList.add(`font-${fontSize}`);
+  },
+
+  // ========== 国际化 ==========
+
+  _initI18n() {
+    if (!window.i18n) return;
+    // 恢复上次语言偏好
+    window.i18n.restore();
+    // 注册语言变化回调
+    window.i18n.onChange(() => this._applyLocale());
+    // 首次应用
+    this._applyLocale();
+  },
+
+  /** 语言切换时更新所有 UI 文本 */
+  _applyLocale() {
+    const i = window.i18n;
+    if (!i) return;
+
+    // 更新语言切换按钮文本
+    const langBtn = document.getElementById('langToggleBtn');
+    if (langBtn) langBtn.textContent = i.t('lang.label');
+
+    // 导航标签
+    this._setText('[data-view="calendar"]', 'nav.calendar', true);
+    this._setText('[data-view="notebook"]', 'nav.notebook', true);
+    this._setText('[data-view="documents"]', 'nav.documents', true);
+    this._setText('[data-view="knowledge"]', 'nav.knowledge', true);
+    document.getElementById('todayBtn')?.textContent && (document.getElementById('todayBtn').textContent = i.t('nav.today'));
+
+    // 头部按钮 tooltip
+    this._setTooltip('#openAIAssistantBtn', 'header.aiAssistant');
+    this._setTooltip('#openSettingsBtn', 'header.settings');
+    this._setTooltip('#langToggleBtn', 'lang.zh') // 简单tooltip
+    this._setTooltip('#notificationBellBtn', 'header.notification');
+    this._setTooltip('#headerLoginBtn', 'header.login');
+
+    // 通知面板
+    this._setText('.notification-panel-header span', 'notification.title');
+    this._setText('#notificationMarkAllBtn', 'notification.markAllRead');
+    this._setText('.notification-empty', 'notification.empty');
+
+    // 番茄钟
+    this._setText('.pomodoro-section h3', 'pomodoro.title');
+    this._setText('#startPomodoro', 'pomodoro.start');
+    this._setText('#resetPomodoro', 'pomodoro.reset');
+    const currentTaskLabel = document.querySelector('.current-task .label');
+    if (currentTaskLabel) currentTaskLabel.textContent = i.t('pomodoro.currentTask');
+
+    // 待办列表
+    this._setText('.task-list-header h3', 'task.title');
+
+    // 设置弹窗
+    this._setText('#settingsModal .modal-header h3', 'settings.title');
+    this._setText('#saveSettingsBtn', 'settings.save');
+
+    // 设置标签
+    this._setText('[data-tab="api"]', 'settings.tab.api');
+    this._setText('[data-tab="adp"]', 'settings.tab.adp');
+    this._setText('[data-tab="profile"]', 'settings.tab.profile');
+    this._setText('[data-tab="data"]', 'settings.tab.data');
+    this._setText('[data-tab="prompts"]', 'settings.tab.prompts');
+    this._setText('[data-tab="appearance"]', 'settings.tab.appearance');
+    this._setText('[data-tab="login"]', 'settings.tab.login');
+    this._setText('[data-tab="server"]', 'settings.tab.server');
+
+    // 刷新日期显示
+    if (window.Calendar?.currentDate) {
+      document.getElementById('currentDate').textContent = i.formatDate(window.Calendar.currentDate);
+    }
+
+    // 刷新任务列表（确保按钮等也更新）
+    this.renderTaskList();
+  },
+
+  /** 安全设置元素文本（保留 badge 等子元素） */
+  _setText(selector, key, preserveChildren = false) {
+    const el = document.querySelector(selector);
+    if (!el) return;
+    const text = window.i18n.t(key);
+    if (preserveChildren && el.children.length > 0) {
+      // 只替换第一个文本节点
+      const firstText = el.childNodes[0];
+      if (firstText?.nodeType === Node.TEXT_NODE) {
+        firstText.textContent = text;
+      } else {
+        el.insertBefore(document.createTextNode(text), el.firstChild);
+      }
+    } else if (el.children.length === 0) {
+      el.textContent = text;
+    }
+  },
+
+  /** 设置 tooltip */
+  _setTooltip(selector, key) {
+    const el = document.querySelector(selector);
+    if (el) el.dataset.tooltip = window.i18n.t(key);
   }
 };
 

@@ -154,28 +154,33 @@ const Calendar = {
     if (!this.calendarActive) {
       switch (this.currentView) {
         case 'notebook':
-          displayText = '记事本';
+          displayText = window.i18n?.t('nav.notebook') || '记事本';
           break;
         case 'knowledge':
-          displayText = '知识';
+          displayText = window.i18n?.t('nav.knowledge') || '知识';
           break;
         case 'documents':
-          displayText = '文档';
+          displayText = window.i18n?.t('nav.documents') || '文档';
           break;
       }
     } else {
+      const locale = window.i18n?.locale === 'en' ? 'en-US' : 'zh-CN';
       switch (this.currentView) {
         case 'day':
-          displayText = this.currentDate.toLocaleDateString('zh-CN', options);
+          displayText = this.currentDate.toLocaleDateString(locale, options);
           break;
         case 'week':
           const weekStart = this.getWeekStart(this.currentDate);
           const weekEnd = new Date(weekStart);
           weekEnd.setDate(weekEnd.getDate() + 6);
-          displayText = `${weekStart.getMonth() + 1}月${weekStart.getDate()}日 - ${weekEnd.getMonth() + 1}月${weekEnd.getDate()}日`;
+          if (locale === 'en-US') {
+            displayText = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+          } else {
+            displayText = `${weekStart.getMonth() + 1}月${weekStart.getDate()}日 - ${weekEnd.getMonth() + 1}月${weekEnd.getDate()}日`;
+          }
           break;
         case 'month':
-          displayText = this.currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+          displayText = this.currentDate.toLocaleDateString(locale, { year: 'numeric', month: 'long' });
           break;
       }
     }
@@ -855,7 +860,7 @@ const Calendar = {
     this.calendarActive = false;
     this.currentView = 'notebook';
 
-    document.getElementById('currentDate').textContent = '记事本';
+    document.getElementById('currentDate').textContent = window.i18n?.t('nav.notebook') || '记事本';
 
     if (typeof App !== 'undefined') {
       App.clearNotebookBadge();
@@ -869,7 +874,7 @@ const Calendar = {
     this.calendarActive = false;
     this.currentView = 'knowledge';
 
-    document.getElementById('currentDate').textContent = '知识';
+    document.getElementById('currentDate').textContent = window.i18n?.t('nav.knowledge') || '知识';
 
     // 初始化知识跟随模块
     if (window.knowledgeFollow) {
@@ -889,7 +894,7 @@ const Calendar = {
     this.calendarActive = false;
     this.currentView = 'documents';
 
-    document.getElementById('currentDate').textContent = '文档';
+    document.getElementById('currentDate').textContent = window.i18n?.t('nav.documents') || '文档';
 
     if (window.Documents) Documents.onShow();
   },

@@ -372,7 +372,8 @@ body {
 }
 
 .ai-assistant-btn,
-.settings-btn {
+.settings-btn,
+.lang-toggle-btn {
   width: 38px;
   height: 38px;
   border: none;
@@ -389,6 +390,30 @@ body {
 .ai-assistant-btn:hover {
   background: linear-gradient(135deg, var(--primary-light), rgba(139, 92, 246, 0.08));
   box-shadow: var(--shadow-xs);
+}
+
+.lang-toggle-btn {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.3px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+  width: auto;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+}
+
+.lang-toggle-btn:hover {
+  background: var(--primary-light);
+  color: var(--primary);
+  border-color: var(--primary-light);
+  box-shadow: var(--shadow-xs);
+  transform: scale(1.05);
+}
+
+.lang-toggle-btn:active {
+  transform: scale(0.95);
 }
 
 .settings-btn:hover {
