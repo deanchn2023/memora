@@ -827,6 +827,7 @@
           <button class="settings-tab" data-tab="profile">用户画像</button>
           <button class="settings-tab" data-tab="appearance">外观</button>
           <button class="settings-tab" data-tab="memory">记忆管理</button>
+          <button class="settings-tab" data-tab="data">数据管理</button>
         </div>
         
         <!-- API配置 -->
@@ -1236,6 +1237,100 @@
             <div class="memory-load-more hidden" id="memoryLoadMore">
               <button class="btn small" id="loadMoreMemoriesBtn">加载更多</button>
               <span class="memory-count-info" id="memoryCountInfo"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 数据管理 -->
+        <div class="settings-panel hidden" id="dataPanel">
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">📦</span>
+              <div>
+                <h4>数据导出</h4>
+                <p class="data-section-desc">将所有数据（知识、记忆、画像、笔记、任务、配置等）导出为加密备份文件，可在其他设备上导入恢复</p>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="form-group">
+                <label for="exportPassword">设置加密密码</label>
+                <input type="password" id="exportPassword" placeholder="至少4位密码，用于加密备份文件" autocomplete="new-password">
+              </div>
+              <div class="form-group">
+                <label for="exportPasswordConfirm">确认密码</label>
+                <input type="password" id="exportPasswordConfirm" placeholder="再次输入密码" autocomplete="new-password">
+              </div>
+              <button class="btn primary" id="exportDataBtn">📦 一键导出全部数据</button>
+              <div id="exportResult" class="data-result hidden"></div>
+            </div>
+          </div>
+
+          <div class="data-divider"></div>
+
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">📥</span>
+              <div>
+                <h4>数据导入</h4>
+                <p class="data-section-desc">从加密备份文件恢复数据。支持两种模式：合并（保留现有数据+追加新数据）或替换（完全覆盖）</p>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="form-group">
+                <label for="importPassword">输入解密密码</label>
+                <input type="password" id="importPassword" placeholder="输入导出时设置的密码" autocomplete="current-password">
+              </div>
+              <div class="form-group">
+                <label>导入模式</label>
+                <div class="import-mode-selector">
+                  <label class="import-mode-option">
+                    <input type="radio" name="importMode" value="merge" checked>
+                    <span class="import-mode-label">
+                      <strong>🔀 合并模式</strong>
+                      <small>保留现有数据，仅追加不重复的新数据</small>
+                    </span>
+                  </label>
+                  <label class="import-mode-option">
+                    <input type="radio" name="importMode" value="replace">
+                    <span class="import-mode-label">
+                      <strong>🔄 替换模式</strong>
+                      <small>完全覆盖现有数据（慎用）</small>
+                    </span>
+                  </label>
+                </div>
+              </div>
+              <button class="btn primary" id="importDataBtn">📥 选择文件并导入</button>
+              <div id="importPreview" class="data-result hidden"></div>
+              <div id="importConfirmArea" class="hidden" style="margin-top:12px;">
+                <div class="import-warning">
+                  ⚠️ 导入将修改本地数据，建议先导出备份。确认继续？
+                </div>
+                <button class="btn danger" id="importConfirmBtn">✅ 确认导入</button>
+                <button class="btn secondary" id="importCancelBtn">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="data-divider"></div>
+
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">ℹ️</span>
+              <div>
+                <h4>导出内容说明</h4>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="data-contents-grid">
+                <div class="data-content-item"><span class="data-content-icon">🧠</span>记忆系统（瞬时/短期/长期记忆）</div>
+                <div class="data-content-item"><span class="data-content-icon">🧬</span>知识图谱（原子/簇/文章）</div>
+                <div class="data-content-item"><span class="data-content-icon">👤</span>用户画像（人物/项目/偏好）</div>
+                <div class="data-content-item"><span class="data-content-icon">📝</span>记事本（笔记/分类）</div>
+                <div class="data-content-item"><span class="data-content-icon">✅</span>待办任务（任务/番茄钟记录）</div>
+                <div class="data-content-item"><span class="data-content-icon">⚙️</span>本地配置（API/ADP/设置）</div>
+                <div class="data-content-item"><span class="data-content-icon">📄</span>Prompt模板</div>
+                <div class="data-content-item"><span class="data-content-icon">🔒</span>AES-256-GCM 加密保护</div>
+              </div>
             </div>
           </div>
         </div>

@@ -6253,3 +6253,506 @@ ipcMain.handle('local-files:reveal', async (event, filePath) => {
     return { success: false, error: e.message };
   }
 });
+
+// === 数据导出/导入（加密） ===
+
+/**
+ * 从密码派生 AES-256 密钥（PBKDF2 + 固定 salt）
+ * 使用固定 salt 保证同一密码能解密（牺牲了一定安全性，但对本地数据迁移足够）
+ */
+function deriveKeyFromPassword(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+}
+
+/**
+ * AES-256-GCM 加密
+ */
+function encryptData(data, password) {
+  const salt = crypto.randomBytes(16);
+  const key = deriveKeyFromPassword(password, salt);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  // 格式: salt(16) + iv(12) + authTag(16) + encrypted
+  return Buffer.concat([salt, iv, authTag, encrypted]);
+}
+
+/**
+ * AES-256-GCM 解密
+ */
+function decryptData(encryptedBuffer, password) {
+  const salt = encryptedBuffer.subarray(0, 16);
+  const iv = encryptedBuffer.subarray(16, 28);
+  const authTag = encryptedBuffer.subarray(28, 44);
+  const encrypted = encryptedBuffer.subarray(44);
+  const key = deriveKeyFromPassword(password, salt);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  return decipher.update(encrypted) + decipher.final('utf8');
+}
+
+/**
+ * 收集所有需要导出的数据
+ */
+function collectExportData() {
+  const userDataPath = app.getPath('userData');
+  const exportData = {
+    _meta: {
+      version: '2.1.0',
+      exportedAt: new Date().toISOString(),
+      app: 'Memora',
+      checksum: '' // 后面填充
+    }
+  };
+
+  // 辅助：安全读取 JSON 文件
+  function safeReadJSON(relativePath) {
+    const fullPath = path.join(userDataPath, relativePath);
+    try {
+      if (fs.existsSync(fullPath)) {
+        return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+      }
+    } catch (e) {
+      console.warn(`[Export] Failed to read ${relativePath}:`, e.message);
+    }
+    return null;
+  }
+
+  // 辅助：安全读取目录下所有文件
+  function safeReadDir(relativeDirPath, extensions) {
+    const dirPath = path.join(userDataPath, relativeDirPath);
+    const result = {};
+    try {
+      if (!fs.existsSync(dirPath)) return result;
+      const files = fs.readdirSync(dirPath);
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file);
+        const stat = fs.statSync(fullPath);
+        if (stat.isFile()) {
+          if (extensions && !extensions.some(ext => file.endsWith(ext))) continue;
+          result[file] = fs.readFileSync(fullPath, 'utf8');
+        }
+      }
+    } catch (e) {
+      console.warn(`[Export] Failed to read dir ${relativeDirPath}:`, e.message);
+    }
+    return result;
+  }
+
+  // 1. 核心数据
+  exportData.core = {
+    'memora-data.json': safeReadJSON('memora-data.json'),       // 任务+设置+番茄钟
+    'settings.json': safeReadJSON('settings.json'),              // API/ADP配置
+    'profile.json': safeReadJSON('profile.json'),                // 用户画像
+    'local-file-index.json': safeReadJSON('local-file-index.json') // 本地文件索引
+  };
+
+  // 2. 记忆系统
+  exportData.memory = {
+    'memories.json': safeReadJSON('memory/memories.json'),
+    'entity-graph.json': safeReadJSON('memory/entity-graph.json')
+  };
+
+  // 3. 记事本
+  exportData.notebook = {
+    'notes.json': safeReadJSON('notebook/notes.json'),
+    'categories.json': safeReadJSON('notebook/categories.json')
+  };
+
+  // 4. 知识图谱
+  exportData.knowledge = {
+    'atoms.json': safeReadJSON('knowledge/atoms.json'),
+    'clusters.json': safeReadJSON('knowledge/clusters.json'),
+    'articles-index.json': safeReadJSON('knowledge/articles/articles.json'),
+    'knowledge-items.json': safeReadJSON('knowledge/knowledge-items.json'),
+    'recommendations.json': safeReadJSON('knowledge/recommendations.json'),
+    'articles': safeReadDir('knowledge/articles', ['.md'])
+  };
+
+  // 5. Prompt 模板（可选，用户可能自定义了）
+  exportData.prompts = {
+    templates: safeReadDir('prompts', ['.md']),
+    backups: safeReadDir('prompts/backups', ['.md']),
+    candidates: safeReadDir('prompts/candidates', ['.md'])
+  };
+
+  // 6. 反馈日志（可选）
+  exportData.feedback = {};
+  const feedbackDir = path.join(userDataPath, 'feedback');
+  if (fs.existsSync(feedbackDir)) {
+    try {
+      for (const file of fs.readdirSync(feedbackDir)) {
+        if (file.endsWith('.jsonl')) {
+          exportData.feedback[file] = fs.readFileSync(path.join(feedbackDir, file), 'utf8');
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 计算校验和
+  const dataString = JSON.stringify(exportData);
+  exportData._meta.checksum = crypto.createHash('sha256').update(dataString).digest('hex');
+
+  return exportData;
+}
+
+ipcMain.handle('data:export', async (event, { password }) => {
+  try {
+    if (!password || password.length < 4) {
+      return { success: false, error: '密码至少4位' };
+    }
+
+    const exportData = collectExportData();
+
+    // 统计数据量
+    const stats = {
+      tasks: exportData.core?.['memora-data.json']?.tasks?.length || 0,
+      memories: exportData.memory?.['memories.json']?.length || 0,
+      notes: exportData.notebook?.['notes.json']?.length || 0,
+      atoms: exportData.knowledge?.['atoms.json']?.length || 0,
+      clusters: exportData.knowledge?.['clusters.json']?.length || 0,
+      articles: Object.keys(exportData.knowledge?.articles || {}).length,
+      persons: exportData.core?.['profile.json']?.frequent_persons?.length || 0,
+      projects: exportData.core?.['profile.json']?.active_projects?.length || 0
+    };
+
+    // 加密
+    const jsonString = JSON.stringify(exportData);
+    const encrypted = encryptData(jsonString, password);
+
+    // 让用户选择保存路径
+    const { dialog } = require('electron');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '导出 Memora 数据',
+      defaultPath: `memora-backup-${new Date().toISOString().slice(0,10)}.memora`,
+      filters: [{ name: 'Memora 备份文件', extensions: ['memora'] }]
+    });
+
+    if (result.canceled) return { success: false, error: '用户取消' };
+
+    fs.writeFileSync(result.filePath, encrypted);
+    const fileSizeMB = (encrypted.length / 1024 / 1024).toFixed(2);
+
+    return {
+      success: true,
+      filePath: result.filePath,
+      fileSize: fileSizeMB + ' MB',
+      stats
+    };
+  } catch (error) {
+    console.error('[Export] Failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('data:import', async (event, { password, filePath }) => {
+  try {
+    if (!password || password.length < 4) {
+      return { success: false, error: '密码至少4位' };
+    }
+
+    if (!filePath) {
+      // 让用户选择文件
+      const { dialog } = require('electron');
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: '导入 Memora 数据',
+        filters: [{ name: 'Memora 备份文件', extensions: ['memora'] }],
+        properties: ['openFile']
+      });
+      if (result.canceled) return { success: false, error: '用户取消' };
+      filePath = result.filePaths[0];
+    }
+
+    // 读取加密文件
+    const encrypted = fs.readFileSync(filePath);
+
+    // 解密
+    let jsonString;
+    try {
+      jsonString = decryptData(encrypted, password);
+    } catch (e) {
+      return { success: false, error: '密码错误或文件已损坏' };
+    }
+
+    // 解析
+    let importData;
+    try {
+      importData = JSON.parse(jsonString);
+    } catch (e) {
+      return { success: false, error: '数据格式异常，文件可能已损坏' };
+    }
+
+    // 验证
+    if (!importData._meta || importData._meta.app !== 'Memora') {
+      return { success: false, error: '不是有效的 Memora 备份文件' };
+    }
+
+    // 校验 checksum
+    const savedChecksum = importData._meta.checksum;
+    delete importData._meta.checksum;
+    const currentChecksum = crypto.createHash('sha256').update(JSON.stringify(importData)).digest('hex');
+    if (savedChecksum && savedChecksum !== currentChecksum) {
+      return { success: false, error: '数据校验失败，文件可能已被篡改或损坏' };
+    }
+    importData._meta.checksum = savedChecksum;
+
+    // 统计将要导入的数据
+    const stats = {
+      tasks: importData.core?.['memora-data.json']?.tasks?.length || 0,
+      memories: importData.memory?.['memories.json']?.length || 0,
+      notes: importData.notebook?.['notes.json']?.length || 0,
+      atoms: importData.knowledge?.['atoms.json']?.length || 0,
+      clusters: importData.knowledge?.['clusters.json']?.length || 0,
+      articles: Object.keys(importData.knowledge?.articles || {}).length,
+      persons: importData.core?.['profile.json']?.frequent_persons?.length || 0,
+      projects: importData.core?.['profile.json']?.active_projects?.length || 0,
+      exportedAt: importData._meta?.exportedAt || '未知'
+    };
+
+    return { success: true, importData, stats };
+  } catch (error) {
+    console.error('[Import] Failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) => {
+  try {
+    const userDataPath = app.getPath('userData');
+
+    // 辅助：安全写 JSON
+    function safeWriteJSON(relativePath, data) {
+      const fullPath = path.join(userDataPath, relativePath);
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fullPath, JSON.stringify(data, null, 2), 'utf8');
+    }
+
+    // 辅助：安全写文本
+    function safeWriteText(relativePath, content) {
+      const fullPath = path.join(userDataPath, relativePath);
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fullPath, content, 'utf8');
+    }
+
+    if (mergeMode === 'replace') {
+      // === 全量替换模式 ===
+
+      // 1. 核心数据
+      if (importData.core) {
+        if (importData.core['memora-data.json']) safeWriteJSON('memora-data.json', importData.core['memora-data.json']);
+        if (importData.core['settings.json']) safeWriteJSON('settings.json', importData.core['settings.json']);
+        if (importData.core['profile.json']) safeWriteJSON('profile.json', importData.core['profile.json']);
+        if (importData.core['local-file-index.json']) safeWriteJSON('local-file-index.json', importData.core['local-file-index.json']);
+      }
+
+      // 2. 记忆系统
+      if (importData.memory) {
+        if (importData.memory['memories.json'] !== null) safeWriteJSON('memory/memories.json', importData.memory['memories.json']);
+        if (importData.memory['entity-graph.json'] !== null) safeWriteJSON('memory/entity-graph.json', importData.memory['entity-graph.json']);
+      }
+
+      // 3. 记事本
+      if (importData.notebook) {
+        if (importData.notebook['notes.json'] !== null) safeWriteJSON('notebook/notes.json', importData.notebook['notes.json']);
+        if (importData.notebook['categories.json'] !== null) safeWriteJSON('notebook/categories.json', importData.notebook['categories.json']);
+      }
+
+      // 4. 知识图谱
+      if (importData.knowledge) {
+        if (importData.knowledge['atoms.json'] !== null) safeWriteJSON('knowledge/atoms.json', importData.knowledge['atoms.json']);
+        if (importData.knowledge['clusters.json'] !== null) safeWriteJSON('knowledge/clusters.json', importData.knowledge['clusters.json']);
+        if (importData.knowledge['articles-index.json'] !== null) safeWriteJSON('knowledge/articles/articles.json', importData.knowledge['articles-index.json']);
+        if (importData.knowledge['knowledge-items.json'] !== null) safeWriteJSON('knowledge/knowledge-items.json', importData.knowledge['knowledge-items.json']);
+        if (importData.knowledge['recommendations.json'] !== null) safeWriteJSON('knowledge/recommendations.json', importData.knowledge['recommendations.json']);
+        // 文章 Markdown 文件
+        if (importData.knowledge.articles) {
+          for (const [filename, content] of Object.entries(importData.knowledge.articles)) {
+            if (filename.endsWith('.md')) {
+              safeWriteText(`knowledge/articles/${filename}`, content);
+            }
+          }
+        }
+      }
+
+      // 5. Prompt 模板
+      if (importData.prompts) {
+        if (importData.prompts.templates) {
+          for (const [filename, content] of Object.entries(importData.prompts.templates)) {
+            safeWriteText(`prompts/${filename}`, content);
+          }
+        }
+        if (importData.prompts.backups) {
+          for (const [filename, content] of Object.entries(importData.prompts.backups)) {
+            safeWriteText(`prompts/backups/${filename}`, content);
+          }
+        }
+        if (importData.prompts.candidates) {
+          for (const [filename, content] of Object.entries(importData.prompts.candidates)) {
+            safeWriteText(`prompts/candidates/${filename}`, content);
+          }
+        }
+      }
+
+      // 6. 反馈日志
+      if (importData.feedback) {
+        for (const [filename, content] of Object.entries(importData.feedback)) {
+          safeWriteText(`feedback/${filename}`, content);
+        }
+      }
+
+    } else {
+      // === 合并模式（追加，不覆盖已有数据） ===
+      const userDataPath2 = app.getPath('userData');
+
+      function readLocalJSON(relPath) {
+        try {
+          const p = path.join(userDataPath2, relPath);
+          if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+        } catch (e) {}
+        return null;
+      }
+
+      // 记忆：追加（按 id 去重）
+      if (importData.memory?.['memories.json']) {
+        const existing = readLocalJSON('memory/memories.json') || [];
+        const existingIds = new Set(existing.map(m => m.id));
+        const newMemories = importData.memory['memories.json'].filter(m => !existingIds.has(m.id));
+        safeWriteJSON('memory/memories.json', [...existing, ...newMemories]);
+      }
+
+      // 实体图谱：合并
+      if (importData.memory?.['entity-graph.json']) {
+        const existing = readLocalJSON('memory/entity-graph.json') || {};
+        const merged = { ...importData.memory['entity-graph.json'], ...existing }; // 本地优先
+        safeWriteJSON('memory/entity-graph.json', merged);
+      }
+
+      // 笔记：追加（按 id 去重）
+      if (importData.notebook?.['notes.json']) {
+        const existing = readLocalJSON('notebook/notes.json') || [];
+        const existingIds = new Set(existing.map(n => n.id));
+        const newNotes = importData.notebook['notes.json'].filter(n => !existingIds.has(n.id));
+        safeWriteJSON('notebook/notes.json', [...existing, ...newNotes]);
+      }
+
+      // 笔记分类：合并
+      if (importData.notebook?.['categories.json']) {
+        const existing = readLocalJSON('notebook/categories.json') || [];
+        const existingNames = new Set(existing.map(c => c.name || c));
+        const newCats = importData.notebook['categories.json'].filter(c => !existingNames.has(c.name || c));
+        safeWriteJSON('notebook/categories.json', [...existing, ...newCats]);
+      }
+
+      // 知识原子：追加
+      if (importData.knowledge?.['atoms.json']) {
+        const existing = readLocalJSON('knowledge/atoms.json') || [];
+        const existingIds = new Set(existing.map(a => a.id));
+        const newAtoms = importData.knowledge['atoms.json'].filter(a => !existingIds.has(a.id));
+        safeWriteJSON('knowledge/atoms.json', [...existing, ...newAtoms]);
+      }
+
+      // 知识簇：追加
+      if (importData.knowledge?.['clusters.json']) {
+        const existing = readLocalJSON('knowledge/clusters.json') || [];
+        const existingIds = new Set(existing.map(c => c.id));
+        const newClusters = importData.knowledge['clusters.json'].filter(c => !existingIds.has(c.id));
+        safeWriteJSON('knowledge/clusters.json', [...existing, ...newClusters]);
+      }
+
+      // 知识文章索引：追加
+      if (importData.knowledge?.['articles-index.json']) {
+        const existing = readLocalJSON('knowledge/articles/articles.json') || [];
+        const existingIds = new Set(existing.map(a => a.id));
+        const newArticles = importData.knowledge['articles-index.json'].filter(a => !existingIds.has(a.id));
+        safeWriteJSON('knowledge/articles/articles.json', [...existing, ...newArticles]);
+        // 写入文章 MD 文件
+        if (importData.knowledge.articles) {
+          for (const [filename, content] of Object.entries(importData.knowledge.articles)) {
+            const fullPath = path.join(userDataPath2, 'knowledge/articles', filename);
+            if (!fs.existsSync(fullPath)) {
+              safeWriteText(`knowledge/articles/${filename}`, content);
+            }
+          }
+        }
+      }
+
+      // 任务：追加
+      if (importData.core?.['memora-data.json']?.tasks) {
+        const localData = readLocalJSON('memora-data.json') || { tasks: [], settings: {}, pomodoro: {} };
+        const existingIds = new Set((localData.tasks || []).map(t => t.id));
+        const newTasks = importData.core['memora-data.json'].tasks.filter(t => !existingIds.has(t.id));
+        localData.tasks = [...(localData.tasks || []), ...newTasks];
+        safeWriteJSON('memora-data.json', localData);
+      }
+
+      // 画像：合并人物和项目
+      if (importData.core?.['profile.json']) {
+        const localProfile = readLocalJSON('profile.json') || {};
+        const importProfile = importData.core['profile.json'];
+        // 追加人物（去重 by name）
+        if (importProfile.frequent_persons) {
+          const localPersonNames = new Set((localProfile.frequent_persons || []).map(p => p.name));
+          const newPersons = importProfile.frequent_persons.filter(p => !localPersonNames.has(p.name));
+          localProfile.frequent_persons = [...(localProfile.frequent_persons || []), ...newPersons];
+        }
+        // 追加项目
+        if (importProfile.active_projects) {
+          const localProjectNames = new Set((localProfile.active_projects || []).map(p => p.name));
+          const newProjects = importProfile.active_projects.filter(p => !localProjectNames.has(p.name));
+          localProfile.active_projects = [...(localProfile.active_projects || []), ...newProjects];
+        }
+        // 合并行业
+        if (importProfile.user?.industries) {
+          const localIndustries = new Set(localProfile.user?.industries || []);
+          importProfile.user.industries.forEach(i => localIndustries.add(i));
+          if (!localProfile.user) localProfile.user = {};
+          localProfile.user.industries = [...localIndustries];
+        }
+        safeWriteJSON('profile.json', localProfile);
+      }
+
+      // 设置：不覆盖（合并模式保留本地设置）
+    }
+
+    // 重新加载内存中的数据
+    if (memoryStore) {
+      try {
+        const { MemoryStore } = require('./src/scripts/memory');
+        memoryStore = new MemoryStore();
+      } catch (e) {
+        console.warn('[Import] Failed to reload MemoryStore:', e.message);
+      }
+    }
+    if (knowledgeStore) {
+      try {
+        const { KnowledgeStore } = require('./src/scripts/knowledgeStore');
+        knowledgeStore = new KnowledgeStore();
+      } catch (e) {
+        console.warn('[Import] Failed to reload KnowledgeStore:', e.message);
+      }
+    }
+    if (notebook) {
+      try {
+        const { Notebook } = require('./src/scripts/notebook');
+        notebook = new Notebook();
+      } catch (e) {
+        console.warn('[Import] Failed to reload Notebook:', e.message);
+      }
+    }
+    if (db) {
+      try {
+        db = new Database(userDataPath);
+      } catch (e) {
+        console.warn('[Import] Failed to reload Database:', e.message);
+      }
+    }
+
+    return { success: true, mergeMode };
+  } catch (error) {
+    console.error('[Import Confirm] Failed:', error);
+    return { success: false, error: error.message };
+  }
+});

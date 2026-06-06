@@ -282,6 +282,10 @@ const App = {
     document.getElementById('refreshMemoriesBtn').addEventListener('click', () => this.loadMemories());
     document.getElementById('clearAllMemoriesBtn').addEventListener('click', () => this.clearAllMemories());
     document.getElementById('addManualMemoryBtn').addEventListener('click', () => this.addManualMemory());
+    document.getElementById('exportDataBtn')?.addEventListener('click', () => this.exportAllData());
+    document.getElementById('importDataBtn')?.addEventListener('click', () => this.importDataFile());
+    document.getElementById('importConfirmBtn')?.addEventListener('click', () => this.confirmImportData());
+    document.getElementById('importCancelBtn')?.addEventListener('click', () => this.cancelImportData());
     document.getElementById('aiOrganizeMemoryBtn')?.addEventListener('click', () => this.aiOrganizeAndAddMemory());
     document.getElementById('aiBatchOrganizeBtn')?.addEventListener('click', () => this.aiBatchOrganizeMemories());
     document.getElementById('memoryTypeFilter')?.addEventListener('change', () => this.loadMemories());
@@ -2546,6 +2550,143 @@ ${JSON.stringify(reportData, null, 2)}`;
       document.getElementById('currentDailyLimit').textContent = '每日限制: 10次';
     }
     this.showToast('API配置已清空，将使用内置密钥');
+  },
+
+  // === 数据导出/导入 ===
+  _pendingImportData: null,
+
+  async exportAllData() {
+    const password = document.getElementById('exportPassword')?.value;
+    const confirm = document.getElementById('exportPasswordConfirm')?.value;
+    const resultEl = document.getElementById('exportResult');
+    
+    if (!password) { this.showToast('请输入加密密码', 'error'); return; }
+    if (password.length < 4) { this.showToast('密码至少4位', 'error'); return; }
+    if (password !== confirm) { this.showToast('两次密码不一致', 'error'); return; }
+
+    const btn = document.getElementById('exportDataBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 正在导出...';
+    if (resultEl) { resultEl.classList.remove('hidden'); resultEl.innerHTML = '<div style="color:var(--text-secondary)">正在收集并加密数据...</div>'; }
+
+    try {
+      const result = await window.electronAPI.dataExport(password);
+      if (result.success) {
+        const statsHtml = `
+          <div class="data-export-success">
+            <div style="font-size:18px;font-weight:600;color:var(--success-color);margin-bottom:8px;">✅ 导出成功</div>
+            <div style="color:var(--text-secondary);margin-bottom:12px;">文件已保存，大小 ${result.fileSize}</div>
+            <div class="data-stats-grid">
+              <div class="data-stat"><span class="data-stat-value">${result.stats.tasks}</span><span class="data-stat-label">任务</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.memories}</span><span class="data-stat-label">记忆</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.notes}</span><span class="data-stat-label">笔记</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.atoms}</span><span class="data-stat-label">知识原子</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.clusters}</span><span class="data-stat-label">知识簇</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.articles}</span><span class="data-stat-label">文章</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.persons}</span><span class="data-stat-label">人物</span></div>
+              <div class="data-stat"><span class="data-stat-value">${result.stats.projects}</span><span class="data-stat-label">项目</span></div>
+            </div>
+          </div>`;
+        if (resultEl) resultEl.innerHTML = statsHtml;
+        this.showToast('数据导出成功');
+      } else {
+        if (result.error !== '用户取消') {
+          if (resultEl) resultEl.innerHTML = `<div style="color:var(--danger-color)">❌ 导出失败: ${this.escapeHtml(result.error)}</div>`;
+          this.showToast('导出失败: ' + result.error, 'error');
+        }
+      }
+    } catch (error) {
+      if (resultEl) resultEl.innerHTML = `<div style="color:var(--danger-color)">❌ 导出异常: ${this.escapeHtml(error.message)}</div>`;
+      this.showToast('导出异常', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📦 一键导出全部数据';
+    }
+  },
+
+  async importDataFile() {
+    const password = document.getElementById('importPassword')?.value;
+    const resultEl = document.getElementById('importPreview');
+    const confirmArea = document.getElementById('importConfirmArea');
+    
+    if (!password) { this.showToast('请输入解密密码', 'error'); return; }
+    if (password.length < 4) { this.showToast('密码至少4位', 'error'); return; }
+
+    const btn = document.getElementById('importDataBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 解密中...';
+    if (resultEl) { resultEl.classList.remove('hidden'); resultEl.innerHTML = '<div style="color:var(--text-secondary)">正在解密并解析数据...</div>'; }
+    if (confirmArea) confirmArea.classList.add('hidden');
+
+    try {
+      const result = await window.electronAPI.dataImport(password);
+      if (result.success) {
+        this._pendingImportData = result.importData;
+        const s = result.stats;
+        const statsHtml = `
+          <div class="data-export-success">
+            <div style="font-size:18px;font-weight:600;color:var(--primary-color);margin-bottom:8px;">✅ 文件解密成功</div>
+            <div style="color:var(--text-secondary);margin-bottom:4px;">备份时间: ${s.exportedAt || '未知'}</div>
+            <div class="data-stats-grid">
+              <div class="data-stat"><span class="data-stat-value">${s.tasks}</span><span class="data-stat-label">任务</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.memories}</span><span class="data-stat-label">记忆</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.notes}</span><span class="data-stat-label">笔记</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.atoms}</span><span class="data-stat-label">知识原子</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.clusters}</span><span class="data-stat-label">知识簇</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.articles}</span><span class="data-stat-label">文章</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.persons}</span><span class="data-stat-label">人物</span></div>
+              <div class="data-stat"><span class="data-stat-value">${s.projects}</span><span class="data-stat-label">项目</span></div>
+            </div>
+          </div>`;
+        if (resultEl) resultEl.innerHTML = statsHtml;
+        if (confirmArea) confirmArea.classList.remove('hidden');
+      } else {
+        if (result.error !== '用户取消') {
+          if (resultEl) resultEl.innerHTML = `<div style="color:var(--danger-color)">❌ 导入失败: ${this.escapeHtml(result.error)}</div>`;
+          this.showToast('导入失败: ' + result.error, 'error');
+        }
+      }
+    } catch (error) {
+      if (resultEl) resultEl.innerHTML = `<div style="color:var(--danger-color)">❌ 导入异常: ${this.escapeHtml(error.message)}</div>`;
+      this.showToast('导入异常', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📥 选择文件并导入';
+    }
+  },
+
+  async confirmImportData() {
+    if (!this._pendingImportData) { this.showToast('没有待导入数据', 'error'); return; }
+
+    const mergeMode = document.querySelector('input[name="importMode"]:checked')?.value || 'merge';
+    const confirmArea = document.getElementById('importConfirmArea');
+    const resultEl = document.getElementById('importPreview');
+
+    try {
+      confirmArea.innerHTML = '<div style="color:var(--text-secondary)">⏳ 正在导入数据...</div>';
+      const result = await window.electronAPI.dataImportConfirm(this._pendingImportData, mergeMode);
+      if (result.success) {
+        const modeLabel = mergeMode === 'replace' ? '替换' : '合并';
+        if (resultEl) resultEl.innerHTML += `<div style="margin-top:12px;padding:12px;background:rgba(52,199,89,0.1);border-radius:8px;color:var(--success-color);">✅ 数据${modeLabel}导入成功！建议重启应用以刷新所有数据。</div>`;
+        confirmArea.innerHTML = '';
+        this.showToast(`数据${modeLabel}导入成功，建议重启应用`);
+        this._pendingImportData = null;
+      } else {
+        confirmArea.innerHTML = `<div style="color:var(--danger-color)">❌ 导入失败: ${this.escapeHtml(result.error)}</div>`;
+        this.showToast('导入失败: ' + result.error, 'error');
+      }
+    } catch (error) {
+      confirmArea.innerHTML = `<div style="color:var(--danger-color)">❌ 导入异常: ${this.escapeHtml(error.message)}</div>`;
+      this.showToast('导入异常', 'error');
+    }
+  },
+
+  cancelImportData() {
+    this._pendingImportData = null;
+    const confirmArea = document.getElementById('importConfirmArea');
+    const resultEl = document.getElementById('importPreview');
+    if (confirmArea) confirmArea.classList.add('hidden');
+    if (resultEl) { resultEl.classList.add('hidden'); resultEl.innerHTML = ''; }
   },
 
   _memoryPage: 0,

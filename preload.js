@@ -243,5 +243,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localFilesSearch: (params) => ipcRenderer.invoke('local-files:search', params),
   localFilesIndexStatus: () => ipcRenderer.invoke('local-files:index-status'),
   localFilesOpen: (filePath) => ipcRenderer.invoke('local-files:open', filePath),
-  localFilesReveal: (filePath) => ipcRenderer.invoke('local-files:reveal', filePath)
+  localFilesReveal: (filePath) => ipcRenderer.invoke('local-files:reveal', filePath),
+
+  // 数据导出/导入
+  dataExport: (password) => ipcRenderer.invoke('data:export', { password }),
+  dataImport: (password, filePath) => ipcRenderer.invoke('data:import', { password, filePath }),
+  dataImportConfirm: (importData, mergeMode) => ipcRenderer.invoke('data:import-confirm', { importData, mergeMode })
 });
