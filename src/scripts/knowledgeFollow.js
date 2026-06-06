@@ -3,7 +3,37 @@
  * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、公开资源搜索、意图识别展示、三面板拖拽布局
  */
 
-const TOOLKIT_BASE_URL = 'http://21.91.29.59:3000';
+// 文档资源服务器地址：动态从登录配置获取，未登录时用默认值
+const DEFAULT_TOOLKIT_URL = 'http://21.91.29.59:3000';
+let TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
+
+// 从登录配置同步服务器地址
+async function syncToolkitBaseUrl() {
+  try {
+    if (window.electronAPI?.authGetState) {
+      const state = await window.electronAPI.authGetState();
+      if (state.isLoggedIn && state.authUrl) {
+        TOOLKIT_BASE_URL = state.authUrl;
+        console.log('[KnowledgeFollow] Toolkit URL synced from auth:', TOOLKIT_BASE_URL);
+      } else {
+        TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
+      }
+    }
+  } catch (e) {
+    console.warn('[KnowledgeFollow] Sync toolkit URL failed, using default:', e.message);
+    TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
+  }
+}
+
+// 启动时同步一次
+syncToolkitBaseUrl();
+
+// 监听登录状态变化，实时同步
+if (window.electronAPI?.onAuthChanged) {
+  window.electronAPI.onAuthChanged(() => {
+    syncToolkitBaseUrl();
+  });
+}
 
 class KnowledgeFollow {
   constructor() {
@@ -41,7 +71,8 @@ class KnowledgeFollow {
   /**
    * 显示知识视图时调用（每次切换都刷新推荐）
    */
-  onShow() {
+  async onShow() {
+    await syncToolkitBaseUrl();
     this.loadRecommendations();
   }
 
