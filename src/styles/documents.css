@@ -48,18 +48,18 @@
 .documents-search-btn {
   padding: 10px 18px;
   border: none;
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s var(--transition);
   color: white;
   font-size: 14px;
-  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .documents-search-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+  box-shadow: 0 4px 14px var(--primary-glow);
 }
 
 /* 排序标签 */
@@ -139,7 +139,7 @@
   left: 20%;
   right: 20%;
   height: 2px;
-  background: linear-gradient(90deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   border-radius: 1px;
 }
 
@@ -204,7 +204,7 @@
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   opacity: 0;
   transition: opacity 0.25s var(--transition);
 }
@@ -285,7 +285,7 @@
 
 .doc-category {
   background: rgba(79, 142, 247, 0.08);
-  color: #4F8EF7;
+  color: var(--primary-color);
 }
 
 .doc-industry {
@@ -596,14 +596,14 @@
 }
 
 .detail-action-btn.primary {
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   color: white;
   border: none;
-  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .detail-action-btn.primary:hover {
-  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+  box-shadow: 0 4px 14px var(--primary-glow);
   transform: translateY(-1px);
 }
 

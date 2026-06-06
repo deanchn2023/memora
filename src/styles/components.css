@@ -69,17 +69,17 @@
 }
 
 .task-block.high {
-  background: linear-gradient(135deg, #FF6B6B, #EE5A24);
+  background: linear-gradient(135deg, var(--danger-color), #EE5A24);
   box-shadow: 0 2px 8px rgba(238, 90, 36, 0.25);
 }
 
 .task-block.medium {
-  background: linear-gradient(135deg, #FFB347, #F5A623);
+  background: linear-gradient(135deg, var(--warning-color), var(--accent-color));
   box-shadow: 0 2px 8px rgba(245, 166, 35, 0.25);
 }
 
 .task-block.low {
-  background: linear-gradient(135deg, #4ECB71, #2ECC71);
+  background: linear-gradient(135deg, var(--success-color), #2ECC71);
   box-shadow: 0 2px 8px rgba(46, 204, 113, 0.25);
 }
 
@@ -237,7 +237,7 @@
 }
 
 .task-checkbox.checked {
-  background: linear-gradient(135deg, #4ECB71, #2ECC71);
+  background: linear-gradient(135deg, var(--success-color), #2ECC71);
   border-color: #4ECB71;
   box-shadow: 0 2px 6px rgba(46, 204, 113, 0.3);
 }
@@ -593,7 +593,7 @@
 }
 
 .action-btn.primary {
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   color: white;
   box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
 }
@@ -801,7 +801,7 @@
 }
 
 .btn.primary {
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   color: white;
   box-shadow: 0 4px 14px rgba(79, 142, 247, 0.3);
 }
@@ -878,7 +878,7 @@
 }
 
 .week-day.today .day-number {
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1045,7 +1045,7 @@
 }
 
 .month-day.today .month-day-number {
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1062,7 +1062,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   box-shadow: 0 1px 3px rgba(79, 142, 247, 0.3);
 }
 
@@ -1109,15 +1109,15 @@
 }
 
 .month-task-tag.priority-high {
-  background: linear-gradient(135deg, #FF6B6B, #EE5A24);
+  background: linear-gradient(135deg, var(--danger-color), #EE5A24);
 }
 
 .month-task-tag.priority-medium {
-  background: linear-gradient(135deg, #FFB347, #F5A623);
+  background: linear-gradient(135deg, var(--warning-color), var(--accent-color));
 }
 
 .month-task-tag.priority-low {
-  background: linear-gradient(135deg, #4ECB71, #2ECC71);
+  background: linear-gradient(135deg, var(--success-color), #2ECC71);
 }
 
 /* 已完成任务 - 月视图 */
@@ -1200,7 +1200,7 @@
 }
 
 .pomodoro-selector .pomodoro-btn.active {
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   color: white;
   border-color: transparent;
   box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);

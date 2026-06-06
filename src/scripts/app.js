@@ -84,6 +84,9 @@ const App = {
     } catch (e) {
       console.error('[App] setupClipboardListener() failed:', e);
     }
+
+    // 恢复视觉偏好（主题、字体大小、效果开关）
+    this._restoreVisualPrefs();
     
     // v2.0: 监听认证状态变化
     try {
@@ -500,6 +503,7 @@ const App = {
       if (tabName === 'memory') this.loadMemories();
       if (tabName === 'profile') this.loadProfileEditor();
       if (tabName === 'prompt') this.loadPromptFiles();
+      if (tabName === 'appearance') this._loadAppearanceSettings();
     }
   },
 
@@ -5194,6 +5198,142 @@ ${JSON.stringify(reportData, null, 2)}`;
     } else {
       this.showToast('保存失败：' + (result.error || ''), 'error');
     }
+  },
+
+  // ============= 外观设置 =============
+  _loadAppearanceSettings() {
+    this._renderThemeGrid();
+    this._loadVisualToggles();
+    this._loadFontSize();
+  },
+
+  _renderThemeGrid() {
+    const grid = document.getElementById('themeGrid');
+    if (!grid || !window.ThemeEngine) return;
+    grid.innerHTML = '';
+
+    const themes = ThemeEngine.getAllThemes();
+    const current = ThemeEngine.getTheme();
+
+    themes.forEach(theme => {
+      const card = document.createElement('div');
+      card.className = `theme-card${theme.id === current ? ' active' : ''}`;
+      card.dataset.theme = theme.id;
+      card.onclick = () => this._applyTheme(theme.id);
+
+      // 主题预览色条
+      const vars = ThemeEngine.getThemeInfo(theme.id).vars;
+      const previewColors = [
+        vars['--primary-color'],
+        vars['--bg-secondary'],
+        vars['--accent-color'],
+        vars['--success-color'],
+        vars['--warning-color']
+      ];
+
+      card.innerHTML = `
+        <div class="theme-preview">
+          ${previewColors.map(c => `<div class="theme-preview-color" style="background:${c}"></div>`).join('')}
+        </div>
+        <div class="theme-card-name">
+          <span class="theme-card-icon">${theme.icon}</span>
+          ${theme.name}
+        </div>
+        <div class="theme-card-desc">${theme.description}</div>
+      `;
+
+      grid.appendChild(card);
+    });
+  },
+
+  _applyTheme(themeId) {
+    if (!window.ThemeEngine) return;
+
+    // 添加过渡动画
+    document.body.classList.add('theme-transitioning');
+    ThemeEngine.apply(themeId, true);
+
+    // 更新选中状态
+    document.querySelectorAll('.theme-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.theme === themeId);
+    });
+
+    // 移除过渡动画
+    setTimeout(() => {
+      document.body.classList.remove('theme-transitioning');
+    }, 500);
+
+    this.showToast(`已切换到 ${ThemeEngine.getThemeInfo(themeId).name} 主题`);
+  },
+
+  _loadVisualToggles() {
+    const glassToggle = document.getElementById('glassEffectToggle');
+    const orbToggle = document.getElementById('orbEffectToggle');
+    const hoverToggle = document.getElementById('hoverEffectToggle');
+
+    // 从 localStorage 读取
+    const prefs = JSON.parse(localStorage.getItem('memora-visual-prefs') || '{}');
+
+    if (glassToggle) {
+      glassToggle.checked = prefs.glass !== false;
+      glassToggle.addEventListener('change', (e) => {
+        this._saveVisualPrefs('glass', e.target.checked);
+        document.body.classList.toggle('no-glass', !e.target.checked);
+      });
+      if (prefs.glass === false) document.body.classList.add('no-glass');
+    }
+
+    if (orbToggle) {
+      orbToggle.checked = prefs.orb !== false;
+      orbToggle.addEventListener('change', (e) => {
+        this._saveVisualPrefs('orb', e.target.checked);
+        document.body.classList.toggle('no-orb', !e.target.checked);
+      });
+      if (prefs.orb === false) document.body.classList.add('no-orb');
+    }
+
+    if (hoverToggle) {
+      hoverToggle.checked = prefs.hover !== false;
+      hoverToggle.addEventListener('change', (e) => {
+        this._saveVisualPrefs('hover', e.target.checked);
+        document.body.classList.toggle('no-hover', !e.target.checked);
+      });
+      if (prefs.hover === false) document.body.classList.add('no-hover');
+    }
+  },
+
+  _saveVisualPrefs(key, value) {
+    const prefs = JSON.parse(localStorage.getItem('memora-visual-prefs') || '{}');
+    prefs[key] = value;
+    localStorage.setItem('memora-visual-prefs', JSON.stringify(prefs));
+  },
+
+  _loadFontSize() {
+    const saved = localStorage.getItem('memora-font-size') || 'medium';
+    document.body.classList.add(`font-${saved}`);
+
+    document.querySelectorAll('.font-size-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.size === saved);
+      btn.addEventListener('click', () => {
+        const size = btn.dataset.size;
+        document.body.classList.remove('font-small', 'font-medium', 'font-large');
+        document.body.classList.add(`font-${size}`);
+        localStorage.setItem('memora-font-size', size);
+        document.querySelectorAll('.font-size-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+  },
+
+  // 启动时恢复视觉偏好
+  _restoreVisualPrefs() {
+    const prefs = JSON.parse(localStorage.getItem('memora-visual-prefs') || '{}');
+    if (prefs.glass === false) document.body.classList.add('no-glass');
+    if (prefs.orb === false) document.body.classList.add('no-orb');
+    if (prefs.hover === false) document.body.classList.add('no-hover');
+
+    const fontSize = localStorage.getItem('memora-font-size') || 'medium';
+    document.body.classList.add(`font-${fontSize}`);
   }
 };
 

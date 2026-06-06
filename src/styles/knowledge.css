@@ -53,14 +53,14 @@
   transition: all 0.25s var(--transition);
   letter-spacing: -0.1px;
   white-space: nowrap;
-  background: linear-gradient(135deg, #4F8EF7, #6C63FF);
+  background: var(--gradient-brand);
   color: white;
-  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .knowledge-search-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
+  box-shadow: 0 4px 14px var(--primary-glow);
 }
 
 .knowledge-search-btn:active {
@@ -226,7 +226,7 @@
 
 /* ADP 推荐卡片 - 左侧蓝色边框 */
 .knowledge-card.adp-recommend {
-  border-left: 3px solid #4F8EF7;
+  border-left: 3px solid var(--primary-color);
   background: rgba(79, 142, 247, 0.02);
 }
 
@@ -274,7 +274,7 @@
 
 .knowledge-card-source.source-adp-recommend {
   background: rgba(79, 142, 247, 0.1);
-  color: #4F8EF7;
+  color: var(--primary-color);
 }
 
 .knowledge-card-source.source-adp-search {
@@ -419,7 +419,7 @@
 
 .intent-tag.search_knowledge {
   background: rgba(79, 142, 247, 0.1);
-  color: #4F8EF7;
+  color: var(--primary-color);
 }
 
 .intent-tag.get_document {
@@ -495,7 +495,7 @@
 .adp-done-btn.primary {
   background: rgba(79, 142, 247, 0.08);
   border-color: rgba(79, 142, 247, 0.25);
-  color: #4F8EF7;
+  color: var(--primary-color);
 }
 
 .adp-done-btn.primary:hover {
@@ -569,7 +569,7 @@
   padding: 1px 8px;
   border-radius: 10px;
   background: rgba(79, 142, 247, 0.08);
-  color: #4F8EF7;
+  color: var(--primary-color);
 }
 
 .search-panel-body {
@@ -771,7 +771,7 @@
 .clipboard-intent-tag.active.intent-search {
   background: rgba(79, 142, 247, 0.12);
   border-color: rgba(79, 142, 247, 0.3);
-  color: #4F8EF7;
+  color: var(--primary-color);
 }
 
 .clipboard-intent-tag.active.intent-doc {
@@ -801,9 +801,9 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s var(--transition);
-  background: linear-gradient(135deg, #4F8EF7, #8B5CF6);
+  background: var(--gradient-brand);
   color: white;
-  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.25);
+  box-shadow: 0 2px 8px var(--primary-glow);
   letter-spacing: -0.1px;
   white-space: nowrap;
 }

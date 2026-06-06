@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="styles/documents.css">
   <link rel="stylesheet" href="styles/localFiles.css">
   <link rel="stylesheet" href="styles/knowledgeDistillation.css">
+  <link rel="stylesheet" href="styles/appearance.css">
 </head>
 <body>
   <div id="app">
@@ -759,6 +760,7 @@
           <button class="settings-tab" data-tab="adp">ADP配置</button>
           <button class="settings-tab" data-tab="prompt">Prompt配置</button>
           <button class="settings-tab" data-tab="profile">用户画像</button>
+          <button class="settings-tab" data-tab="appearance">外观</button>
           <button class="settings-tab" data-tab="memory">记忆管理</button>
         </div>
         
@@ -947,79 +949,131 @@
           </div>
         </div>
         
-        <!-- 用户画像 -->
-        <div class="settings-panel hidden" id="profilePanel">
-          <div class="profile-section">
-            <h4>👤 基本信息</h4>
-            <div class="form-row">
+          <!-- 用户画像 -->
+          <div class="settings-panel hidden" id="profilePanel">
+            <div class="profile-section">
+              <h4>👤 基本信息</h4>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="profileName">姓名</label>
+                  <input type="text" id="profileName" placeholder="你的姓名">
+                </div>
+                <div class="form-group">
+                  <label for="profileEnglishName">英文名</label>
+                  <input type="text" id="profileEnglishName" placeholder="English Name">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="profileRole">角色</label>
+                  <input type="text" id="profileRole" placeholder="如：产品经理 & 全栈开发者">
+                </div>
+                <div class="form-group">
+                  <label for="profileIndustries">行业（逗号分隔）</label>
+                  <input type="text" id="profileIndustries" placeholder="AI, SaaS, 企业服务">
+                </div>
+              </div>
+            </div>
+            
+            <div class="profile-section">
+              <h4>👥 高频接触人物</h4>
+              <div id="frequentPersonsList" class="profile-list"></div>
+              <div class="profile-add-row">
+                <input type="text" id="newPersonName" placeholder="姓名" style="flex:1">
+                <input type="text" id="newPersonRelation" placeholder="关系（如：老板、同事）" style="flex:1">
+                <input type="text" id="newPersonCompany" placeholder="公司（可选）" style="flex:1">
+                <button class="btn small" id="addPersonBtn">+ 添加</button>
+              </div>
+            </div>
+            
+            <div class="profile-section">
+              <h4>📂 活跃项目</h4>
+              <div id="activeProjectsList" class="profile-list"></div>
+              <div class="profile-add-row">
+                <input type="text" id="newProjectName" placeholder="项目名" style="flex:1">
+                <input type="text" id="newProjectAlias" placeholder="别名（逗号分隔）" style="flex:1">
+                <select id="newProjectStatus" style="flex:0.5">
+                  <option value="active">进行中</option>
+                  <option value="paused">暂停</option>
+                  <option value="completed">已完成</option>
+                </select>
+                <button class="btn small" id="addProjectBtn">+ 添加</button>
+              </div>
+            </div>
+            
+            <div class="profile-section">
+              <h4>⚡ 优先级偏好</h4>
               <div class="form-group">
-                <label for="profileName">姓名</label>
-                <input type="text" id="profileName" placeholder="你的姓名">
+                <label for="prioritySignals">高优先级触发词（逗号分隔）</label>
+                <input type="text" id="prioritySignals" placeholder="老板, 紧急, ASAP, 立即">
               </div>
               <div class="form-group">
-                <label for="profileEnglishName">英文名</label>
-                <input type="text" id="profileEnglishName" placeholder="English Name">
+                <label for="lowPrioritySignals">低优先级触发词（逗号分隔）</label>
+                <input type="text" id="lowPrioritySignals" placeholder="FYI, 有空, 可选, 参考">
               </div>
             </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label for="profileRole">角色</label>
-                <input type="text" id="profileRole" placeholder="如：产品经理 & 全栈开发者">
+            
+            <!-- Phase 3: 画像更新建议 -->
+            <div class="profile-section">
+              <h4>💡 智能建议</h4>
+              <div id="profileSuggestions" class="profile-suggestions">
+                <p style="color: var(--text-secondary); font-size: 13px;">点击下方按钮，系统将分析你的使用数据并给出画像更新建议。</p>
               </div>
-              <div class="form-group">
-                <label for="profileIndustries">行业（逗号分隔）</label>
-                <input type="text" id="profileIndustries" placeholder="AI, SaaS, 企业服务">
+              <button class="btn secondary small" id="generateProfileSuggestionsBtn" style="margin-top: 8px;">🔍 生成建议</button>
+            </div>
+          </div>
+
+          <!-- 外观设置 -->
+          <div class="settings-panel hidden" id="appearancePanel">
+            <div class="appearance-section">
+              <h4>🎨 主题风格</h4>
+              <p class="appearance-desc">选择你喜欢的界面风格，所有主题都经过精心设计</p>
+              <div class="theme-grid" id="themeGrid">
+                <!-- 由 ThemeEngine 动态渲染 -->
+              </div>
+            </div>
+            <div class="appearance-section">
+              <h4>✨ 视觉效果</h4>
+              <div class="appearance-option">
+                <div class="appearance-option-info">
+                  <span class="appearance-option-title">毛玻璃效果</span>
+                  <span class="appearance-option-desc">标题栏和面板的模糊透明效果</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="glassEffectToggle" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="appearance-option">
+                <div class="appearance-option-info">
+                  <span class="appearance-option-title">背景光球</span>
+                  <span class="appearance-option-desc">主视图区域的渐变光球装饰</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="orbEffectToggle" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="appearance-option">
+                <div class="appearance-option-info">
+                  <span class="appearance-option-title">悬停动效</span>
+                  <span class="appearance-option-desc">卡片和按钮的悬停浮起效果</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="hoverEffectToggle" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="appearance-section">
+              <h4>🔤 字体大小</h4>
+              <div class="font-size-selector">
+                <button class="font-size-btn" data-size="small">小</button>
+                <button class="font-size-btn active" data-size="medium">中</button>
+                <button class="font-size-btn" data-size="large">大</button>
               </div>
             </div>
           </div>
-          
-          <div class="profile-section">
-            <h4>👥 高频接触人物</h4>
-            <div id="frequentPersonsList" class="profile-list"></div>
-            <div class="profile-add-row">
-              <input type="text" id="newPersonName" placeholder="姓名" style="flex:1">
-              <input type="text" id="newPersonRelation" placeholder="关系（如：老板、同事）" style="flex:1">
-              <input type="text" id="newPersonCompany" placeholder="公司（可选）" style="flex:1">
-              <button class="btn small" id="addPersonBtn">+ 添加</button>
-            </div>
-          </div>
-          
-          <div class="profile-section">
-            <h4>📂 活跃项目</h4>
-            <div id="activeProjectsList" class="profile-list"></div>
-            <div class="profile-add-row">
-              <input type="text" id="newProjectName" placeholder="项目名" style="flex:1">
-              <input type="text" id="newProjectAlias" placeholder="别名（逗号分隔）" style="flex:1">
-              <select id="newProjectStatus" style="flex:0.5">
-                <option value="active">进行中</option>
-                <option value="paused">暂停</option>
-                <option value="completed">已完成</option>
-              </select>
-              <button class="btn small" id="addProjectBtn">+ 添加</button>
-            </div>
-          </div>
-          
-          <div class="profile-section">
-            <h4>⚡ 优先级偏好</h4>
-            <div class="form-group">
-              <label for="prioritySignals">高优先级触发词（逗号分隔）</label>
-              <input type="text" id="prioritySignals" placeholder="老板, 紧急, ASAP, 立即">
-            </div>
-            <div class="form-group">
-              <label for="lowPrioritySignals">低优先级触发词（逗号分隔）</label>
-              <input type="text" id="lowPrioritySignals" placeholder="FYI, 有空, 可选, 参考">
-            </div>
-          </div>
-          
-          <!-- Phase 3: 画像更新建议 -->
-          <div class="profile-section">
-            <h4>💡 智能建议</h4>
-            <div id="profileSuggestions" class="profile-suggestions">
-              <p style="color: var(--text-secondary); font-size: 13px;">点击下方按钮，系统将分析你的使用数据并给出画像更新建议。</p>
-            </div>
-            <button class="btn secondary small" id="generateProfileSuggestionsBtn" style="margin-top: 8px;">🔍 生成建议</button>
-          </div>
-        </div>
         
         <!-- 记忆管理 -->
         <div class="settings-panel hidden" id="memoryPanel">
@@ -1129,6 +1183,7 @@
 <!-- 隐藏的文件上传 input -->
 <input type="file" id="promptFileUploadInput" accept=".md" style="display:none">
 <script src="scripts/store.js"></script>
+<script src="scripts/themeEngine.js"></script>
 <script src="scripts/pomodoro.js"></script>
 <script src="scripts/calendar.js"></script>
 <script src="scripts/reminder.js"></script>
