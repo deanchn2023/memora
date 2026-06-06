@@ -345,7 +345,9 @@
                       <div class="search-panel-header" data-drag="adp">
                         <span class="search-panel-title">🤖 ADP 问答</span>
                         <span class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
-                          <div class="spinner"></div>
+                          <span class="adp-pulse-dot"></span>
+                          <span class="adp-pulse-dot"></span>
+                          <span class="adp-pulse-dot"></span>
                           <span>思考中</span>
                         </span>
                         <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
@@ -370,6 +372,7 @@
                     <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
                       <div class="search-panel-header" data-drag="local">
                         <span class="search-panel-title">🧠 本地记忆</span>
+                        <span class="search-panel-keywords" id="localKeywords" style="display: none;"></span>
                         <span class="search-panel-count" id="localCount">0</span>
                       </div>
                       <div class="search-panel-body" id="localSearchResults">
@@ -383,6 +386,7 @@
                     <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
                       <div class="search-panel-header" data-drag="public">
                         <span class="search-panel-title">📄 资源文件</span>
+                        <span class="search-panel-keywords" id="publicKeywords" style="display: none;"></span>
                         <span class="search-panel-count" id="publicCount">0</span>
                       </div>
                       <div class="search-panel-body" id="publicSearchResults">
@@ -823,10 +827,10 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="api">API配置</button>
           <button class="settings-tab" data-tab="adp">ADP配置</button>
-          <button class="settings-tab" data-tab="prompt">Prompt配置</button>
+          <button class="settings-tab" data-tab="prompt">Prompt</button>
           <button class="settings-tab" data-tab="profile">用户画像</button>
-          <button class="settings-tab" data-tab="appearance">外观</button>
           <button class="settings-tab" data-tab="memory">记忆管理</button>
+          <button class="settings-tab" data-tab="appearance">外观</button>
           <button class="settings-tab" data-tab="data">数据管理</button>
         </div>
         
@@ -879,17 +883,17 @@
             </small>
           </div>
           <div class="form-group">
-            <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey（可选）</label>
-            <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用通用AppKey">
+            <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey</label>
+            <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用内置知识AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识跟随模块的智能推荐专用 AppKey。留空时回退到通用 AppKey。
+              知识推荐专用 AppKey，与通用 ADP AppKey 不同。留空时使用内置知识专用 Key。
             </small>
           </div>
           <div class="form-group">
-            <label for="adpSearchAppKey">搜索问答 AppKey（可选）</label>
-            <input type="password" id="adpSearchAppKey" placeholder="留空则使用知识推荐或通用AppKey">
+            <label for="adpSearchAppKey">搜索问答 AppKey</label>
+            <input type="password" id="adpSearchAppKey" placeholder="留空则使用内置知识AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识搜索问答专用 AppKey。留空时依次回退到知识推荐 AppKey → 通用 AppKey。
+              知识搜索专用 AppKey，与通用 ADP AppKey 不同。留空时使用内置知识专用 Key。
             </small>
           </div>
           <div class="form-group">
@@ -911,7 +915,7 @@
           </div>
         </div>
         
-        <!-- Prompt配置 -->
+        <!-- Prompt -->
         <div class="settings-panel hidden" id="promptPanel">
           <div class="prompt-manager-header">
             <h4>📝 Prompt 模板管理</h4>

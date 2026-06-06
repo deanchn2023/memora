@@ -353,10 +353,10 @@ const App = {
         document.getElementById('knowledgeSearchInput').value = rawText;
       }
       
-      // 自动触发 ADP 搜索
+      // 触发综合搜索（ADP语义 + 本地关键词 + 公开API关键词）
       if (rawText && window.knowledgeFollow) {
         setTimeout(() => {
-          window.knowledgeFollow.handleADPSearch(intent);
+          window.knowledgeFollow.handleSearch(intent);
         }, 300);
       }
     });
@@ -386,7 +386,7 @@ const App = {
         }
         if (rawText && window.knowledgeFollow) {
           setTimeout(() => {
-            window.knowledgeFollow.handleADPSearch(intent);
+            window.knowledgeFollow.handleSearch(intent);
           }, 300);
         }
       }

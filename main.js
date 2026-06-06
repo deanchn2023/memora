@@ -2052,6 +2052,8 @@ ipcMain.handle('clear-api-key', async () => {
 
 // ADP配置相关
 const DEFAULT_ADP_APP_KEY = 'EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm';
+// 知识推荐和知识搜索使用的专用 AppKey（与通用 ADP 助手不同）
+const DEFAULT_ADP_KNOWLEDGE_APP_KEY = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
 
 ipcMain.handle('get-adp-config', async () => {
   // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
@@ -2063,8 +2065,8 @@ ipcMain.handle('get-adp-config', async () => {
       appKey: serverAppKey || DEFAULT_ADP_APP_KEY,
       url: remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
       agentName: remoteConfig.adp.agent_name || '我的AI助手',
-      knowledgeAppKey: serverKnowledgeAppKey || DEFAULT_ADP_APP_KEY,
-      searchAppKey: serverSearchAppKey || DEFAULT_ADP_APP_KEY,
+      knowledgeAppKey: serverKnowledgeAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+      searchAppKey: serverSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
       fromServer: true,
       // 详细标注每个 Key 的真实来源：server=服务器配置, default=本地默认值, custom=用户自定义
       configSource: {
@@ -2082,8 +2084,8 @@ ipcMain.handle('get-adp-config', async () => {
     appKey: localAppKey || DEFAULT_ADP_APP_KEY,
     url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
     agentName: getSetting('adp_agent_name') || '我的AI助手',
-    knowledgeAppKey: localKnowledgeAppKey || '',
-    searchAppKey: localSearchAppKey || '',
+    knowledgeAppKey: localKnowledgeAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+    searchAppKey: localSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
     fromServer: false,
     configSource: {
       appKey: localAppKey ? 'custom' : 'default',
@@ -2138,6 +2140,22 @@ async function fetchRemoteConfig() {
       // 仅存内存，不写磁盘，退出登录即消失
       remoteConfig = data;
       console.log('[Auth] Remote config fetched, keys:', Object.keys(data));
+      // 校验 ADP 专用 Key：如果服务器返回的 knowledge_app_key / search_app_key 与 app_key 相同，
+      // 说明 org_config 未正确配置，使用本地默认值
+      if (remoteConfig.adp) {
+        const adp = remoteConfig.adp;
+        if (!adp.knowledge_app_key || adp.knowledge_app_key === adp.app_key) {
+          console.log('[Auth] knowledge_app_key 未配置或与 app_key 相同，使用本地默认值');
+          adp.knowledge_app_key = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+        }
+        if (!adp.search_app_key || adp.search_app_key === adp.app_key) {
+          console.log('[Auth] search_app_key 未配置或与 app_key 相同，使用本地默认值');
+          adp.search_app_key = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+        }
+      }
+      console.log('[Auth] ADP config - app_key:', (data.adp?.app_key || '').substring(0, 10) + '...',
+        '| knowledge_app_key:', (data.adp?.knowledge_app_key || '').substring(0, 10) + '...',
+        '| search_app_key:', (data.adp?.search_app_key || '').substring(0, 10) + '...');
     } else if (res.status === 401) {
       // token 失效，自动退出
       console.log('[Auth] Token expired, auto logout');
@@ -5185,14 +5203,20 @@ async function triggerKnowledgeRecommendation(text, intent) {
       generalAppKey = getSetting('adp_app_key');
       url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
     }
-    const defaultAppKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
-
-    // 优先级：searchAppKey > knowledgeAppKey > generalAppKey > default（与手动搜索一致）
+    // 优先级：knowledgeAppKey > searchAppKey > generalAppKey > default（推荐功能用 knowledgeKey）
     let appKeySource = 'default';
-    let appKey = defaultAppKey;
-    if (searchAppKey && searchAppKey.trim()) { appKey = searchAppKey.trim(); appKeySource = 'search'; }
-    else if (knowledgeAppKey && knowledgeAppKey.trim()) { appKey = knowledgeAppKey.trim(); appKeySource = 'knowledge'; }
+    let appKey = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+    if (knowledgeAppKey && knowledgeAppKey.trim()) { appKey = knowledgeAppKey.trim(); appKeySource = 'knowledge'; }
+    else if (searchAppKey && searchAppKey.trim()) { appKey = searchAppKey.trim(); appKeySource = 'search'; }
     else if (generalAppKey && generalAppKey.trim()) { appKey = generalAppKey.trim(); appKeySource = 'general'; }
+
+    console.log('[Knowledge] 推荐触发 - AppKey来源:', appKeySource,
+      '| knowledge:', (knowledgeAppKey || '').substring(0, 10) + '...',
+      '| search:', (searchAppKey || '').substring(0, 10) + '...',
+      '| general:', (generalAppKey || '').substring(0, 10) + '...',
+      '| 最终使用:', appKey.substring(0, 10) + '...',
+      '| isLoggedIn:', authState.isLoggedIn,
+      '| forceLocal:', authState.forceLocalConfig);
 
     const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
     const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
@@ -5362,12 +5386,16 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
     generalAppKey = getSetting('adp_app_key');
     url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
   }
-  const defaultAppKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
-
-  const appKey = (searchAppKey && searchAppKey.trim()) || (knowledgeAppKey && knowledgeAppKey.trim()) || (generalAppKey && generalAppKey.trim()) || defaultAppKey;
+  const appKey = (searchAppKey && searchAppKey.trim()) || (knowledgeAppKey && knowledgeAppKey.trim()) || (generalAppKey && generalAppKey.trim()) || DEFAULT_ADP_KNOWLEDGE_APP_KEY;
   const appKeySource = (searchAppKey && searchAppKey.trim()) ? 'search' : (knowledgeAppKey && knowledgeAppKey.trim()) ? 'knowledge' : (generalAppKey && generalAppKey.trim()) ? 'general' : 'default';
 
-  console.log('[Knowledge] ADP search:', query, 'appKey source:', appKeySource, 'appKey:', appKey.substring(0, 10) + '...');
+  console.log('[Knowledge] 搜索触发 - AppKey来源:', appKeySource,
+    '| search:', (searchAppKey || '').substring(0, 10) + '...',
+    '| knowledge:', (knowledgeAppKey || '').substring(0, 10) + '...',
+    '| general:', (generalAppKey || '').substring(0, 10) + '...',
+    '| 最终使用:', appKey.substring(0, 10) + '...',
+    '| isLoggedIn:', authState.isLoggedIn,
+    '| forceLocal:', authState.forceLocalConfig);
 
   const convId = conversationId || Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
   const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
@@ -5689,6 +5717,62 @@ ipcMain.handle('knowledge:get-history', async (event, { limit, offset }) => {
     items: items.slice(offset || 0, (offset || 0) + (limit || 20)),
     total: items.length
   };
+});
+
+// 知识跟随：AI 提炼搜索关键词（语义→关键词，用于本地搜索和公开API搜索）
+ipcMain.handle('knowledge:extract-keywords', async (event, { query }) => {
+  if (!query || query.trim().length === 0) return { keywords: query };
+
+  try {
+    // v2.0: 登录状态优先使用服务器配置（与 getAPIConfig() 逻辑一致）
+    let apiKey, baseUrl, model;
+    if (authState.isLoggedIn && remoteConfig?.api && !authState.forceLocalConfig) {
+      apiKey = remoteConfig.api.api_key;
+      baseUrl = remoteConfig.api.base_url;
+      model = remoteConfig.api.model;
+    } else {
+      apiKey = getSetting('api_key') || DEFAULT_API_KEY;
+      baseUrl = getSetting('base_url') || DEFAULT_BASE_URL;
+      model = getSetting('model') || DEFAULT_MODEL;
+    }
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: '你是一个关键词提取专家。从用户的语义化搜索语句中提取出唯一的核心关键词。只输出1个核心关键词，不超过7个字，不要有其他内容。去除虚词、语气词和修饰语，保留最能代表搜索意图的核心词。例如："如何优化数据库查询性能" → "数据库"，"最近在研究的前端框架有什么推荐" → "前端框架"，"React中useState的使用方法" → "useState"，"机器学习中的梯度下降算法" → "梯度下降"'
+          },
+          {
+            role: 'user',
+            content: query
+          }
+        ],
+        max_tokens: 100,
+        temperature: 0.1
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+
+    if (!response.ok) {
+      console.warn('[Knowledge] Keyword extraction API failed:', response.status);
+      return { keywords: query };
+    }
+
+    const data = await response.json();
+    const keywords = data.choices?.[0]?.message?.content?.trim() || query;
+    console.log('[Knowledge] Extracted keywords:', query, '→', keywords);
+    return { keywords };
+  } catch (error) {
+    console.warn('[Knowledge] Keyword extraction failed:', error.message);
+    return { keywords: query };
+  }
 });
 
 // 知识跟随：剪贴板意图分类
@@ -6390,9 +6474,12 @@ function collectExportData() {
     } catch (e) {}
   }
 
-  // 计算校验和
+  // 计算校验和（先临时移除 checksum 字段，计算后再填充，保证导出和导入的校验逻辑一致）
+  const metaForChecksum = { ...exportData._meta };
+  delete exportData._meta;
   const dataString = JSON.stringify(exportData);
-  exportData._meta.checksum = crypto.createHash('sha256').update(dataString).digest('hex');
+  const checksum = crypto.createHash('sha256').update(dataString).digest('hex');
+  exportData._meta = { ...metaForChecksum, checksum };
 
   return exportData;
 }
@@ -6488,14 +6575,15 @@ ipcMain.handle('data:import', async (event, { password, filePath }) => {
       return { success: false, error: '不是有效的 Memora 备份文件' };
     }
 
-    // 校验 checksum
-    const savedChecksum = importData._meta.checksum;
-    delete importData._meta.checksum;
+    // 校验 checksum（与导出时一致：先移除 _meta 再计算）
+    const savedChecksum = importData._meta?.checksum;
+    const metaBackup = importData._meta;
+    delete importData._meta;
     const currentChecksum = crypto.createHash('sha256').update(JSON.stringify(importData)).digest('hex');
+    importData._meta = metaBackup;
     if (savedChecksum && savedChecksum !== currentChecksum) {
       return { success: false, error: '数据校验失败，文件可能已被篡改或损坏' };
     }
-    importData._meta.checksum = savedChecksum;
 
     // 统计将要导入的数据
     const stats = {
@@ -6679,6 +6767,34 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
         }
       }
 
+      // 知识项：追加
+      if (importData.knowledge?.['knowledge-items.json']) {
+        const existing = readLocalJSON('knowledge/knowledge-items.json') || [];
+        const existingIds = new Set(existing.map(i => i.id));
+        const newItems = importData.knowledge['knowledge-items.json'].filter(i => !existingIds.has(i.id));
+        safeWriteJSON('knowledge/knowledge-items.json', [...existing, ...newItems]);
+      }
+
+      // 推荐记录：追加
+      if (importData.knowledge?.['recommendations.json']) {
+        const existing = readLocalJSON('knowledge/recommendations.json') || [];
+        const existingIds = new Set(existing.map(r => r.id));
+        const newRecs = importData.knowledge['recommendations.json'].filter(r => !existingIds.has(r.id));
+        safeWriteJSON('knowledge/recommendations.json', [...existing, ...newRecs]);
+      }
+
+      // 设置：不覆盖（合并模式保留本地设置）
+      // 本地文件索引：追加（按路径去重）
+      if (importData.core?.['local-file-index.json']) {
+        const localIndex = readLocalJSON('local-file-index.json') || {};
+        const importIndex = importData.core['local-file-index.json'] || {};
+        // 合并，本地优先
+        for (const [key, val] of Object.entries(importIndex)) {
+          if (!localIndex[key]) localIndex[key] = val;
+        }
+        safeWriteJSON('local-file-index.json', localIndex);
+      }
+
       // 任务：追加
       if (importData.core?.['memora-data.json']?.tasks) {
         const localData = readLocalJSON('memora-data.json') || { tasks: [], settings: {}, pomodoro: {} };
@@ -6713,8 +6829,6 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
         }
         safeWriteJSON('profile.json', localProfile);
       }
-
-      // 设置：不覆盖（合并模式保留本地设置）
     }
 
     // 重新加载内存中的数据

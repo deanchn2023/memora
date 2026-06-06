@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   knowledgeSearchADP: (params) => ipcRenderer.invoke('knowledge:search-adp', params),
   knowledgeStopADP: () => ipcRenderer.invoke('knowledge:stop-adp'),
   knowledgeSearchLocal: (params) => ipcRenderer.invoke('knowledge:search-local', params),
+  knowledgeExtractKeywords: (params) => ipcRenderer.invoke('knowledge:extract-keywords', params),
   knowledgeSaveItem: (item) => ipcRenderer.invoke('knowledge:save-item', item),
   knowledgeDeleteItem: (params) => ipcRenderer.invoke('knowledge:delete-item', params),
   knowledgeGetRecommendations: (params) => ipcRenderer.invoke('knowledge:get-recommendations', params),

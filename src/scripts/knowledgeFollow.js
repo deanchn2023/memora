@@ -183,6 +183,7 @@ class KnowledgeFollow {
 
   /**
    * 综合搜索：公开API + 本地记忆 + ADP 同时发起
+   * ADP 支持语义搜索，用原始 query；本地和公开API 是关键词搜索，先 AI 提炼关键词
    */
   async handleSearch(intent = null) {
     const input = document.getElementById('knowledgeSearchInput');
@@ -198,10 +199,65 @@ class KnowledgeFollow {
     const panels = document.querySelectorAll('.search-panel');
     panels.forEach(p => { p.style.flex = '1 1 0%'; });
 
-    // 并行搜索三个来源，ADP 优先发起
+    // ADP 支持语义搜索，直接用原始 query
     this.handleADPSearch(intent);
-    this.handleLocalSearch(query);
-    this.handlePublicSearch(query);
+
+    // 本地和公开 API 是关键词匹配，先 AI 提炼关键词再搜索
+    this.extractKeywordsAndSearch(query);
+  }
+
+  /**
+   * AI 提炼关键词后进行本地和公开搜索
+   */
+  async extractKeywordsAndSearch(query) {
+    let keywords = query;
+    let extracted = false;
+    try {
+      if (window.electronAPI?.knowledgeExtractKeywords) {
+        const result = await window.electronAPI.knowledgeExtractKeywords({ query });
+        if (result.keywords && result.keywords.trim()) {
+          keywords = result.keywords.trim();
+          extracted = true;
+        }
+      }
+    } catch (e) {
+      console.warn('[KnowledgeFollow] Keyword extraction failed, using original query:', e);
+    }
+
+    // 在本地搜索面板标题显示提炼的关键词
+    this.showExtractedKeywords(keywords, extracted);
+
+    // 用提炼的关键词搜索本地和公开 API
+    this.handleLocalSearch(keywords);
+    this.handlePublicSearch(keywords);
+  }
+
+  /**
+   * 在搜索面板标题显示提炼的关键词
+   */
+  showExtractedKeywords(keywords, extracted) {
+    // 本地记忆面板
+    const localKeywordsEl = document.getElementById('localKeywords');
+    if (localKeywordsEl) {
+      if (extracted && keywords) {
+        localKeywordsEl.textContent = `🔍 ${keywords}`;
+        localKeywordsEl.style.display = 'inline';
+        localKeywordsEl.title = `AI 提炼关键词: ${keywords}`;
+      } else {
+        localKeywordsEl.style.display = 'none';
+      }
+    }
+    // 资源文件面板
+    const publicKeywordsEl = document.getElementById('publicKeywords');
+    if (publicKeywordsEl) {
+      if (extracted && keywords) {
+        publicKeywordsEl.textContent = `🔍 ${keywords}`;
+        publicKeywordsEl.style.display = 'inline';
+        publicKeywordsEl.title = `AI 提炼关键词: ${keywords}`;
+      } else {
+        publicKeywordsEl.style.display = 'none';
+      }
+    }
   }
 
   /**
@@ -215,19 +271,30 @@ class KnowledgeFollow {
       recommendSection.style.maxHeight = '';
       recommendSection.style.flex = '';
     }
+    // 清除关键词显示
+    const keywordsEl = document.getElementById('localKeywords');
+    if (keywordsEl) keywordsEl.style.display = 'none';
+    const publicKeywordsEl = document.getElementById('publicKeywords');
+    if (publicKeywordsEl) publicKeywordsEl.style.display = 'none';
   }
 
-  // 推荐区扩大，搜索区收起（点击推荐卡片时调用）
+  // 推荐区扩大（点击推荐卡片展开时调用）
   expandRecommendSection() {
-    const resultsSection = document.getElementById('knowledgeSearchResults');
     const recommendSection = document.getElementById('knowledgeRecommendSection');
     if (recommendSection) {
-      recommendSection.style.maxHeight = '80%';
+      // 移除固定 maxHeight，让推荐区随内容自然撑开
+      recommendSection.style.maxHeight = 'none';
       recommendSection.style.flex = '1 1 auto';
     }
-    if (resultsSection) {
-      resultsSection.style.maxHeight = '20%';
-      resultsSection.style.overflow = 'hidden';
+    // 不再压缩搜索结果区，让 knowledge-content 整体滚动
+  }
+
+  // 收起推荐区（点击推荐卡片收起时调用）
+  collapseRecommendSection() {
+    const recommendSection = document.getElementById('knowledgeRecommendSection');
+    if (recommendSection) {
+      recommendSection.style.maxHeight = '';
+      recommendSection.style.flex = '';
     }
   }
 
@@ -798,9 +865,14 @@ class KnowledgeFollow {
       if (content) {
         const isExpanding = !content.classList.contains('expanded');
         content.classList.toggle('expanded');
-        // 展开时：推荐区扩大，搜索区收起
         if (isExpanding) {
           this.expandRecommendSection();
+        } else {
+          // 检查是否还有其他展开的卡片
+          const otherExpanded = container.querySelectorAll('.knowledge-card-content.expanded');
+          if (otherExpanded.length === 0) {
+            this.collapseRecommendSection();
+          }
         }
       }
     });

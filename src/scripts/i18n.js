@@ -116,7 +116,7 @@ const I18n = {
       'settings.title': '设置',
       'settings.api': 'API配置',
       'settings.adp': 'ADP配置',
-      'settings.prompt': 'Prompt配置',
+      'settings.prompt': 'Prompt',
       'settings.memory': '记忆管理',
       'settings.save': '保存设置',
       'settings.saved': '设置已保存',
