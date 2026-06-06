@@ -43,16 +43,16 @@
     <div class="main-container">
       <div class="header">
         <div class="view-tabs">
-          <button class="view-tab active" data-view="calendar">日历</button>
-          <button class="view-tab" data-view="notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
-          <button class="view-tab" data-view="documents">文档</button>
-          <button class="view-tab" data-view="knowledge">知识</button>
+          <button class="view-tab active" data-view="calendar" data-i18n="nav.calendar">日历</button>
+          <button class="view-tab" data-view="notebook" data-i18n="nav.notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
+          <button class="view-tab" data-view="documents" data-i18n="nav.documents">文档</button>
+          <button class="view-tab" data-view="knowledge" data-i18n="nav.knowledge">知识</button>
         </div>
         <div class="date-navigator">
           <button class="nav-btn" id="prevDate">◀</button>
           <span class="current-date" id="currentDate">2026年5月27日</span>
           <button class="nav-btn" id="nextDate">▶</button>
-          <button class="today-btn" id="todayBtn">今天</button>
+          <button class="today-btn" id="todayBtn" data-i18n="nav.today">今天</button>
         </div>
         <div class="header-actions">
           <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><linearGradient id="aBtnBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="12" fill="url(#aBtnBg)"/><text x="20" y="27" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="700" fill="white">M</text></svg></button>
@@ -74,14 +74,14 @@
         <!-- 通知面板 -->
         <div class="notification-panel hidden" id="notificationPanel">
           <div class="notification-panel-header">
-            <span>通知</span>
+            <span data-i18n="notification.title">通知</span>
             <div class="notification-panel-actions">
-              <button class="notification-mark-all" id="notificationMarkAllBtn">全部已读</button>
+              <button class="notification-mark-all" id="notificationMarkAllBtn" data-i18n="notification.markAllRead">全部已读</button>
               <button class="notification-clear-all" id="notificationClearAllBtn" title="清除所有通知">🗑</button>
             </div>
           </div>
           <div class="notification-panel-body" id="notificationPanelBody">
-            <div class="notification-empty">暂无通知</div>
+            <div class="notification-empty" data-i18n="notification.empty">暂无通知</div>
           </div>
         </div>
       </div>
@@ -89,24 +89,24 @@
       <div class="content">
         <div class="sidebar">
           <div class="pomodoro-section">
-            <h3>番茄钟</h3>
+            <h3 data-i18n="pomodoro.title">番茄钟</h3>
             <div class="pomodoro-timer">
               <div class="timer-display" id="timerDisplay">25:00</div>
               <div class="pomodoro-count" id="pomodoroCount">○ ○ ○ ○</div>
             </div>
             <div class="pomodoro-controls">
-              <button class="pomodoro-btn primary" id="startPomodoro">开始</button>
-              <button class="pomodoro-btn" id="resetPomodoro">重置</button>
+              <button class="pomodoro-btn primary" id="startPomodoro" data-i18n="pomodoro.start">开始</button>
+              <button class="pomodoro-btn" id="resetPomodoro" data-i18n="pomodoro.reset">重置</button>
             </div>
             <div class="current-task" id="currentTask">
-              <span class="label">当前任务:</span>
-              <span class="task-name">无</span>
+              <span class="label" data-i18n="pomodoro.currentTask">当前任务:</span>
+              <span class="task-name" data-i18n="pomodoro.noTask">无</span>
             </div>
           </div>
 
           <div class="task-list-section">
             <div class="task-list-header">
-              <h3>待办列表</h3>
+              <h3 data-i18n="task.title">待办列表</h3>
               <div class="task-sort-toggle" id="taskSortToggle">
                 <button class="sort-btn active" data-sort="dueDate" title="按截止时间排序">⏰</button>
                 <button class="sort-btn" data-sort="priority" title="按优先级排序">🔥</button>
@@ -146,28 +146,28 @@
           <div class="notebook-view hidden" id="notebookView">
             <div class="notebook-header">
               <div class="notebook-search">
-                <input type="text" id="notebookSearchInput" placeholder="搜索笔记...">
+                <input type="text" id="notebookSearchInput" placeholder="搜索笔记..." data-i18n-placeholder="notebook.search">
                 <button class="search-btn">🔍</button>
               </div>
             </div>
             <div class="notebook-content">
-              <div class="notebook-sidebar">
-                <div class="sidebar-section">
-                  <h4>分类</h4>
-                  <div class="category-list" id="categoryList">
-                    <!-- 动态渲染，由 renderCategoryList() 控制 -->
-                  </div>
-                </div>
-                <div class="sidebar-section">
-                  <h4>统计</h4>
-                  <div class="stats-info" id="notebookStats">
-                    <div>总笔记: <span id="noteCount">0</span></div>
-                    <div>已分析: <span id="analyzedCount">0</span></div>
-                  </div>
+            <div class="notebook-sidebar">
+              <div class="sidebar-section">
+                <h4 data-i18n="notebook.sidebar.categories">分类</h4>
+                <div class="category-list" id="categoryList">
+                  <!-- 动态渲染，由 renderCategoryList() 控制 -->
                 </div>
               </div>
-              <div class="notebook-list" id="notebookList">
-                <div class="empty-state">暂无笔记</div>
+              <div class="sidebar-section">
+                <h4 data-i18n="notebook.sidebar.stats">统计</h4>
+                <div class="stats-info" id="notebookStats">
+                  <div data-i18n-partial="notebook.stats.total">总笔记: <span id="noteCount">0</span></div>
+                  <div data-i18n-partial="notebook.stats.analyzed">已分析: <span id="analyzedCount">0</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="notebook-list" id="notebookList">
+              <div class="empty-state" data-i18n="notebook.empty">暂无笔记</div>
               </div>
             </div>
           </div>
@@ -813,20 +813,20 @@
     <div class="modal-overlay"></div>
     <div class="modal-content" style="max-width: 800px;">
       <div class="modal-header">
-        <h3>设置</h3>
+        <h3 data-i18n="settings.title">设置</h3>
         <button class="modal-close" id="closeSettingsBtn">×</button>
       </div>
       <div class="modal-body">
         <!-- 设置标签页 -->
         <div class="settings-tabs">
-          <button class="settings-tab active" data-tab="api">API配置</button>
-          <button class="settings-tab" data-tab="adp">ADP配置</button>
-          <button class="settings-tab" data-tab="prompt">Prompt</button>
-          <button class="settings-tab" data-tab="profile">用户画像</button>
-          <button class="settings-tab" data-tab="memory">记忆管理</button>
-          <button class="settings-tab" data-tab="appearance">外观</button>
-          <button class="settings-tab" data-tab="data">数据管理</button>
-          <button class="settings-tab" data-tab="about">关于</button>
+          <button class="settings-tab active" data-tab="api" data-i18n="settings.tab.api">API配置</button>
+          <button class="settings-tab" data-tab="adp" data-i18n="settings.tab.adp">ADP配置</button>
+          <button class="settings-tab" data-tab="prompt" data-i18n="settings.tab.prompts">Prompt</button>
+          <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">用户画像</button>
+          <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆管理</button>
+          <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">外观</button>
+          <button class="settings-tab" data-tab="data" data-i18n="settings.tab.data">数据管理</button>
+          <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
         
         <!-- API配置 -->
@@ -1344,82 +1344,82 @@
             </div>
 
             <div class="about-description">
-              <p>AI 驱动的个人记忆与事项管理助手，让每一天的想法、任务和知识都有迹可循。</p>
+              <p data-i18n="about.description">AI 驱动的个人记忆与事项管理助手，让每一天的想法、任务和知识都有迹可循。</p>
             </div>
 
             <div class="about-features">
-              <h4>✨ 核心特色</h4>
+              <h4 data-i18n="about.features">✨ 核心特色</h4>
               <div class="about-feature-grid">
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🧠</span>
                   <div>
-                    <strong>智能记忆</strong>
-                    <span>自动沉淀对话、笔记与知识，构建专属记忆图谱</span>
+                    <strong data-i18n="about.feature.memory">智能记忆</strong>
+                    <span data-i18n="about.feature.memory.desc">自动沉淀对话、笔记与知识，构建专属记忆图谱</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">📅</span>
                   <div>
-                    <strong>日程管理</strong>
-                    <span>日历视图整合待办与番茄钟，高效掌控时间</span>
+                    <strong data-i18n="about.feature.schedule">日程管理</strong>
+                    <span data-i18n="about.feature.schedule.desc">日历视图整合待办与番茄钟，高效掌控时间</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🔍</span>
                   <div>
-                    <strong>知识跟随</strong>
-                    <span>智能搜索与推荐，知识图谱实时追踪关联</span>
+                    <strong data-i18n="about.feature.knowledge">知识跟随</strong>
+                    <span data-i18n="about.feature.knowledge.desc">智能搜索与推荐，知识图谱实时追踪关联</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🤖</span>
                   <div>
-                    <strong>AI 助手</strong>
-                    <span>基于 ADP 智能体，对话即服务，任务识别自动化</span>
+                    <strong data-i18n="about.feature.ai">AI 助手</strong>
+                    <span data-i18n="about.feature.ai.desc">基于 ADP 智能体，对话即服务，任务识别自动化</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">👤</span>
                   <div>
-                    <strong>用户画像</strong>
-                    <span>个性化偏好与人物关系，AI 越用越懂你</span>
+                    <strong data-i18n="about.feature.profile">用户画像</strong>
+                    <span data-i18n="about.feature.profile.desc">个性化偏好与人物关系，AI 越用越懂你</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🏢</span>
                   <div>
-                    <strong>组织协作</strong>
-                    <span>云端配置同步，团队知识共享与权限管理</span>
+                    <strong data-i18n="about.feature.org">组织协作</strong>
+                    <span data-i18n="about.feature.org.desc">云端配置同步，团队知识共享与权限管理</span>
                   </div>
                 </div>
               </div>
             </div>
 
             <div class="about-changelog">
-              <h4>📋 版本说明</h4>
+              <h4 data-i18n="about.changelog">📋 版本说明</h4>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.1.0</span>
                 <span class="changelog-date">2026-06</span>
                 <ul>
-                  <li>全新多主题系统，支持日间/夜间及多彩风格切换</li>
-                  <li>国际化支持，一键切换中/英文界面</li>
-                  <li>文档资源服务器地址动态获取，自适应登录环境</li>
-                  <li>外观设置优化，毛玻璃/光球/悬浮效果独立控制</li>
-                  <li>数据导入支持合并与替换两种模式</li>
-                  <li>Prompt 自动优化器，历史版本对比与回归测试</li>
+                  <li data-i18n="about.v210.f1">全新多主题系统，支持日间/夜间及多彩风格切换</li>
+                  <li data-i18n="about.v210.f2">国际化支持，一键切换中/英文界面</li>
+                  <li data-i18n="about.v210.f3">文档资源服务器地址动态获取，自适应登录环境</li>
+                  <li data-i18n="about.v210.f4">外观设置优化，毛玻璃/光球/悬浮效果独立控制</li>
+                  <li data-i18n="about.v210.f5">数据导入支持合并与替换两种模式</li>
+                  <li data-i18n="about.v210.f6">Prompt 自动优化器，历史版本对比与回归测试</li>
                 </ul>
               </div>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.0.0</span>
                 <span class="changelog-date">2026-05</span>
                 <ul>
-                  <li>五层智能架构：感知 → 沉淀 → 理解 → 反馈 → 进化</li>
-                  <li>组织登录与云端配置同步</li>
-                  <li>AI 助手 SSE 流式对话与意图识别</li>
-                  <li>知识图谱可视化与智能搜索</li>
-                  <li>记忆管理系统（瞬时/短期/长期）</li>
-                  <li>番茄钟专注计时与任务关联</li>
-                  <li>剪贴板智能检测与自动入库</li>
+                  <li data-i18n="about.v200.f1">五层智能架构：感知 → 沉淀 → 理解 → 反馈 → 进化</li>
+                  <li data-i18n="about.v200.f2">组织登录与云端配置同步</li>
+                  <li data-i18n="about.v200.f3">AI 助手 SSE 流式对话与意图识别</li>
+                  <li data-i18n="about.v200.f4">知识图谱可视化与智能搜索</li>
+                  <li data-i18n="about.v200.f5">记忆管理系统（瞬时/短期/长期）</li>
+                  <li data-i18n="about.v200.f6">番茄钟专注计时与任务关联</li>
+                  <li data-i18n="about.v200.f7">剪贴板智能检测与自动入库</li>
                 </ul>
               </div>
             </div>
@@ -1432,7 +1432,7 @@
         </div>
         <button class="btn secondary" id="clearClipboardHashesBtn">清空已处理记录</button>
         <button class="btn secondary" id="clearAPIKeyBtn">清空API配置</button>
-        <button class="btn primary" id="saveSettingsBtn">保存设置</button>
+        <button class="btn primary" id="saveSettingsBtn" data-i18n="settings.save">保存设置</button>
       </div>
     </div>
   </div>

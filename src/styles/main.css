@@ -991,6 +991,7 @@ body {
 /* ============= 设置界面 ============= */
 .settings-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-bottom: 24px;
   padding: 3px;

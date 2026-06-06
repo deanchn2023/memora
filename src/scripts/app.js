@@ -404,7 +404,10 @@ const App = {
     
     // 设置标签页切换
     document.querySelectorAll('.settings-tab').forEach(tab => {
-      tab.addEventListener('click', (e) => this.switchSettingsTab(e.target.dataset.tab));
+      tab.addEventListener('click', (e) => {
+        const tabBtn = e.target.closest('.settings-tab');
+        if (tabBtn) this.switchSettingsTab(tabBtn.dataset.tab);
+      });
     });
     
     // Phase 3: Prompt 优化器
@@ -509,10 +512,17 @@ const App = {
   _settingsTabLoaded: {},
 
   switchSettingsTab(tabName) {
+    if (!tabName) return;
     document.querySelectorAll('.settings-tab').forEach(tab => tab.classList.remove('active'));
-    document.querySelector(`[data-tab="${tabName}"]`)?.classList.add('active');
+    const targetTab = document.querySelector(`[data-tab="${tabName}"]`);
+    if (targetTab) targetTab.classList.add('active');
     document.querySelectorAll('.settings-panel').forEach(panel => panel.classList.add('hidden'));
-    document.getElementById(`${tabName}Panel`)?.classList.remove('hidden');
+    const targetPanel = document.getElementById(`${tabName}Panel`);
+    if (targetPanel) {
+      targetPanel.classList.remove('hidden');
+    } else {
+      console.warn('[Settings] Panel not found:', `${tabName}Panel`);
+    }
     
     // 延迟加载：只在首次切换到标签时加载数据
     if (!this._settingsTabLoaded[tabName]) {
@@ -953,7 +963,7 @@ const App = {
     // 渲染通知列表
     if (!body) return;
     if (notifications.length === 0) {
-      body.innerHTML = '<div class="notification-empty">暂无通知</div>';
+      body.innerHTML = `<div class="notification-empty">${window.i18n?.t('notification.empty') || '暂无通知'}</div>`;
       return;
     }
 
@@ -1008,7 +1018,7 @@ const App = {
             item.remove();
             // 如果列表为空，显示空状态
             if (body.querySelectorAll('.notification-item').length === 0) {
-              body.innerHTML = '<div class="notification-empty">暂无通知</div>';
+              body.innerHTML = `<div class="notification-empty">${window.i18n?.t('notification.empty') || '暂无通知'}</div>`;
             }
           }, 150);
         }
@@ -1061,7 +1071,7 @@ const App = {
   _clearAllNotifications() {
     // 乐观更新：先清 UI，后端异步执行
     const body = document.getElementById('notificationPanelBody');
-    if (body) body.innerHTML = '<div class="notification-empty">暂无通知</div>';
+    if (body) body.innerHTML = `<div class="notification-empty">${window.i18n?.t('notification.empty') || '暂无通知'}</div>`;
     const badge = document.getElementById('notificationBadge');
     if (badge) badge.classList.add('hidden');
     const bellBtn = document.getElementById('notificationBellBtn');
@@ -2687,7 +2697,8 @@ ${JSON.stringify(reportData, null, 2)}`;
           this.renderTaskList();
           this.loadMemories();
           this.loadNotes();
-          this.loadCustomCategories();
+          await this.loadCustomCategories();
+          this.renderCategoryList();
           this.loadProfileEditor();
           if (window.knowledgeFollow?.onShow) window.knowledgeFollow.onShow();
         } catch (e) {
@@ -2789,7 +2800,7 @@ ${JSON.stringify(reportData, null, 2)}`;
         memoryList.innerHTML = html;
       }
     } else if (!append) {
-      memoryList.innerHTML = '<div class="empty-state">暂无记忆记录</div>';
+      memoryList.innerHTML = `<div class="empty-state">${window.i18n?.t('memory.empty') || '暂无记忆记录'}</div>`;
     }
 
     // 显示/隐藏加载更多
@@ -3308,7 +3319,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       `).join('');
       this.bindNoteDragEvents();
     } else {
-      noteList.innerHTML = '<div class="empty-state">暂无笔记</div>';
+      noteList.innerHTML = `<div class="empty-state">${window.i18n?.t('notebook.empty') || '暂无笔记'}</div>`;
     }
   },
   
@@ -3347,23 +3358,30 @@ ${JSON.stringify(reportData, null, 2)}`;
     if (customCategories[category]) {
       return customCategories[category].label || category;
     }
+    // 优先使用 i18n 翻译
+    const i18nKey = `notebook.category.${category}`;
+    const i18nText = window.i18n?.t(i18nKey);
+    if (i18nText && i18nText !== i18nKey) return i18nText;
+    // 回退硬编码
     const defaultLabels = {
       meeting: '会议记录',
       feedback: '问题反馈',
       task: '待办任务',
-      idea: '想法创意',      general: '其他'
+      idea: '想法创意',
+      general: '其他'
     };
     return defaultLabels[category] || category;
   },
 
   // 获取所有分类列表（合并默认 + 自定义）
   getAllCategories() {
+    const i = window.i18n;
     const defaults = [
-      { key: 'meeting', label: '会议记录' },
-      { key: 'feedback', label: '问题反馈' },
-      { key: 'task', label: '待办任务' },
-      { key: 'idea', label: '想法创意' },
-      { key: 'general', label: '其他' }
+      { key: 'meeting', label: i?.t('notebook.category.meeting') || '会议记录' },
+      { key: 'feedback', label: i?.t('notebook.category.feedback') || '问题反馈' },
+      { key: 'task', label: i?.t('notebook.category.task') || '待办任务' },
+      { key: 'idea', label: i?.t('notebook.category.idea') || '想法创意' },
+      { key: 'general', label: i?.t('notebook.category.general') || '其他' }
     ];
     const customCategories = this._customCategories || {};
     // 合并：默认分类可被自定义覆盖 label，自定义分类追加
@@ -3416,20 +3434,21 @@ ${JSON.stringify(reportData, null, 2)}`;
     const categoryListEl = document.querySelector('.category-list');
     if (!categoryListEl) return;
 
+    const i = window.i18n;
     const allCategories = this.getAllCategories();
     const activeItem = document.querySelector('.category-item.active');
     const activeCategory = activeItem ? activeItem.dataset.category : 'all';
 
-    let html = `<button class="category-item ${activeCategory === 'all' ? 'active' : ''}" data-category="all">全部</button>`;
+    let html = `<button class="category-item ${activeCategory === 'all' ? 'active' : ''}" data-category="all">${i?.t('notebook.allNotes') || '全部'}</button>`;
     allCategories.forEach(cat => {
       html += `
         <div class="category-item-wrapper">
           <button class="category-item ${activeCategory === cat.key ? 'active' : ''}" data-category="${cat.key}">${cat.label}</button>
-          <button class="category-edit" data-category="${cat.key}" title="重命名">✏️</button>
-          <button class="category-delete" data-category="${cat.key}" title="删除所有${cat.label}笔记">🗑️</button>
+          <button class="category-edit" data-category="${cat.key}" title="${i?.t('notebook.category.edit') || '重命名'}">✏️</button>
+          <button class="category-delete" data-category="${cat.key}" title="${i?.t('common.delete') || '删除'}${cat.label}">🗑️</button>
         </div>`;
     });
-    html += `<button class="category-add-btn" title="新增分类">＋ 新增分类</button>`;
+    html += `<button class="category-add-btn" title="${i?.t('notebook.category.add') || '新增分类'}">${i?.t('notebook.category.add') || '＋ 新增分类'}</button>`;
     categoryListEl.innerHTML = html;
 
     // 重新绑定事件
@@ -4796,7 +4815,7 @@ ${JSON.stringify(reportData, null, 2)}`;
             <rect x="9" y="3" width="6" height="4" rx="1"/>
             <path d="M9 12h6M9 16h6"/>
           </svg>
-          <p>暂无待办事项</p>
+          <p>${window.i18n?.t('task.empty') || '暂无待办事项'}</p>
         </div>
       `;
       return;
@@ -6240,16 +6259,47 @@ ${JSON.stringify(reportData, null, 2)}`;
     const i = window.i18n;
     if (!i) return;
 
+    // 处理 data-i18n 属性的元素
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      if (!key) return;
+      const text = i.t(key);
+      if (el.children.length === 0) {
+        el.textContent = text;
+      } else {
+        // 有子元素时，只替换第一个文本节点
+        const firstText = el.childNodes[0];
+        if (firstText?.nodeType === Node.TEXT_NODE) {
+          firstText.textContent = text;
+        } else {
+          el.insertBefore(document.createTextNode(text), el.firstChild);
+        }
+      }
+    });
+
+    // 处理 data-i18n-partial 属性（保留子元素如 span）
+    document.querySelectorAll('[data-i18n-partial]').forEach(el => {
+      const key = el.getAttribute('data-i18n-partial');
+      if (!key) return;
+      const text = i.t(key);
+      // 保留第一个子元素（通常是 span），替换前缀文本
+      const firstChild = el.childNodes[0];
+      if (firstChild?.nodeType === Node.TEXT_NODE) {
+        firstChild.textContent = text + ': ';
+      }
+    });
+
+    // 处理 data-i18n-placeholder 属性（更新 placeholder）
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      const key = el.getAttribute('data-i18n-placeholder');
+      if (key) el.placeholder = i.t(key);
+    });
+
     // 更新语言切换按钮文本
     const langBtn = document.getElementById('langToggleBtn');
     if (langBtn) langBtn.textContent = i.t('lang.label');
 
-    // 导航标签
-    this._setText('[data-view="calendar"]', 'nav.calendar', true);
-    this._setText('[data-view="notebook"]', 'nav.notebook', true);
-    this._setText('[data-view="documents"]', 'nav.documents', true);
-    this._setText('[data-view="knowledge"]', 'nav.knowledge', true);
-    document.getElementById('todayBtn')?.textContent && (document.getElementById('todayBtn').textContent = i.t('nav.today'));
+    // 导航标签已由 data-i18n 处理
 
     // 头部按钮 tooltip
     this._setTooltip('#openAIAssistantBtn', 'header.aiAssistant');
@@ -6258,35 +6308,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     this._setTooltip('#notificationBellBtn', 'header.notification');
     this._setTooltip('#headerLoginBtn', 'header.login');
 
-    // 通知面板
-    this._setText('.notification-panel-header span', 'notification.title');
-    this._setText('#notificationMarkAllBtn', 'notification.markAllRead');
-    this._setText('.notification-empty', 'notification.empty');
-
-    // 番茄钟
-    this._setText('.pomodoro-section h3', 'pomodoro.title');
-    this._setText('#startPomodoro', 'pomodoro.start');
-    this._setText('#resetPomodoro', 'pomodoro.reset');
-    const currentTaskLabel = document.querySelector('.current-task .label');
-    if (currentTaskLabel) currentTaskLabel.textContent = i.t('pomodoro.currentTask');
-
-    // 待办列表
-    this._setText('.task-list-header h3', 'task.title');
-
-    // 设置弹窗
-    this._setText('#settingsModal .modal-header h3', 'settings.title');
-    this._setText('#saveSettingsBtn', 'settings.save');
-
-    // 设置标签
-    this._setText('[data-tab="api"]', 'settings.tab.api');
-    this._setText('[data-tab="adp"]', 'settings.tab.adp');
-    this._setText('[data-tab="profile"]', 'settings.tab.profile');
-    this._setText('[data-tab="data"]', 'settings.tab.data');
-    this._setText('[data-tab="prompts"]', 'settings.tab.prompts');
-    this._setText('[data-tab="appearance"]', 'settings.tab.appearance');
-    this._setText('[data-tab="login"]', 'settings.tab.login');
-    this._setText('[data-tab="about"]', 'settings.tab.about');
-    this._setText('[data-tab="server"]', 'settings.tab.server');
+    // 通知面板、番茄钟、记事本侧边栏、设置标签、待办列表等已由 data-i18n 属性处理
 
     // 刷新日期显示
     if (window.Calendar?.currentDate) {

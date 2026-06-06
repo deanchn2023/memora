@@ -6738,13 +6738,21 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
         safeWriteJSON('notebook/notes.json', [...existing, ...newNotes]);
       }
 
-      // 笔记分类：合并
+      // 笔记分类：合并（categories.json 是对象格式 {key: {label: ...}}）
       if (importData.notebook?.['categories.json']) {
-        const importArr = ensureArray(importData.notebook['categories.json']);
-        const existing = ensureArray(readLocalJSON('notebook/categories.json'));
-        const existingNames = new Set(existing.map(c => c.name || c));
-        const newCats = importArr.filter(c => !existingNames.has(c.name || c));
-        safeWriteJSON('notebook/categories.json', [...existing, ...newCats]);
+        const imported = importData.notebook['categories.json'];
+        const existing = readLocalJSON('notebook/categories.json') || {};
+        // 两者都是对象，按键合并（导入的覆盖同名键）
+        if (typeof imported === 'object' && !Array.isArray(imported)) {
+          safeWriteJSON('notebook/categories.json', { ...existing, ...imported });
+        } else if (Array.isArray(imported)) {
+          // 兼容旧格式：如果是数组，转为对象后合并
+          const importedObj = {};
+          imported.forEach(c => {
+            if (c && c.key) importedObj[c.key] = { label: c.label || c.key };
+          });
+          safeWriteJSON('notebook/categories.json', { ...existing, ...importedObj });
+        }
       }
 
       // 知识原子：追加
