@@ -1,7 +1,10 @@
 /**
  * Memora 国际化模块 (i18n)
  * 支持：中文(zh)、英文(en)
- * 用法：i18n.t('key') 获取翻译，i18n.setLocale('en') 切换语言
+ * 
+ * 双模式运行：
+ * - 浏览器（渲染进程）：创建全局实例 window.i18n
+ * - Node.js（主进程）：导出静态 I18n 模块供 main.js 使用
  */
 
 const translations = {
@@ -12,6 +15,7 @@ const translations = {
     'nav.documents': '文档',
     'nav.knowledge': '知识',
     'nav.today': '今天',
+    'nav.month': '月视图',
 
     // 头部按钮
     'header.aiAssistant': 'AI助手',
@@ -82,6 +86,7 @@ const translations = {
     'settings.tab.appearance': '外观',
     'settings.tab.login': '组织登录',
     'settings.tab.server': '服务器配置',
+    'settings.tab.about': '关于',
 
     // 数据管理
     'data.export': '一键导出全部数据',
@@ -142,6 +147,7 @@ const translations = {
     'nav.documents': 'Docs',
     'nav.knowledge': 'Knowledge',
     'nav.today': 'Today',
+    'nav.month': 'Month',
 
     // Header buttons
     'header.aiAssistant': 'AI Assistant',
@@ -212,6 +218,7 @@ const translations = {
     'settings.tab.appearance': 'Appearance',
     'settings.tab.login': 'Org Login',
     'settings.tab.server': 'Server',
+    'settings.tab.about': 'About',
 
     // Data
     'data.export': 'Export All Data',
@@ -266,6 +273,8 @@ const translations = {
   }
 };
 
+// ========== 浏览器端：实例化 I18n 类 ==========
+
 class I18n {
   constructor() {
     this._locale = 'zh';
@@ -285,7 +294,9 @@ class I18n {
   setLocale(locale) {
     if (this._locale === locale) return;
     this._locale = locale;
-    document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+    }
     this._notifyListeners();
     this._persist();
   }
@@ -310,17 +321,23 @@ class I18n {
   /** 持久化语言偏好 */
   _persist() {
     try {
-      localStorage.setItem('memora_locale', this._locale);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('memora_locale', this._locale);
+      }
     } catch (e) { /* ignore */ }
   }
 
   /** 从持久化恢复语言偏好 */
   restore() {
     try {
-      const saved = localStorage.getItem('memora_locale');
-      if (saved && translations[saved]) {
-        this._locale = saved;
-        document.documentElement.lang = saved === 'zh' ? 'zh-CN' : 'en';
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem('memora_locale');
+        if (saved && translations[saved]) {
+          this._locale = saved;
+          if (typeof document !== 'undefined') {
+            document.documentElement.lang = saved === 'zh' ? 'zh-CN' : 'en';
+          }
+        }
       }
     } catch (e) { /* ignore */ }
   }
@@ -358,6 +375,41 @@ class I18n {
   }
 }
 
-// 全局单例
-const i18n = new I18n();
-window.i18n = i18n;
+// ========== Node.js 主进程：静态模块导出 ==========
+
+// 检测是否在 Node.js 环境
+const isNode = typeof window === 'undefined' && typeof process !== 'undefined' && process.versions?.node;
+
+if (isNode) {
+  // 主进程模式：导出静态 I18n 模块
+  let _currentLocale = 'zh-CN';
+
+  const I18nStatic = {
+    translations: translations,
+
+    init(locale) {
+      _currentLocale = locale || 'zh-CN';
+      return true;
+    },
+
+    t(key, params) {
+      const lang = _currentLocale.startsWith('zh') ? 'zh' : 'en';
+      return translations[lang]?.[key] || translations.zh?.[key] || key;
+    },
+
+    getLocale() {
+      return _currentLocale;
+    },
+
+    setLocale(locale) {
+      _currentLocale = locale;
+      return true;
+    }
+  };
+
+  module.exports = { I18n: I18nStatic };
+} else {
+  // 浏览器模式：创建全局单例
+  const i18n = new I18n();
+  window.i18n = i18n;
+}

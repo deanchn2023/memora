@@ -6275,6 +6275,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     this._setText('[data-tab="prompts"]', 'settings.tab.prompts');
     this._setText('[data-tab="appearance"]', 'settings.tab.appearance');
     this._setText('[data-tab="login"]', 'settings.tab.login');
+    this._setText('[data-tab="about"]', 'settings.tab.about');
     this._setText('[data-tab="server"]', 'settings.tab.server');
 
     // 刷新日期显示

@@ -834,6 +834,7 @@
           <button class="settings-tab" data-tab="memory">记忆管理</button>
           <button class="settings-tab" data-tab="appearance">外观</button>
           <button class="settings-tab" data-tab="data">数据管理</button>
+          <button class="settings-tab" data-tab="about">关于</button>
         </div>
         
         <!-- API配置 -->
@@ -1340,9 +1341,103 @@
             </div>
           </div>
         </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn secondary" id="resetPromptBtn">重置Prompt</button>
+
+        <!-- 关于 -->
+        <div class="settings-panel hidden" id="aboutPanel">
+          <div class="about-section">
+            <div class="about-logo-area">
+              <div class="about-logo">M</div>
+              <h2 class="about-app-name">忆境 Memora</h2>
+              <span class="about-version">v2.1.0</span>
+            </div>
+
+            <div class="about-description">
+              <p>AI 驱动的个人记忆与事项管理助手，让每一天的想法、任务和知识都有迹可循。</p>
+            </div>
+
+            <div class="about-features">
+              <h4>✨ 核心特色</h4>
+              <div class="about-feature-grid">
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🧠</span>
+                  <div>
+                    <strong>智能记忆</strong>
+                    <span>自动沉淀对话、笔记与知识，构建专属记忆图谱</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">📅</span>
+                  <div>
+                    <strong>日程管理</strong>
+                    <span>日历视图整合待办与番茄钟，高效掌控时间</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🔍</span>
+                  <div>
+                    <strong>知识跟随</strong>
+                    <span>智能搜索与推荐，知识图谱实时追踪关联</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🤖</span>
+                  <div>
+                    <strong>AI 助手</strong>
+                    <span>基于 ADP 智能体，对话即服务，任务识别自动化</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">👤</span>
+                  <div>
+                    <strong>用户画像</strong>
+                    <span>个性化偏好与人物关系，AI 越用越懂你</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🏢</span>
+                  <div>
+                    <strong>组织协作</strong>
+                    <span>云端配置同步，团队知识共享与权限管理</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="about-changelog">
+              <h4>📋 版本说明</h4>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.1.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li>全新多主题系统，支持日间/夜间及多彩风格切换</li>
+                  <li>国际化支持，一键切换中/英文界面</li>
+                  <li>文档资源服务器地址动态获取，自适应登录环境</li>
+                  <li>外观设置优化，毛玻璃/光球/悬浮效果独立控制</li>
+                  <li>数据导入支持合并与替换两种模式</li>
+                  <li>Prompt 自动优化器，历史版本对比与回归测试</li>
+                </ul>
+              </div>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.0.0</span>
+                <span class="changelog-date">2026-05</span>
+                <ul>
+                  <li>五层智能架构：感知 → 沉淀 → 理解 → 反馈 → 进化</li>
+                  <li>组织登录与云端配置同步</li>
+                  <li>AI 助手 SSE 流式对话与意图识别</li>
+                  <li>知识图谱可视化与智能搜索</li>
+                  <li>记忆管理系统（瞬时/短期/长期）</li>
+                  <li>番茄钟专注计时与任务关联</li>
+                  <li>剪贴板智能检测与自动入库</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="about-footer">
+              <p>Designed & Built by <strong>Dean Chen</strong></p>
+              <p class="about-copyright">© 2026 Memora. All rights reserved.</p>
+            </div>
+          </div>
+        </div>
         <button class="btn secondary" id="clearClipboardHashesBtn">清空已处理记录</button>
         <button class="btn secondary" id="clearAPIKeyBtn">清空API配置</button>
         <button class="btn primary" id="saveSettingsBtn">保存设置</button>

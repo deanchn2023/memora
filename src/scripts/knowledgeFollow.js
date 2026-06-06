@@ -3,17 +3,18 @@
  * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、公开资源搜索、意图识别展示、三面板拖拽布局
  */
 
-// 文档资源服务器地址：动态从登录配置获取，未登录时用默认值
+// 文档资源服务器地址：动态从登录配置获取 toolkitUrl，未登录时用默认值
 const DEFAULT_TOOLKIT_URL = 'http://21.91.29.59:3000';
 let TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
 
-// 从登录配置同步服务器地址
+// 从登录配置同步服务器地址（优先使用 toolkitUrl，而非 authUrl）
 async function syncToolkitBaseUrl() {
   try {
     if (window.electronAPI?.authGetState) {
       const state = await window.electronAPI.authGetState();
-      if (state.isLoggedIn && state.authUrl) {
-        TOOLKIT_BASE_URL = state.authUrl;
+      if (state.isLoggedIn) {
+        // 优先使用 toolkitUrl（专用于文档/案例/Demo 资源的服务器地址）
+        TOOLKIT_BASE_URL = state.toolkitUrl || state.authUrl || DEFAULT_TOOLKIT_URL;
         console.log('[KnowledgeFollow] Toolkit URL synced from auth:', TOOLKIT_BASE_URL);
       } else {
         TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
@@ -355,10 +356,22 @@ class KnowledgeFollow {
 
     try {
       const [docsRes, casesRes, demosRes, learningRes] = await Promise.allSettled([
-        fetch(`${TOOLKIT_BASE_URL}/api/public/documents?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
-        fetch(`${TOOLKIT_BASE_URL}/api/public/cases?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
-        fetch(`${TOOLKIT_BASE_URL}/api/public/demos?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json()),
-        fetch(`${TOOLKIT_BASE_URL}/api/public/learning?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => r.json())
+        fetch(`${TOOLKIT_BASE_URL}/api/public/documents?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }).catch(e => { console.warn('[KnowledgeFollow] Documents API error:', e.message); return null; }),
+        fetch(`${TOOLKIT_BASE_URL}/api/public/cases?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }).catch(e => { console.warn('[KnowledgeFollow] Cases API error:', e.message); return null; }),
+        fetch(`${TOOLKIT_BASE_URL}/api/public/demos?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }).catch(e => { console.warn('[KnowledgeFollow] Demos API error:', e.message); return null; }),
+        fetch(`${TOOLKIT_BASE_URL}/api/public/learning?keyword=${encodeURIComponent(query)}&page_size=5`).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }).catch(e => { console.warn('[KnowledgeFollow] Learning API error:', e.message); return null; })
       ]);
 
       const items = [];

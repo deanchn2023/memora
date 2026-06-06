@@ -63,6 +63,7 @@ const DEFAULT_AUTH_SERVERS = {
     name: 'Beta 版本（测试）',
     authUrl: 'http://121.5.164.126:3450',    // config-server（v2.0 自建认证）
     configUrl: 'http://121.5.164.126:3450',   // 配置服务
+    toolkitUrl: 'http://121.5.164.126:3010',  // ADPToolkit 资源服务器（文档/案例/Demo）
     loginPath: '/auth/login',                  // 登录路径
     loginField: 'email',                       // 使用 email 登录
     configPath: '/config',                     // 配置路径
@@ -72,6 +73,7 @@ const DEFAULT_AUTH_SERVERS = {
     name: '正式版本',
     authUrl: 'http://21.91.29.59:3000',       // ADPToolkit（username 登录）
     configUrl: 'http://121.5.164.126:3450',   // 配置仍走 config-server
+    toolkitUrl: 'http://21.91.29.59:3000',    // ADPToolkit 资源服务器（与认证同一地址）
     loginPath: '/api/auth/login',              // ADPToolkit 登录路径
     loginField: 'username',                    // 使用 username 登录
     configPath: '/memora/config',              // v2.1 配置路径
@@ -92,6 +94,7 @@ function loadCustomServerUrls() {
         if (parsed[env]) {
           if (parsed[env].authUrl) AUTH_SERVERS[env].authUrl = parsed[env].authUrl;
           if (parsed[env].configUrl) AUTH_SERVERS[env].configUrl = parsed[env].configUrl;
+          if (parsed[env].toolkitUrl) AUTH_SERVERS[env].toolkitUrl = parsed[env].toolkitUrl;
         }
       }
       console.log('[Auth] Loaded custom server URLs:', JSON.stringify(parsed));
@@ -2354,7 +2357,8 @@ ipcMain.handle('auth:get-state', async () => {
     rememberMe: getSetting('auth_remember_me') !== '0',
     serverName: server.name,
     authUrl: server.authUrl,
-    configUrl: server.configUrl
+    configUrl: server.configUrl,
+    toolkitUrl: server.toolkitUrl || server.authUrl
   };
 });
 
