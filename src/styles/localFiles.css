@@ -13,7 +13,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--bg-glass);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 0.5px solid var(--border-light);
@@ -206,7 +206,7 @@
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--bg-glass-medium);
   border: 0.5px solid var(--border-light);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -215,7 +215,7 @@
 }
 
 .local-file-card:hover {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--bg-glass-heavy);
   border-color: var(--primary-color);
   box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
   transform: translateY(-1px);

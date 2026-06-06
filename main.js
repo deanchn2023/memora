@@ -57,8 +57,8 @@ let authState = {
 
 let remoteConfig = null;  // 服务器配置（仅内存，不写磁盘，退出登录即清空）
 
-// 环境配置
-const AUTH_SERVERS = {
+// 环境配置（默认值）
+const DEFAULT_AUTH_SERVERS = {
   beta: {
     name: 'Beta 版本（测试）',
     authUrl: 'http://121.5.164.126:3450',    // config-server（v2.0 自建认证）
@@ -78,6 +78,66 @@ const AUTH_SERVERS = {
     validatePath: '/api/auth/me'               // ADPToolkit 验证路径
   }
 };
+
+// 深拷贝默认配置作为运行时配置
+let AUTH_SERVERS = JSON.parse(JSON.stringify(DEFAULT_AUTH_SERVERS));
+
+// 从持久化存储加载自定义服务器地址
+function loadCustomServerUrls() {
+  try {
+    const custom = getSetting('custom_server_urls');
+    if (custom && typeof custom === 'string') {
+      const parsed = JSON.parse(custom);
+      for (const env of ['beta', 'production']) {
+        if (parsed[env]) {
+          if (parsed[env].authUrl) AUTH_SERVERS[env].authUrl = parsed[env].authUrl;
+          if (parsed[env].configUrl) AUTH_SERVERS[env].configUrl = parsed[env].configUrl;
+        }
+      }
+      console.log('[Auth] Loaded custom server URLs:', JSON.stringify(parsed));
+    }
+  } catch (err) {
+    console.error('[Auth] Failed to load custom server URLs:', err.message);
+  }
+}
+
+// 保存自定义服务器地址到持久化存储
+function saveCustomServerUrls(urls) {
+  setSetting('custom_server_urls', JSON.stringify(urls));
+}
+
+// 验证服务器地址是否可用
+async function validateServerUrl(authUrl, configUrl, loginPath) {
+  try {
+    // 1. 检查 authUrl 可达性（GET 根路径或 health endpoint）
+    const healthUrl = authUrl.replace(/\/$/, '');
+    const healthRes = await fetch(healthUrl, {
+      method: 'GET',
+      signal: AbortSignal.timeout(8000)  // 8 秒超时
+    });
+    // 只要不超时、不 DNS 失败就算可达（某些服务器根路径返回 404 也正常）
+    if (healthRes.status === 0) return { valid: false, error: '服务器无响应' };
+
+    // 2. 检查 configUrl 可达性
+    if (configUrl && configUrl !== authUrl) {
+      const configHealthUrl = configUrl.replace(/\/$/, '');
+      const configRes = await fetch(configHealthUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(8000)
+      });
+      if (configRes.status === 0) return { valid: false, error: '配置服务器无响应' };
+    }
+
+    return { valid: true, error: null };
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      return { valid: false, error: '连接超时（8秒）' };
+    }
+    if (err.code === 'ENOTFOUND') return { valid: false, error: 'DNS 解析失败，域名不存在' };
+    if (err.code === 'ECONNREFUSED') return { valid: false, error: '连接被拒绝，服务器未运行' };
+    return { valid: false, error: `网络错误: ${err.message}` };
+  }
+}
 
 // 获取当前环境的服务器配置
 const APP_VERSION = require('./package.json').version;
@@ -142,12 +202,13 @@ async function fetchServerNotifications() {
     });
     if (res.ok) {
       const data = await res.json();
-      // API 文档响应格式：{ notifications: [...], unread_count: N }
+      console.log('[Notifications] Fetched', (data.notifications || []).length, 'notifications,', data.unread_count || 0, 'unread');
       return data.notifications || [];
     }
+    console.warn('[Notifications] Fetch failed:', res.status, res.statusText, 'from', baseUrl);
     return [];
   } catch (err) {
-    console.error('[Notifications] Fetch error:', err.message);
+    console.error('[Notifications] Fetch error:', err.message, '(baseUrl:', (server.configUrl || server.authUrl), ')');
     return [];
   }
 }
@@ -2274,8 +2335,111 @@ ipcMain.handle('auth:get-state', async () => {
     forceLocalConfig: authState.forceLocalConfig || false,
     rememberMe: getSetting('auth_remember_me') !== '0',
     serverName: server.name,
-    authUrl: server.authUrl
+    authUrl: server.authUrl,
+    configUrl: server.configUrl
   };
+});
+
+// 获取所有环境的服务器地址
+ipcMain.handle('auth:get-server-urls', async () => {
+  const result = {};
+  for (const env of ['beta', 'production']) {
+    result[env] = {
+      authUrl: AUTH_SERVERS[env].authUrl,
+      configUrl: AUTH_SERVERS[env].configUrl,
+      defaultAuthUrl: DEFAULT_AUTH_SERVERS[env].authUrl,
+      defaultConfigUrl: DEFAULT_AUTH_SERVERS[env].configUrl,
+      name: AUTH_SERVERS[env].name,
+      isCustom: AUTH_SERVERS[env].authUrl !== DEFAULT_AUTH_SERVERS[env].authUrl ||
+                AUTH_SERVERS[env].configUrl !== DEFAULT_AUTH_SERVERS[env].configUrl
+    };
+  }
+  return result;
+});
+
+// 验证并保存服务器地址
+ipcMain.handle('auth:set-server-urls', async (event, { urls }) => {
+  try {
+    // 格式校验
+    const urlPattern = /^https?:\/\/.+/;
+    const errors = [];
+
+    for (const env of ['beta', 'production']) {
+      if (!urls[env]) continue;
+      if (urls[env].authUrl && !urlPattern.test(urls[env].authUrl)) {
+        errors.push(`${env} 认证地址格式不正确（需 http:// 或 https:// 开头）`);
+      }
+      if (urls[env].configUrl && !urlPattern.test(urls[env].configUrl)) {
+        errors.push(`${env} 配置地址格式不正确（需 http:// 或 https:// 开头）`);
+      }
+    }
+    if (errors.length > 0) {
+      return { success: false, error: errors.join('; ') };
+    }
+
+    // 连通性验证：先测试新地址，不修改运行时配置
+    const testResults = [];
+    for (const env of ['beta', 'production']) {
+      if (!urls[env]) continue;
+      const authUrl = urls[env].authUrl || AUTH_SERVERS[env].authUrl;
+      const configUrl = urls[env].configUrl || AUTH_SERVERS[env].configUrl;
+      const result = await validateServerUrl(authUrl, configUrl);
+      testResults.push({ env, ...result });
+    }
+
+    const failedTests = testResults.filter(r => !r.valid);
+    if (failedTests.length > 0) {
+      const failMsg = failedTests.map(r => `${r.env}: ${r.error}`).join('; ');
+      return { success: false, error: `验证失败 - ${failMsg}` };
+    }
+
+    // 验证通过，更新运行时配置并持久化
+    const customUrls = {};
+    for (const env of ['beta', 'production']) {
+      if (!urls[env]) continue;
+      if (urls[env].authUrl) AUTH_SERVERS[env].authUrl = urls[env].authUrl;
+      if (urls[env].configUrl) AUTH_SERVERS[env].configUrl = urls[env].configUrl;
+      customUrls[env] = {
+        authUrl: AUTH_SERVERS[env].authUrl,
+        configUrl: AUTH_SERVERS[env].configUrl
+      };
+    }
+    saveCustomServerUrls(customUrls);
+    console.log('[Auth] Server URLs updated and saved:', JSON.stringify(customUrls));
+
+    return { success: true };
+  } catch (err) {
+    console.error('[Auth] Set server URLs error:', err);
+    return { success: false, error: `保存失败: ${err.message}` };
+  }
+});
+
+// 重置服务器地址为默认值
+ipcMain.handle('auth:reset-server-urls', async (event, { env }) => {
+  try {
+    if (env && env !== 'all') {
+      AUTH_SERVERS[env] = JSON.parse(JSON.stringify(DEFAULT_AUTH_SERVERS[env]));
+    } else {
+      AUTH_SERVERS = JSON.parse(JSON.stringify(DEFAULT_AUTH_SERVERS));
+    }
+    // 更新持久化存储
+    if (env && env !== 'all') {
+      const custom = getSetting('custom_server_urls');
+      const parsed = custom ? JSON.parse(custom) : {};
+      delete parsed[env];
+      if (Object.keys(parsed).length > 0) {
+        setSetting('custom_server_urls', JSON.stringify(parsed));
+      } else {
+        setSetting('custom_server_urls', '');
+      }
+    } else {
+      setSetting('custom_server_urls', '');
+    }
+    console.log('[Auth] Server URLs reset to default:', env || 'all');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // 配置源切换（云端/本地）
@@ -2332,19 +2496,116 @@ async function checkForUpdate() {
 
 // 通知轮询定时器
 let notificationPollTimer = null;
+let notificationSSEController = null; // SSE AbortController
 
-function startNotificationPolling(intervalMs = 5 * 60 * 1000) {
+function startNotificationPolling(intervalMs = 60 * 1000) {
   stopNotificationPolling();
   // 立即拉取一次
   fetchAndNotifyNotifications();
   notificationPollTimer = setInterval(fetchAndNotifyNotifications, intervalMs);
   console.log('[Notifications] Polling started, interval:', intervalMs / 1000, 's');
+  // 同时启动 SSE 实时订阅
+  startNotificationSSE();
 }
 
 function stopNotificationPolling() {
   if (notificationPollTimer) {
     clearInterval(notificationPollTimer);
     notificationPollTimer = null;
+  }
+  stopNotificationSSE();
+}
+
+// SSE 实时通知订阅
+function startNotificationSSE() {
+  stopNotificationSSE();
+  if (!authState.isLoggedIn || !authState.token) return;
+  const server = getAuthServer();
+  const baseUrl = server.configUrl || server.authUrl;
+  const sseUrl = `${baseUrl}/memora/notifications/stream`;
+
+  const controller = new AbortController();
+  notificationSSEController = controller;
+
+  console.log('[Notifications SSE] Connecting to', sseUrl);
+
+  fetch(sseUrl, {
+    headers: { 'Authorization': `Bearer ${authState.token}` },
+    signal: controller.signal
+  }).then(response => {
+    if (!response.ok) {
+      console.warn('[Notifications SSE] Connection failed:', response.status);
+      return;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          console.log('[Notifications SSE] Stream ended, reconnecting in 5s...');
+          setTimeout(startNotificationSSE, 5000);
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 保留不完整的行
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.substring(6);
+          } else if (line === '' && currentEvent && currentData) {
+            // 空行表示事件结束
+            if (currentEvent === 'notification') {
+              try {
+                const notif = JSON.parse(currentData);
+                console.log('[Notifications SSE] Received:', notif.title);
+                // 立即拉取完整通知列表刷新 UI
+                fetchAndNotifyNotifications();
+                // 系统通知
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  showNotification('忆境 Memora', notif.title + (notif.content ? ': ' + notif.content : ''));
+                }
+              } catch (e) {
+                console.error('[Notifications SSE] Parse error:', e.message);
+              }
+            } else if (currentEvent === 'connected') {
+              console.log('[Notifications SSE] Connected successfully');
+            }
+            currentEvent = '';
+            currentData = '';
+          } else if (line.startsWith(': ')) {
+            // 心跳注释，忽略
+          }
+        }
+        read();
+      }).catch(err => {
+        if (err.name !== 'AbortError') {
+          console.error('[Notifications SSE] Read error:', err.message);
+          setTimeout(startNotificationSSE, 5000);
+        }
+      });
+    }
+    read();
+  }).catch(err => {
+    if (err.name !== 'AbortError') {
+      console.warn('[Notifications SSE] Connection error:', err.message);
+      // SSE 连接失败不影响轮询，5秒后重试
+      setTimeout(startNotificationSSE, 5000);
+    }
+  });
+}
+
+function stopNotificationSSE() {
+  if (notificationSSEController) {
+    notificationSSEController.abort();
+    notificationSSEController = null;
   }
 }
 
@@ -2563,6 +2824,242 @@ ipcMain.handle('get-entity-graph', async () => {
 ipcMain.handle('search-related-memories', async (event, content) => {
   if (!memoryStore) return { memories: [] };
   return { memories: memoryStore.searchRelated(content) };
+});
+
+// === AI 整理单条记忆 ===
+ipcMain.handle('memory:ai-organize', async (event, content) => {
+  try {
+    const apiConfig = getAPIConfig();
+    if (!apiConfig.apiKey) return { success: false, error: '请先配置 AI API Key' };
+    if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
+
+    // 获取相关历史记忆做参照
+    const relatedMemories = memoryStore ? memoryStore.searchRelated(content, 5) : [];
+    const relatedText = relatedMemories.length > 0
+      ? relatedMemories.map(m => `- [${m.type}/${m.business_category || 'other'}] ${m.content}`).join('\n')
+      : '无';
+
+    const systemPrompt = `你是忆境 Memora 的记忆整理 AI。整理用户输入的记忆，输出严格 JSON：
+{
+  "organized_content": "整理后的简洁摘要",
+  "memory_type": "instant|short|long",
+  "business_category": "product|project|case|work|bidding|consulting|solution|problem|badcase|requirement|customer|personal|other",
+  "category": "knowledge|preference|fact|skill|experience",
+  "confidence": 0.0-1.0,
+  "related_actions": {
+    "should_merge_with": "需合并的历史记忆内容或null",
+    "should_replace": "需覆盖的历史记忆内容或null",
+    "should_link_to": ["需关联的记忆内容"],
+    "action_reason": "原因或null"
+  },
+  "tags": ["标签"],
+  "key_points": ["要点"]
+}
+分类：instant=临时, short=近期, long=长期有价值。只输出JSON。`;
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `记忆内容：${content}\n\n相关历史记忆：\n${relatedText}` }
+        ],
+        temperature: 0.1,
+        max_tokens: 4096
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      return { success: false, error: `AI 请求失败: ${response.status} ${errBody.substring(0, 200)}` };
+    }
+    incrementAICallCount();
+
+    const data = await response.json();
+    let aiContent = data.choices?.[0]?.message?.content || '';
+    
+    // 检查是否被截断
+    const finishReason = data.choices?.[0]?.finish_reason;
+    if (finishReason === 'length') {
+      return { success: false, error: 'AI 输出被截断，请缩短记忆内容后重试' };
+    }
+    
+    aiContent = aiContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(aiContent);
+    } catch (e) {
+      // 尝试提取 JSON 对象
+      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          return { success: false, error: `AI 返回 JSON 解析失败，原始内容前200字符: ${aiContent.substring(0, 200)}` };
+        }
+      } else {
+        return { success: false, error: `AI 未返回有效 JSON，原始内容前200字符: ${aiContent.substring(0, 200)}` };
+      }
+    }
+
+    // 执行关联操作
+    if (memoryStore && parsed.related_actions) {
+      const actions = parsed.related_actions;
+
+      // 如果需要覆盖旧记忆
+      if (actions.should_replace) {
+        const oldMemories = memoryStore.searchRelated(actions.should_replace, 1);
+        if (oldMemories.length > 0) {
+          memoryStore.updateMemory(oldMemories[0].id, {
+            content: parsed.organized_content,
+            type: parsed.memory_type,
+            business_category: parsed.business_category,
+            category: parsed.category,
+            confidence: parsed.confidence,
+            metadata: { ...oldMemories[0].metadata, tags: parsed.tags, key_points: parsed.key_points, reorganized_at: new Date().toISOString() }
+          });
+          return { success: true, organized: parsed, action: 'replaced', replaced_id: oldMemories[0].id };
+        }
+      }
+
+      // 如果需要合并旧记忆
+      if (actions.should_merge_with) {
+        const oldMemories = memoryStore.searchRelated(actions.should_merge_with, 1);
+        if (oldMemories.length > 0) {
+          const mergedContent = oldMemories[0].content + '；' + parsed.organized_content;
+          memoryStore.updateMemory(oldMemories[0].id, {
+            content: mergedContent,
+            type: parsed.memory_type,
+            business_category: parsed.business_category,
+            confidence: Math.max(oldMemories[0].confidence || 0.5, parsed.confidence),
+            metadata: { ...oldMemories[0].metadata, tags: parsed.tags, key_points: parsed.key_points, merged_at: new Date().toISOString() }
+          });
+          return { success: true, organized: parsed, action: 'merged', merged_id: oldMemories[0].id };
+        }
+      }
+    }
+
+    // 无需覆盖/合并，直接作为新记忆添加
+    return { success: true, organized: parsed, action: 'new' };
+
+  } catch (error) {
+    console.error('[Memory] AI organize failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// === AI 批量整理记忆 ===
+ipcMain.handle('memory:ai-batch-organize', async () => {
+  try {
+    const apiConfig = getAPIConfig();
+    if (!apiConfig.apiKey) return { success: false, error: '请先配置 AI API Key' };
+    if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
+
+    if (!memoryStore) return { success: false, error: '记忆系统未初始化' };
+
+    // 取最近的记忆
+    const memories = memoryStore.getMemories({ limit: 30 });
+    if (memories.length === 0) return { success: false, error: '没有记忆可以整理' };
+
+    const memoriesText = memories.map((m, i) =>
+      `[${i+1}] (${m.type}/${m.business_category || 'other'}) ${m.content}`
+    ).join('\n');
+
+    const systemPrompt = `你是忆境 Memora 的记忆批量整理 AI。分析用户提供的记忆条目，输出整理建议JSON：
+{
+  "merge_groups": [{"indices":[1,3],"merged_content":"合并后内容","type":"short|long","business_category":"...","reason":"原因"}],
+  "replacements": [{"old_index":2,"new_content":"更新内容","reason":"原因"}],
+  "reclassify": [{"index":5,"old_type":"short","new_type":"long","old_biz":"other","new_biz":"work","reason":"原因"}],
+  "associations": [{"from_index":1,"to_index":4,"relation":"关联描述"}],
+  "summary": "分析总结"
+}
+规则：合并保留最完整信息；覆盖仅在新信息完全取代旧信息时用；只输出JSON。`;
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: memoriesText }
+        ],
+        temperature: 0.1,
+        max_tokens: 4096
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      return { success: false, error: `AI 请求失败: ${response.status} ${errBody.substring(0, 200)}` };
+    }
+    incrementAICallCount();
+
+    const data = await response.json();
+    let aiContent = data.choices?.[0]?.message?.content || '';
+    
+    // 检查是否被截断
+    const finishReason = data.choices?.[0]?.finish_reason;
+    if (finishReason === 'length') {
+      return { success: false, error: 'AI 输出被截断（记忆太多），请减少记忆数量后重试' };
+    }
+    
+    aiContent = aiContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(aiContent);
+    } catch (e) {
+      // 尝试提取 JSON 对象
+      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          return { success: false, error: `AI 返回 JSON 解析失败，原始内容前200字符: ${aiContent.substring(0, 200)}` };
+        }
+      } else {
+        return { success: false, error: `AI 未返回有效 JSON，原始内容前200字符: ${aiContent.substring(0, 200)}` };
+      }
+    }
+
+    // 将 index 映射回 memory id
+    const indexMap = memories.map((m, i) => ({ index: i + 1, id: m.id, content: m.content }));
+
+    const mergeGroups = (parsed.merge_groups || []).map(g => ({
+      ...g,
+      memoryIds: g.indices.map(idx => indexMap.find(m => m.index === idx)?.id).filter(Boolean)
+    }));
+
+    const replacements = (parsed.replacements || []).map(r => ({
+      ...r,
+      memoryId: indexMap.find(m => m.index === r.old_index)?.id
+    })).filter(r => r.memoryId);
+
+    const reclassify = (parsed.reclassify || []).map(r => ({
+      ...r,
+      memoryId: indexMap.find(m => m.index === r.index)?.id
+    })).filter(r => r.memoryId);
+
+    return {
+      success: true,
+      result: {
+        merge_groups: mergeGroups,
+        replacements: replacements,
+        reclassify: reclassify,
+        associations: parsed.associations || [],
+        summary: parsed.summary || '',
+        total_analyzed: memories.length
+      }
+    };
+
+  } catch (error) {
+    console.error('[Memory] AI batch organize failed:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 // 清空已处理的剪切板哈希记录（用于测试）
@@ -3081,6 +3578,10 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   console.log('[App] Starting 忆境 Memora...');
   
+  // 加载持久化设置（auth_token, custom_server_urls 等）
+  loadSettings();
+  console.log('[Settings] Loaded from disk');
+  
   // 初始化数据库层（同步）
   db = new Database(app.getPath('userData'));
   db.init();
@@ -3123,7 +3624,8 @@ app.whenReady().then(() => {
   startClipboardWatcher();
   console.log('[App] Clipboard watcher started');
   
-  // v2.0: 自动登录（异步，不阻塞启动）
+  // v2.0: 加载自定义服务器地址，然后自动登录
+  loadCustomServerUrls();
   autoLogin().then(() => {
     console.log('[Auth] Auto login process completed');
   }).catch(err => {
@@ -5282,6 +5784,150 @@ ipcMain.handle('profile:suggestions', async () => {
 
     return { suggestions, generatedAt: new Date().toISOString() };
   } catch (error) { return { suggestions: [], error: error.message }; }
+});
+
+// === AI 批量导入画像 ===
+ipcMain.handle('profile:import-ai', async (event, text) => {
+  try {
+    const apiConfig = getAPIConfig();
+    if (!apiConfig.apiKey) return { success: false, error: '请先配置 AI API Key' };
+
+    const profile = loadProfile();
+    const systemPrompt = `你是忆境 Memora 的画像解析 AI。从用户文本中提取结构化信息，输出严格JSON：
+{
+  "persons": [{"name":"姓名","relation":"关系","company":"公司","responsibilities":"职责"}],
+  "projects": [{"name":"项目名","alias":["别名"],"status":"active/paused/completed","description":"描述"}],
+  "industries": ["行业"],
+  "regions": ["区域"]
+}
+规则：提取所有人物并推断关系(领导/同事/下属/客户/合作伙伴)；项目状态根据描述推断；只输出JSON，不输出markdown。内容尽量精简，name和description要简短。`;
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text }
+        ],
+        temperature: 0.1,
+        max_tokens: 8192
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      return { success: false, error: `AI 请求失败: ${response.status} ${errBody.substring(0, 200)}` };
+    }
+
+    const data = await response.json();
+    let content = data.choices?.[0]?.message?.content || '';
+    
+    // 检查是否因 max_tokens 被截断
+    const finishReason = data.choices?.[0]?.finish_reason;
+    if (finishReason === 'length') {
+      return { success: false, error: 'AI 输出被截断（内容太长），请缩短输入文本后重试' };
+    }
+    
+    content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      // 尝试提取 JSON 对象（处理前后有多余文字的情况）
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          return { success: false, error: `AI 返回 JSON 解析失败，原始内容前200字符: ${content.substring(0, 200)}` };
+        }
+      } else {
+        return { success: false, error: `AI 未返回有效 JSON，原始内容前200字符: ${content.substring(0, 200)}` };
+      }
+    }
+
+    // 合并到现有画像（不覆盖，只追加新项）
+    const existingPersons = profile.frequent_persons || [];
+    const existingProjects = profile.active_projects || [];
+    const existingIndustries = profile.user?.industries || [];
+
+    const newPersons = (parsed.persons || []).filter(np =>
+      !existingPersons.some(ep => ep.name === np.name)
+    ).map(np => ({
+      name: np.name,
+      relation: np.relation || '',
+      company: np.company || '',
+      responsibilities: np.responsibilities || '',
+      freq: 1
+    }));
+
+    const newProjects = (parsed.projects || []).filter(np =>
+      !existingProjects.some(ep => ep.name === np.name)
+    ).map(np => ({
+      name: np.name,
+      alias: np.alias || [],
+      status: np.status || 'active',
+      description: np.description || ''
+    }));
+
+    const newIndustries = (parsed.industries || []).filter(ni =>
+      !existingIndustries.includes(ni)
+    );
+
+    return {
+      success: true,
+      preview: {
+        persons: newPersons,
+        projects: newProjects,
+        industries: newIndustries,
+        regions: parsed.regions || []
+      },
+      stats: {
+        personsAdded: newPersons.length,
+        projectsAdded: newProjects.length,
+        industriesAdded: newIndustries.length,
+        personsSkipped: (parsed.persons || []).length - newPersons.length,
+        projectsSkipped: (parsed.projects || []).length - newProjects.length
+      }
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 确认导入画像预览数据
+ipcMain.handle('profile:import-confirm', async (event, previewData) => {
+  try {
+    const profilePath = path.join(app.getPath('userData'), 'profile.json');
+    let profile = getDefaultProfile();
+    try {
+      if (fs.existsSync(profilePath)) profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    } catch (e) {}
+
+    // 追加人物
+    if (previewData.persons?.length) {
+      profile.frequent_persons = [...(profile.frequent_persons || []), ...previewData.persons];
+    }
+    // 追加项目
+    if (previewData.projects?.length) {
+      profile.active_projects = [...(profile.active_projects || []), ...previewData.projects];
+    }
+    // 追加行业
+    if (previewData.industries?.length) {
+      profile.user = profile.user || {};
+      const existing = profile.user.industries || [];
+      profile.user.industries = [...new Set([...existing, ...previewData.industries])];
+    }
+
+    profile.updatedAt = new Date().toISOString();
+    fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2), 'utf8');
+    return { success: true, profile };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // === Phase 3: 每周定时优化（cron 替代方案：启动时检查） ===

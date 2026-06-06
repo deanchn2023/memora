@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   authLogin: (email, password, env, rememberMe) => ipcRenderer.invoke('auth:login', { email, password, env, rememberMe }),
   authLogout: () => ipcRenderer.invoke('auth:logout'),
   authGetState: () => ipcRenderer.invoke('auth:get-state'),
+  authGetServerUrls: () => ipcRenderer.invoke('auth:get-server-urls'),
+  authSetServerUrls: (urls) => ipcRenderer.invoke('auth:set-server-urls', { urls }),
+  authResetServerUrls: (env) => ipcRenderer.invoke('auth:reset-server-urls', { env }),
   configSync: () => ipcRenderer.invoke('config:sync'),
   configSetSource: (forceLocal) => ipcRenderer.invoke('config:set-source', { forceLocal }),
   configGetSource: () => ipcRenderer.invoke('config:get-source'),
@@ -117,6 +120,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setMemoryPrompt: (prompt) => ipcRenderer.invoke('set-memory-prompt', prompt),
   resetMemoryPrompt: () => ipcRenderer.invoke('reset-memory-prompt'),
   extractMemory: (content) => ipcRenderer.invoke('extract-memory', content),
+  aiOrganizeMemory: (content) => ipcRenderer.invoke('memory:ai-organize', content),
+  aiBatchOrganizeMemories: () => ipcRenderer.invoke('memory:ai-batch-organize'),
   analyzeTask: (text) => ipcRenderer.invoke('analyze-task', text),
   analyzeClipboard: (text) => ipcRenderer.invoke('analyze-clipboard', text),
   optimizeClipboardPrompt: (feedback) => ipcRenderer.invoke('optimize-clipboard-prompt', feedback),
@@ -155,6 +160,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   profile: {
     get: () => ipcRenderer.invoke('profile:get'),
     update: (updates) => ipcRenderer.invoke('profile:update', updates),
+    importAI: (text) => ipcRenderer.invoke('profile:import-ai', text),
+    importConfirm: (previewData) => ipcRenderer.invoke('profile:import-confirm', previewData),
   },
 
   // v1.1 Agent 智能助手

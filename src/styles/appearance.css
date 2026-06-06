@@ -185,7 +185,7 @@
   width: 20px;
   left: 2px;
   bottom: 2px;
-  background-color: white;
+  background-color: var(--bg-card);
   transition: 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);

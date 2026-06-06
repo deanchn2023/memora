@@ -41,6 +41,12 @@ function bindEvents() {
     if (selectedOrgId) loadOrgConfig(selectedOrgId);
   });
 
+  // Notifications
+  document.getElementById('btn-create-notification').addEventListener('click', showCreateNotificationModal);
+  document.getElementById('btn-refresh-notifications').addEventListener('click', loadNotifications);
+  document.getElementById('notif-filter-type').addEventListener('change', loadNotifications);
+  document.getElementById('notif-filter-priority').addEventListener('change', loadNotifications);
+
   // Modal close on overlay click
   document.getElementById('modal-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeModal();
@@ -136,6 +142,7 @@ function switchTab(tab) {
   if (tab === 'orgs') loadOrgs();
   if (tab === 'users') loadUsers();
   if (tab === 'config') loadConfigPage();
+  if (tab === 'notifications') loadNotifications();
 }
 
 // ===== Dashboard =====
@@ -538,4 +545,215 @@ function timeAgo(dateStr) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
   if (diff < 2592000) return `${Math.floor(diff / 86400)}天前`;
   return date.toLocaleDateString('zh-CN');
+}
+
+// ===== Notifications =====
+let notificationsData = [];
+const NOTIF_TYPES = { system: '系统', update: '更新', feature: '功能', warning: '警告' };
+const NOTIF_PRIORITIES = { normal: '普通', high: '高', urgent: '紧急' };
+
+async function loadNotifications() {
+  try {
+    const type = document.getElementById('notif-filter-type').value;
+    const priority = document.getElementById('notif-filter-priority').value;
+    let params = '';
+    if (type) params += `type=${type}&`;
+    // 管理员 API 目前只支持 type 过滤，前端做 priority 过滤
+    notificationsData = await api(`/admin/notifications?${params}page_size=100`);
+    if (priority) {
+      notificationsData = notificationsData.filter(n => n.priority === priority);
+    }
+    renderNotifications();
+    loadSSEStats();
+    // 更新统计
+    document.getElementById('stat-notif-total').textContent = notificationsData.length;
+    document.getElementById('stat-notif-active').textContent = notificationsData.filter(n => n.is_active).length;
+  } catch (err) {
+    showToast('加载通知失败', 'error');
+  }
+}
+
+async function loadSSEStats() {
+  try {
+    const stats = await api('/admin/sse-stats');
+    document.getElementById('stat-notif-sse').textContent = `${stats.total_connections} / ${stats.unique_users}人`;
+  } catch (err) {
+    document.getElementById('stat-notif-sse').textContent = '-';
+  }
+}
+
+function renderNotifications() {
+  const el = document.getElementById('notifications-list');
+  if (notificationsData.length === 0) {
+    el.innerHTML = `<div class="empty-state"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#aeaeb2" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><p>暂无通知</p></div>`;
+    return;
+  }
+  el.innerHTML = notificationsData.map(n => {
+    const typeLabel = NOTIF_TYPES[n.type] || n.type;
+    const priorityLabel = NOTIF_PRIORITIES[n.priority] || n.priority;
+    const targetLabel = n.target_all ? '全部用户' : (n.target_organization ? `组织: ${esc(n.target_organization)}` : (n.target_user_id ? `用户: ${esc(n.target_user_id).substring(0,12)}...` : '-'));
+    const activeBadge = n.is_active ? '<span class="badge badge-active" style="background:#34C75920;color:#34C759">活跃</span>' : '<span class="badge" style="background:#aeaeb220;color:#aeaeb2">停用</span>';
+    return `
+    <div class="data-card">
+      <div class="data-card-header">
+        <span class="data-card-title">${esc(n.title)}</span>
+        <div class="data-card-actions">
+          ${activeBadge}
+          <span class="badge badge-${n.type}" style="background:${typeBadgeColor(n.type)}20;color:${typeBadgeColor(n.type)}">${typeLabel}</span>
+          <span class="badge" style="background:${priorityBadgeColor(n.priority)}20;color:${priorityBadgeColor(n.priority)}">${priorityLabel}</span>
+          <button class="btn-secondary btn-sm" onclick="showEditNotificationModal('${n.id}')">编辑</button>
+          <button class="btn-danger" onclick="deleteNotification('${n.id}','${esc(n.title)}')">${n.is_active ? '停用' : '删除'}</button>
+        </div>
+      </div>
+      <div class="data-card-meta">
+        <span>${esc(n.content || '').substring(0, 80)}${(n.content || '').length > 80 ? '...' : ''}</span>
+      </div>
+      <div class="data-card-meta" style="margin-top:4px">
+        <span>目标: ${targetLabel}</span>
+        <span title="${n.created_at}">${timeAgo(n.created_at)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function typeBadgeColor(type) {
+  return { system: '#007AFF', update: '#34C759', feature: '#AF52DE', warning: '#FF9500' }[type] || '#86868b';
+}
+
+function priorityBadgeColor(priority) {
+  return { normal: '#86868b', high: '#FF9500', urgent: '#FF3B30' }[priority] || '#86868b';
+}
+
+function showCreateNotificationModal() {
+  const orgOptions = orgsData.map(o => `<option value="${esc(o.name)}">${esc(o.name)}</option>`).join('');
+  const userOptions = usersData.map(u => `<option value="${u.id}">${esc(u.name || u.email)}</option>`).join('');
+  showModal(`
+    <div class="modal-header"><h3>发送通知</h3></div>
+    <div class="modal-body">
+      <div class="config-field"><label>标题 *</label><input id="notif-title" placeholder="通知标题"></div>
+      <div class="config-field"><label>内容</label><textarea id="notif-content" rows="3" placeholder="通知正文"></textarea></div>
+      <div class="config-field" style="display:flex;gap:12px">
+        <div style="flex:1"><label>类型</label><select id="notif-type" class="select-input" style="width:100%">
+          <option value="system">系统</option><option value="update">更新</option><option value="feature">功能</option><option value="warning">警告</option>
+        </select></div>
+        <div style="flex:1"><label>优先级</label><select id="notif-priority" class="select-input" style="width:100%">
+          <option value="normal">普通</option><option value="high">高</option><option value="urgent">紧急</option>
+        </select></div>
+      </div>
+      <div class="config-field"><label>发送目标</label>
+        <select id="notif-target-type" class="select-input" style="width:100%;margin-bottom:8px" onchange="toggleNotifTarget()">
+          <option value="all">全部用户</option>
+          <option value="org">指定组织</option>
+          <option value="user">指定用户</option>
+        </select>
+        <div id="notif-target-org" style="display:none"><select id="notif-org-select" class="select-input" style="width:100%"><option value="">选择组织</option>${orgOptions}</select></div>
+        <div id="notif-target-user" style="display:none"><select id="notif-user-select" class="select-input" style="width:100%"><option value="">选择用户</option>${userOptions}</select></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-confirm" onclick="createNotification()">发送</button>
+    </div>
+  `);
+}
+
+function toggleNotifTarget() {
+  const type = document.getElementById('notif-target-type').value;
+  document.getElementById('notif-target-org').style.display = type === 'org' ? 'block' : 'none';
+  document.getElementById('notif-target-user').style.display = type === 'user' ? 'block' : 'none';
+}
+
+async function createNotification() {
+  const title = document.getElementById('notif-title').value.trim();
+  if (!title) { showToast('请输入通知标题', 'error'); return; }
+  const body = {
+    title,
+    content: document.getElementById('notif-content').value.trim(),
+    type: document.getElementById('notif-type').value,
+    priority: document.getElementById('notif-priority').value,
+  };
+  const targetType = document.getElementById('notif-target-type').value;
+  if (targetType === 'all') {
+    body.target_all = true;
+  } else if (targetType === 'org') {
+    body.target_organization = document.getElementById('notif-org-select').value;
+    if (!body.target_organization) { showToast('请选择组织', 'error'); return; }
+  } else if (targetType === 'user') {
+    body.target_user_id = document.getElementById('notif-user-select').value;
+    if (!body.target_user_id) { showToast('请选择用户', 'error'); return; }
+  }
+  try {
+    await api('/admin/notifications', { method: 'POST', body: JSON.stringify(body) });
+    closeModal();
+    showToast('通知发送成功（SSE 实时推送）', 'success');
+    loadNotifications();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function showEditNotificationModal(notifId) {
+  const n = notificationsData.find(x => x.id === notifId);
+  if (!n) return;
+  showModal(`
+    <div class="modal-header"><h3>编辑通知</h3></div>
+    <div class="modal-body">
+      <div class="config-field"><label>ID</label><input value="${n.id}" readonly style="background:#f5f5f7"></div>
+      <div class="config-field"><label>标题</label><input id="edit-notif-title" value="${esc(n.title)}"></div>
+      <div class="config-field"><label>内容</label><textarea id="edit-notif-content" rows="3">${esc(n.content || '')}</textarea></div>
+      <div class="config-field" style="display:flex;gap:12px">
+        <div style="flex:1"><label>类型</label><select id="edit-notif-type" class="select-input" style="width:100%">
+          <option value="system" ${n.type==='system'?'selected':''}>系统</option>
+          <option value="update" ${n.type==='update'?'selected':''}>更新</option>
+          <option value="feature" ${n.type==='feature'?'selected':''}>功能</option>
+          <option value="warning" ${n.type==='warning'?'selected':''}>警告</option>
+        </select></div>
+        <div style="flex:1"><label>优先级</label><select id="edit-notif-priority" class="select-input" style="width:100%">
+          <option value="normal" ${n.priority==='normal'?'selected':''}>普通</option>
+          <option value="high" ${n.priority==='high'?'selected':''}>高</option>
+          <option value="urgent" ${n.priority==='urgent'?'selected':''}>紧急</option>
+        </select></div>
+      </div>
+      <div class="config-field">
+        <div class="toggle-wrap">
+          <span class="toggle-label">活跃状态</span>
+          <label class="toggle"><input type="checkbox" id="edit-notif-active" ${n.is_active?'checked':''}><span class="slider"></span></label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-confirm" onclick="updateNotification('${notifId}')">保存</button>
+    </div>
+  `);
+}
+
+async function updateNotification(notifId) {
+  const body = {
+    title: document.getElementById('edit-notif-title').value.trim(),
+    content: document.getElementById('edit-notif-content').value.trim(),
+    type: document.getElementById('edit-notif-type').value,
+    priority: document.getElementById('edit-notif-priority').value,
+    is_active: document.getElementById('edit-notif-active').checked ? 1 : 0,
+  };
+  try {
+    await api(`/admin/notifications/${notifId}`, { method: 'PUT', body: JSON.stringify(body) });
+    closeModal();
+    showToast('通知更新成功', 'success');
+    loadNotifications();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteNotification(notifId, title) {
+  const action = '删除';
+  if (!confirm(`确定要${action}通知「${title}」吗？`)) return;
+  try {
+    await api(`/admin/notifications/${notifId}`, { method: 'DELETE' });
+    showToast('通知已删除', 'success');
+    loadNotifications();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }

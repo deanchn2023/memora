@@ -49,6 +49,15 @@ const ThemeEngine = (() => {
         '--scrollbar-thumb-hover': 'rgba(0, 0, 0, 0.2)',
         '--chat-user-bg': 'linear-gradient(135deg, #4F8EF7, #6C63FF)',
         '--input-focus-glow': 'rgba(79, 142, 247, 0.25)',
+        /* 扩展背景变量 */
+        '--bg-card': '#ffffff',
+        '--bg-elevated': '#ffffff',
+        '--bg-hover': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-heavy': 'rgba(255, 255, 255, 0.95)',
+        '--bg-glass-medium': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-light': 'rgba(255, 255, 255, 0.6)',
+        '--bg-input': '#ffffff',
+        '--text-on-brand': '#ffffff',
       }
     },
     'ocean-dark': {
@@ -92,6 +101,15 @@ const ThemeEngine = (() => {
         '--scrollbar-thumb-hover': 'rgba(255, 255, 255, 0.18)',
         '--chat-user-bg': 'linear-gradient(135deg, #5BA8F7, #7C6CFF)',
         '--input-focus-glow': 'rgba(91, 168, 247, 0.3)',
+        /* 暗色主题扩展背景变量 */
+        '--bg-card': '#1e2433',
+        '--bg-elevated': '#1a1f2e',
+        '--bg-hover': 'rgba(30, 36, 51, 0.9)',
+        '--bg-glass-heavy': 'rgba(21, 25, 34, 0.95)',
+        '--bg-glass-medium': 'rgba(26, 31, 46, 0.9)',
+        '--bg-glass-light': 'rgba(30, 36, 51, 0.7)',
+        '--bg-input': '#1e2433',
+        '--text-on-brand': '#ffffff',
       }
     },
     'sunset-warm': {
@@ -135,6 +153,14 @@ const ThemeEngine = (() => {
         '--scrollbar-thumb-hover': 'rgba(180, 120, 80, 0.2)',
         '--chat-user-bg': 'linear-gradient(135deg, #F47B5E, #F5A623)',
         '--input-focus-glow': 'rgba(244, 123, 94, 0.25)',
+        '--bg-card': '#ffffff',
+        '--bg-elevated': '#ffffff',
+        '--bg-hover': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-heavy': 'rgba(255, 255, 255, 0.95)',
+        '--bg-glass-medium': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-light': 'rgba(255, 255, 255, 0.6)',
+        '--bg-input': '#ffffff',
+        '--text-on-brand': '#ffffff',
       }
     },
     'forest-green': {
@@ -178,6 +204,14 @@ const ThemeEngine = (() => {
         '--scrollbar-thumb-hover': 'rgba(30, 100, 60, 0.2)',
         '--chat-user-bg': 'linear-gradient(135deg, #3DA876, #2E9E6F)',
         '--input-focus-glow': 'rgba(61, 168, 118, 0.25)',
+        '--bg-card': '#ffffff',
+        '--bg-elevated': '#ffffff',
+        '--bg-hover': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-heavy': 'rgba(255, 255, 255, 0.95)',
+        '--bg-glass-medium': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-light': 'rgba(255, 255, 255, 0.6)',
+        '--bg-input': '#ffffff',
+        '--text-on-brand': '#ffffff',
       }
     },
     'lavender': {
@@ -221,6 +255,14 @@ const ThemeEngine = (() => {
         '--scrollbar-thumb-hover': 'rgba(100, 60, 200, 0.2)',
         '--chat-user-bg': 'linear-gradient(135deg, #8B6CF7, #B06CF7)',
         '--input-focus-glow': 'rgba(139, 108, 247, 0.25)',
+        '--bg-card': '#ffffff',
+        '--bg-elevated': '#ffffff',
+        '--bg-hover': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-heavy': 'rgba(255, 255, 255, 0.95)',
+        '--bg-glass-medium': 'rgba(255, 255, 255, 0.85)',
+        '--bg-glass-light': 'rgba(255, 255, 255, 0.6)',
+        '--bg-input': '#ffffff',
+        '--text-on-brand': '#ffffff',
       }
     }
   };

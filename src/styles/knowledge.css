@@ -292,6 +292,16 @@
   color: #FF9500;
 }
 
+.knowledge-card-source.source-knowledge-graph {
+  background: rgba(175, 82, 222, 0.1);
+  color: #AF52DE;
+}
+
+.knowledge-card-source.source-knowledge-article {
+  background: rgba(90, 200, 250, 0.1);
+  color: #5AC8FA;
+}
+
 .knowledge-card-title {
   font-size: 14px;
   font-weight: 600;
@@ -549,7 +559,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--bg-glass-light);
   backdrop-filter: blur(10px);
   border-bottom: 0.5px solid var(--border-light);
   flex-shrink: 0;

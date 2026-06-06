@@ -83,8 +83,8 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS notification_reads (
-    notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    notification_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
     read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (notification_id, user_id)
   );
@@ -759,6 +759,162 @@ app.delete('/memora/admin/versions/:id', authMiddleware, adminMiddleware, (req, 
   }
 });
 
+// ===== 通知实时推送（SSE） =====
+
+// SSE 连接管理配置
+const SSE_CONFIG = {
+  MAX_CONNECTIONS: 500,         // 最大同时连接数
+  MAX_PER_USER: 3,             // 每用户最大连接数（防多标签页重复）
+  HEARTBEAT_INTERVAL: 30000,   // 心跳间隔 30s
+  IDLE_TIMEOUT: 120000,        // 空闲超时 2 分钟（无心跳响应）
+  CLEANUP_INTERVAL: 60000,     // 清理间隔 1 分钟
+};
+
+// SSE 客户端连接管理
+const sseClients = new Map(); // clientId -> { res, userId, orgName, connectedAt, lastActive }
+
+// 心跳定时器
+let sseHeartbeatTimer = null;
+let sseCleanupTimer = null;
+
+function startSSEHeartbeat() {
+  if (sseHeartbeatTimer) return;
+  sseHeartbeatTimer = setInterval(() => {
+    for (const [clientId, client] of sseClients) {
+      try {
+        client.res.write(': heartbeat\n\n');
+        client.lastActive = Date.now();
+      } catch (err) {
+        sseClients.delete(clientId);
+      }
+    }
+  }, SSE_CONFIG.HEARTBEAT_INTERVAL);
+
+  // 定期清理僵尸连接和超时连接
+  sseCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [clientId, client] of sseClients) {
+      if (now - client.lastActive > SSE_CONFIG.IDLE_TIMEOUT) {
+        try { client.res.end(); } catch (e) {}
+        sseClients.delete(clientId);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[SSE] Cleaned ${cleaned} idle connections, active: ${sseClients.size}`);
+    }
+  }, SSE_CONFIG.CLEANUP_INTERVAL);
+}
+
+// 获取某用户当前连接数
+function getUserConnectionCount(userId) {
+  let count = 0;
+  for (const [, client] of sseClients) {
+    if (client.userId === userId) count++;
+  }
+  return count;
+}
+
+// 移除某用户最早的连接（为新连接腾位置）
+function removeOldestUserConnection(userId) {
+  let oldestId = null;
+  let oldestTime = Infinity;
+  for (const [clientId, client] of sseClients) {
+    if (client.userId === userId && client.connectedAt < oldestTime) {
+      oldestTime = client.connectedAt;
+      oldestId = clientId;
+    }
+  }
+  if (oldestId) {
+    const client = sseClients.get(oldestId);
+    try { client.res.end(); } catch (e) {}
+    sseClients.delete(oldestId);
+  }
+}
+
+// 向匹配的 SSE 客户端广播通知（按目标分组，避免全量遍历）
+function broadcastNotification(notification) {
+  let sentCount = 0;
+  const deadClients = [];
+
+  for (const [clientId, client] of sseClients) {
+    // 匹配逻辑：target_all / target_organization / target_user_id
+    const matchAll = notification.target_all;
+    const matchOrg = notification.target_organization && client.orgName === notification.target_organization;
+    const matchUser = notification.target_user_id && client.userId === notification.target_user_id;
+    if (matchAll || matchOrg || matchUser) {
+      try {
+        client.res.write(`event: notification\ndata: ${JSON.stringify(notification)}\n\n`);
+        sentCount++;
+      } catch (err) {
+        deadClients.push(clientId);
+      }
+    }
+  }
+  // 批量清理死连接
+  deadClients.forEach(id => sseClients.delete(id));
+  console.log(`[SSE] Broadcast to ${sentCount} clients (${sseClients.size} total active)`);
+}
+
+// SSE 端点：客户端订阅实时通知
+app.get('/memora/notifications/stream', adpAuthMiddleware, (req, res) => {
+  // 连接数上限检查
+  if (sseClients.size >= SSE_CONFIG.MAX_CONNECTIONS) {
+    res.status(503).json({ message: '连接数已达上限，请稍后重试' });
+    return;
+  }
+
+  // 每用户连接数限制
+  const userConns = getUserConnectionCount(req.userId);
+  if (userConns >= SSE_CONFIG.MAX_PER_USER) {
+    removeOldestUserConnection(req.userId);
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  const clientId = `${req.userId}-${Date.now()}`;
+  const orgName = req.orgName || '';
+  const now = Date.now();
+
+  sseClients.set(clientId, { res, userId: req.userId, orgName, connectedAt: now, lastActive: now });
+  console.log(`[SSE] Client connected: ${clientId} (org: ${orgName}, total: ${sseClients.size})`);
+
+  startSSEHeartbeat();
+
+  // 发送连接成功事件
+  res.write(`event: connected\ndata: ${JSON.stringify({ clientId })}\n\n`);
+
+  // 客户端断开
+  req.on('close', () => {
+    sseClients.delete(clientId);
+    console.log(`[SSE] Client disconnected: ${clientId} (total: ${sseClients.size})`);
+  });
+});
+
+// SSE 连接统计 API（管理员可用）
+app.get('/memora/admin/sse-stats', authMiddleware, adminMiddleware, (req, res) => {
+  const userMap = new Map();
+  for (const [, client] of sseClients) {
+    userMap.set(client.userId, (userMap.get(client.userId) || 0) + 1);
+  }
+  res.json({
+    total_connections: sseClients.size,
+    unique_users: userMap.size,
+    max_connections: SSE_CONFIG.MAX_CONNECTIONS,
+    max_per_user: SSE_CONFIG.MAX_PER_USER,
+    top_users: [...userMap.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([userId, count]) => ({ userId, connections: count }))
+  });
+});
+
 // ===== 管理员 API =====
 
 // 创建通知
@@ -784,6 +940,18 @@ app.post('/memora/admin/notifications', authMiddleware, adminMiddleware, (req, r
       target_user_id || '',
       req.userId
     );
+
+    // 实时推送给 SSE 客户端
+    broadcastNotification({
+      id, title, content: content || '',
+      type: validTypes.includes(type) ? type : 'system',
+      priority: validPriorities.includes(priority) ? priority : 'normal',
+      read: false,
+      target_all: !!target_all,
+      target_organization: target_organization || '',
+      target_user_id: target_user_id || '',
+      created_at: new Date().toISOString()
+    });
 
     res.json({ success: true, id });
   } catch (err) {
@@ -1090,8 +1258,8 @@ function runMigrations() {
         );
 
         CREATE TABLE notification_reads (
-          notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          notification_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
           read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           PRIMARY KEY (notification_id, user_id)
         );
@@ -1153,6 +1321,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  PUT  /memora/notifications/:id/read`);
   console.log(`  PUT  /memora/notifications/read-all`);
   console.log(`  GET  /memora/notifications/unread-count`);
+  console.log(`  GET  /memora/notifications/stream  (SSE实时推送)`);
   console.log(`  POST /memora/activity/login`);
   console.log(`  POST /memora/activity/logout`);
   console.log(`  GET  /memora/updates/check`);

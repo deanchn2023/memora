@@ -7,7 +7,8 @@ const App = {
   newNoteCount: 0, // 记事本角标：不在记事本页时新笔记的累加计数
   dbSyncTimer: null, // 数据库同步定时器
   _chatAttachments: [], // 聊天文件附件列表
-  _userAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="20" fill="#E8F5E9"/><circle cx="20" cy="15" r="7" fill="#81C784"/><ellipse cx="20" cy="32" rx="12" ry="9" fill="#81C784"/><circle cx="17" cy="14" r="1.2" fill="#2E7D32"/><circle cx="23" cy="14" r="1.2" fill="#2E7D32"/><path d="M18 17.5 Q20 19.5 22 17.5" stroke="#2E7D32" stroke-width="1" fill="none" stroke-linecap="round"/><circle cx="14" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/><circle cx="26" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/></svg>`,
+  _userAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="uBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0E6FF"/><stop offset="1" stop-color="#E0F0FF"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#uBg)"/><circle cx="20" cy="14.5" r="6.5" fill="#C4B5FD"/><ellipse cx="20" cy="30" rx="10.5" ry="8" fill="#C4B5FD"/><circle cx="17.5" cy="13.8" r="1" fill="#7C3AED"/><circle cx="22.5" cy="13.8" r="1" fill="#7C3AED"/><path d="M18.5 16.2 Q20 17.8 21.5 16.2" stroke="#7C3AED" stroke-width="0.9" fill="none" stroke-linecap="round"/><circle cx="15" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="25" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="12" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/><circle cx="28" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/></svg>`,
+  _assistantAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="aBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="14" fill="url(#aBg)"/><text x="20" y="26" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="white">M</text></svg>`,
 
   // ADP SSE 流式状态
   _adpStreaming: false,
@@ -281,6 +282,8 @@ const App = {
     document.getElementById('refreshMemoriesBtn').addEventListener('click', () => this.loadMemories());
     document.getElementById('clearAllMemoriesBtn').addEventListener('click', () => this.clearAllMemories());
     document.getElementById('addManualMemoryBtn').addEventListener('click', () => this.addManualMemory());
+    document.getElementById('aiOrganizeMemoryBtn')?.addEventListener('click', () => this.aiOrganizeAndAddMemory());
+    document.getElementById('aiBatchOrganizeBtn')?.addEventListener('click', () => this.aiBatchOrganizeMemories());
     document.getElementById('memoryTypeFilter')?.addEventListener('change', () => this.loadMemories());
     document.getElementById('memoryBusinessFilter')?.addEventListener('change', () => this.loadMemories());
     document.getElementById('loadMoreMemoriesBtn')?.addEventListener('click', () => {
@@ -294,6 +297,7 @@ const App = {
     // 通知铃铛
     document.getElementById('notificationBellBtn')?.addEventListener('click', () => this._toggleNotificationPanel());
     document.getElementById('notificationMarkAllBtn')?.addEventListener('click', () => this._markAllNotificationsRead());
+    document.getElementById('notificationClearAllBtn')?.addEventListener('click', () => this._clearAllNotifications());
 
     // 点击外部关闭通知面板
     document.addEventListener('click', (e) => {
@@ -404,6 +408,7 @@ const App = {
     document.getElementById('addPersonBtn')?.addEventListener('click', () => this.addFrequentPerson());
     document.getElementById('addProjectBtn')?.addEventListener('click', () => this.addActiveProject());
     document.getElementById('generateProfileSuggestionsBtn')?.addEventListener('click', () => this.generateProfileSuggestions());
+    document.getElementById('profileImportBtn')?.addEventListener('click', () => this.importProfileWithAI());
     
     // 用户画像面板 - 删除按钮事件委托
     document.getElementById('frequentPersonsList')?.addEventListener('click', (e) => {
@@ -576,6 +581,9 @@ const App = {
 
       // 加载服务器配置摘要
       this._loadOrgConfigSummary();
+
+      // 加载服务器地址
+      this._loadServerUrls();
 
       // 更新头部用户徽章
       this._updateHeaderUserBadge(true, state.user);
@@ -766,6 +774,132 @@ const App = {
     }
   },
 
+  // ===== 服务器地址管理 =====
+
+  async _loadServerUrls() {
+    if (!window.electronAPI?.authGetServerUrls) return;
+    try {
+      const urls = await window.electronAPI.authGetServerUrls();
+      for (const env of ['beta', 'production']) {
+        const data = urls[env];
+        if (!data) continue;
+        const authInput = document.getElementById(`${env}AuthUrl`);
+        const configInput = document.getElementById(`${env}ConfigUrl`);
+        const hint = document.getElementById(`${env}CustomHint`);
+        if (authInput) authInput.value = data.authUrl || '';
+        if (configInput) configInput.value = data.configUrl || '';
+        if (hint) {
+          if (data.isCustom) {
+            hint.textContent = '已自定义';
+            hint.classList.add('is-custom');
+          } else {
+            hint.textContent = '默认';
+            hint.classList.remove('is-custom');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load server URLs:', err);
+    }
+  },
+
+  async saveServerUrls() {
+    if (!window.electronAPI?.authSetServerUrls) return;
+    const btn = document.querySelector('.server-url-save-btn');
+    const statusEl = document.getElementById('serverUrlStatus');
+
+    // 收集输入值
+    const urls = {};
+    for (const env of ['beta', 'production']) {
+      const authInput = document.getElementById(`${env}AuthUrl`);
+      const configInput = document.getElementById(`${env}ConfigUrl`);
+      if (!authInput || !configInput) continue;
+      const authUrl = authInput.value.trim();
+      const configUrl = configInput.value.trim();
+      if (authUrl || configUrl) {
+        urls[env] = { authUrl, configUrl };
+      }
+    }
+
+    if (Object.keys(urls).length === 0) {
+      this._showServerUrlStatus('没有修改', 'error');
+      return;
+    }
+
+    // 显示保存中状态
+    if (btn) {
+      btn.textContent = '⏳ 验证中...';
+      btn.classList.add('saving');
+    }
+    this._showServerUrlStatus('正在验证服务器连接...', '');
+
+    try {
+      const result = await window.electronAPI.authSetServerUrls(urls);
+      if (result.success) {
+        this._showServerUrlStatus('✅ 验证通过，服务器地址已保存（下次启动生效）', 'success');
+        this.showToast('服务器地址已保存');
+        // 刷新显示
+        await this._loadServerUrls();
+      } else {
+        this._showServerUrlStatus(`❌ ${result.error}`, 'error');
+        // 恢复输入框为当前实际值
+        await this._loadServerUrls();
+      }
+    } catch (err) {
+      this._showServerUrlStatus(`❌ 保存失败: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.textContent = '💾 保存并验证';
+        btn.classList.remove('saving');
+      }
+    }
+  },
+
+  async resetServerUrls(env) {
+    if (!window.electronAPI?.authResetServerUrls) return;
+    const label = env === 'all' ? '全部' : (env === 'beta' ? 'Beta' : '正式');
+    if (!confirm(`确定要将${label}服务器地址重置为默认值吗？`)) return;
+
+    try {
+      const result = await window.electronAPI.authResetServerUrls(env);
+      if (result.success) {
+        this._showServerUrlStatus('✅ 已重置为默认地址（下次启动生效）', 'success');
+        this.showToast(`${label}服务器地址已重置`);
+        await this._loadServerUrls();
+      } else {
+        this._showServerUrlStatus(`❌ 重置失败: ${result.error}`, 'error');
+      }
+    } catch (err) {
+      this._showServerUrlStatus(`❌ 重置失败: ${err.message}`, 'error');
+    }
+  },
+
+  _showServerUrlStatus(message, type) {
+    const el = document.getElementById('serverUrlStatus');
+    if (!el) return;
+    el.textContent = message;
+    el.className = `server-url-status ${type}`;
+    el.classList.remove('hidden');
+    // 成功消息 5 秒后自动隐藏
+    if (type === 'success') {
+      setTimeout(() => el.classList.add('hidden'), 5000);
+    }
+  },
+
+  toggleServerUrlsEdit() {
+    const area = document.getElementById('serverUrlsEditArea');
+    if (!area) return;
+    area.classList.toggle('expanded');
+  },
+
+  async _loadServerUrlsToLogin() {
+    // 登录前区域不再显示地址，此方法保留为空
+  },
+
+  async saveServerUrlsFromLogin() {
+    // 登录前不再有编辑功能，此方法保留为空
+  },
+
   // ===== 通知功能 =====
 
   async _fetchNotifications() {
@@ -817,12 +951,15 @@ const App = {
           ${n.content ? `<div class="notification-item-body">${n.content}</div>` : ''}
           <div class="notification-item-time">${this._formatNotifTime(n.created_at)}</div>
         </div>
+        <button class="notification-item-delete" data-id="${n.id}" title="删除">✕</button>
       </div>
     `).join('');
 
     // 点击标记已读
     body.querySelectorAll('.notification-item.unread').forEach(el => {
-      el.addEventListener('click', async () => {
+      el.addEventListener('click', async (e) => {
+        // 忽略删除按钮的点击
+        if (e.target.classList.contains('notification-item-delete')) return;
         const id = el.dataset.id;
         if (window.electronAPI?.notificationsMarkRead) {
           await window.electronAPI.notificationsMarkRead(id);
@@ -841,6 +978,44 @@ const App = {
         }
       });
     });
+
+    // 删除按钮
+    body.querySelectorAll('.notification-item-delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        // 乐观更新：先移除 DOM
+        const item = btn.closest('.notification-item');
+        if (item) {
+          item.style.transition = 'opacity 0.15s, transform 0.15s';
+          item.style.opacity = '0';
+          item.style.transform = 'translateX(20px)';
+          setTimeout(() => {
+            item.remove();
+            // 如果列表为空，显示空状态
+            if (body.querySelectorAll('.notification-item').length === 0) {
+              body.innerHTML = '<div class="notification-empty">暂无通知</div>';
+            }
+          }, 150);
+        }
+        // 更新 badge
+        const currentBadge = document.getElementById('notificationBadge');
+        const unreadItems = body.querySelectorAll('.notification-item.unread');
+        const unreadCount = Math.max(0, unreadItems.length - 1);
+        if (currentBadge) {
+          if (unreadCount > 0) {
+            currentBadge.textContent = unreadCount;
+            currentBadge.classList.remove('hidden');
+          } else {
+            currentBadge.classList.add('hidden');
+          }
+        }
+        // 后台异步标记已读
+        if (window.electronAPI?.notificationsMarkRead) {
+          window.electronAPI.notificationsMarkRead(id).catch(() => {});
+        }
+      });
+    });
   },
 
   _toggleNotificationPanel() {
@@ -849,11 +1024,39 @@ const App = {
     panel.classList.toggle('hidden');
   },
 
-  async _markAllNotificationsRead() {
-    if (!window.electronAPI?.notificationsMarkAllRead) return;
-    await window.electronAPI.notificationsMarkAllRead();
-    this._fetchNotifications();
+  _markAllNotificationsRead() {
+    // 乐观更新：先更新 UI
+    const body = document.getElementById('notificationPanelBody');
+    if (body) {
+      body.querySelectorAll('.notification-item.unread').forEach(el => {
+        el.classList.remove('unread');
+        el.classList.add('read');
+      });
+    }
+    const badge = document.getElementById('notificationBadge');
+    if (badge) badge.classList.add('hidden');
+    const bellBtn = document.getElementById('notificationBellBtn');
+    if (bellBtn) bellBtn.textContent = '🔕';
     this.showToast('已全部标记为已读');
+    // 后台异步通知服务端
+    if (window.electronAPI?.notificationsMarkAllRead) {
+      window.electronAPI.notificationsMarkAllRead().catch(() => {});
+    }
+  },
+
+  _clearAllNotifications() {
+    // 乐观更新：先清 UI，后端异步执行
+    const body = document.getElementById('notificationPanelBody');
+    if (body) body.innerHTML = '<div class="notification-empty">暂无通知</div>';
+    const badge = document.getElementById('notificationBadge');
+    if (badge) badge.classList.add('hidden');
+    const bellBtn = document.getElementById('notificationBellBtn');
+    if (bellBtn) bellBtn.textContent = '🔕';
+    this.showToast('已清除所有通知');
+    // 后台异步通知服务端
+    if (window.electronAPI?.notificationsMarkAllRead) {
+      window.electronAPI.notificationsMarkAllRead().catch(() => {});
+    }
   },
 
   _getNotifTypeIcon(type) {
@@ -896,12 +1099,12 @@ const App = {
           <div style="text-align:center;margin-bottom:16px;">
             <span style="font-size:48px;">🎉</span>
             <h2 style="margin:8px 0 4px;font-size:22px;">v${updateInfo.latest_version}</h2>
-            <p style="color:#86868b;font-size:13px;">当前版本 v${updateInfo.current_version || ''}</p>
+            <p style="color:var(--text-secondary);font-size:13px;">当前版本 v${updateInfo.current_version || ''}</p>
           </div>
           ${updateInfo.release_notes ? `
-            <div style="background:#f5f5f7;border-radius:12px;padding:14px;margin-bottom:16px;">
-              <h4 style="margin:0 0 8px;font-size:13px;color:#1d1d1f;">更新内容</h4>
-              <div style="font-size:12px;color:#86868b;white-space:pre-line;line-height:1.6;">${updateInfo.release_notes}</div>
+            <div style="background:var(--bg-secondary);border-radius:12px;padding:14px;margin-bottom:16px;">
+              <h4 style="margin:0 0 8px;font-size:13px;color:var(--text-primary);">更新内容</h4>
+              <div style="font-size:12px;color:var(--text-secondary);white-space:pre-line;line-height:1.6;">${updateInfo.release_notes}</div>
             </div>
           ` : ''}
           ${updateInfo.file_size ? `<p style="font-size:12px;color:#aeaeb2;text-align:center;">文件大小：${(updateInfo.file_size / 1024 / 1024).toFixed(1)} MB</p>` : ''}
@@ -1102,7 +1305,7 @@ const App = {
     assistantMessage.className = 'message assistant';
     assistantMessage.dataset.sendTime = new Date().toISOString();
     assistantMessage.innerHTML = `
-      <div class="message-avatar">🤖</div>
+      <div class="message-avatar">${this._assistantAvatarSvg}</div>
       <div class="message-content">
         <div class="agent-thinking">
           <div class="thinking-dots"><span></span><span></span><span></span></div>
@@ -2149,7 +2352,7 @@ const App = {
     
     chatMessages.innerHTML += `
       <div class="message assistant">
-        <div class="message-avatar">🤖</div>
+        <div class="message-avatar">${this._assistantAvatarSvg}</div>
         <div class="message-content">
           <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
           <span class="message-time assistant-time">${this._formatChatTime(new Date())}</span>
@@ -2397,6 +2600,7 @@ ${JSON.stringify(reportData, null, 2)}`;
               <div class="memory-text">${memory.content.substring(0, 150)}${memory.content.length > 150 ? '...' : ''}</div>
               ${taskTitle ? `<div class="memory-task-title">识别任务: ${taskTitle}</div>` : ''}
               ${reason ? `<div class="memory-reason">${reason}</div>` : ''}
+              ${memory.metadata?.tags?.length ? `<div class="memory-tags">${memory.metadata.tags.map(t => `<span class="import-tag">${this.escapeHtml(t)}</span>`).join('')}</div>` : ''}
             </div>
             <div class="memory-meta">
               <span class="memory-type ${isTask ? 'task' : ''}">${this.getMemoryTypeLabel(memory.type)}</span>
@@ -2408,7 +2612,10 @@ ${JSON.stringify(reportData, null, 2)}`;
               </div>
               <span class="memory-date">${new Date(memory.createdAt).toLocaleString()}</span>
             </div>
-            <button class="memory-delete" data-memory-id="${memory.id}">删除</button>
+            <div class="memory-actions">
+              <button class="memory-reorganize" data-memory-id="${memory.id}" title="AI 整理此记忆">🧠</button>
+              <button class="memory-delete" data-memory-id="${memory.id}">删除</button>
+            </div>
           </div>
         `;
       }).join('');
@@ -2432,10 +2639,12 @@ ${JSON.stringify(reportData, null, 2)}`;
       countInfoEl.textContent = `已显示 ${loadedCount} / ${totalCount} 条`;
     }
 
-    // 事件委托：删除按钮
+    // 事件委托：删除和整理按钮
     memoryList.onclick = (e) => {
       const delBtn = e.target.closest('.memory-delete');
-      if (delBtn) this.deleteMemory(delBtn.dataset.memoryId);
+      if (delBtn) { this.deleteMemory(delBtn.dataset.memoryId); return; }
+      const reorgBtn = e.target.closest('.memory-reorganize');
+      if (reorgBtn) { this.aiReorganizeSingleMemory(reorgBtn.dataset.memoryId); return; }
     };
   },
 
@@ -2515,35 +2724,352 @@ ${JSON.stringify(reportData, null, 2)}`;
     
     const type = document.getElementById('manualMemoryType').value;
     const business_category = document.getElementById('manualMemoryBusinessCategory').value || 'other';
+    const btn = document.getElementById('addManualMemoryBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '🧠 整理中...'; }
     
     try {
       if (window.electronAPI) {
-        const result = await window.electronAPI.addMemory({
-          content: input,
-          type: type,
-          category: 'knowledge',
-          business_category: business_category,
-          confidence: 1.0,
-          metadata: {
-            source: 'manual',
-            createdAt: new Date().toISOString()
+        // 先调用 AI 整理
+        const orgResult = await window.electronAPI.aiOrganizeMemory(input);
+
+        if (orgResult.success && orgResult.organized) {
+          const org = orgResult.organized;
+          // 使用 AI 整理后的内容，但保留用户选择的 type 和 business_category 作为优先
+          const finalType = type === 'long' ? 'long' : (org.memory_type || type);
+          const finalBizCat = business_category !== 'other' ? business_category : (org.business_category || business_category);
+
+          if (orgResult.action === 'replaced' || orgResult.action === 'merged') {
+            // AI 判断需要覆盖/合并已有记忆
+            const actionLabel = orgResult.action === 'replaced' ? '覆盖' : '合并';
+            this.showToast(`AI 整理完成：${actionLabel}旧记忆`);
+          } else {
+            // 新记忆
+            const result = await window.electronAPI.addMemory({
+              content: org.organized_content,
+              type: finalType,
+              category: org.category || 'knowledge',
+              business_category: finalBizCat,
+              confidence: org.confidence || 0.8,
+              metadata: {
+                source: 'manual_ai_organized',
+                tags: org.tags || [],
+                key_points: org.key_points || [],
+                original_content: input,
+                created_at: new Date().toISOString()
+              }
+            });
+            
+            if (result.success) {
+              let msg = 'AI 整理后已添加记忆';
+              if (org.related_actions?.action_reason) {
+                msg += `（${org.related_actions.action_reason}）`;
+              }
+              this.showToast(msg);
+            } else {
+              this.showToast('添加记忆失败', 'error');
+            }
           }
-        });
-        
-        if (result.success) {
-          this.showToast('记忆已添加');
-          document.getElementById('manualMemoryInput').value = '';
-          this.loadMemories();
         } else {
-          this.showToast('添加记忆失败', 'error');
+          // AI 整理失败，降级为直接添加
+          console.warn('[Memory] AI organize failed, fallback to direct add:', orgResult.error);
+          const result = await window.electronAPI.addMemory({
+            content: input,
+            type: type,
+            category: 'knowledge',
+            business_category: business_category,
+            confidence: 1.0,
+            metadata: {
+              source: 'manual',
+              ai_organize_failed: true,
+              created_at: new Date().toISOString()
+            }
+          });
+          
+          if (result.success) {
+            this.showToast('记忆已添加（AI 整理不可用，已直接保存）');
+          } else {
+            this.showToast('添加记忆失败', 'error');
+          }
         }
+
+        document.getElementById('manualMemoryInput').value = '';
+        this.loadMemories();
       }
     } catch (error) {
       console.error('添加记忆失败:', error);
       this.showToast('添加记忆失败', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '添加记忆'; }
     }
   },
-  
+
+  // AI 整理后添加记忆
+  async aiOrganizeAndAddMemory() {
+    const input = document.getElementById('manualMemoryInput').value.trim();
+    if (!input) {
+      this.showToast('请输入记忆内容', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('aiOrganizeMemoryBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '🧠 整理中...'; }
+
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.aiOrganizeMemory(input);
+
+        if (result.success && result.organized) {
+          const org = result.organized;
+          let actionMsg = '';
+          if (result.action === 'replaced') {
+            actionMsg = `\n\n🔄 已覆盖旧记忆（ID: ${result.replaced_id?.substring(0,8)}...）`;
+          } else if (result.action === 'merged') {
+            actionMsg = `\n\n🔄 已合并到旧记忆（ID: ${result.merged_id?.substring(0,8)}...）`;
+          }
+
+          if (result.action === 'new') {
+            // 新记忆，直接添加
+            const addResult = await window.electronAPI.addMemory({
+              content: org.organized_content,
+              type: org.memory_type || 'short',
+              category: org.category || 'knowledge',
+              business_category: org.business_category || 'other',
+              confidence: org.confidence || 0.8,
+              metadata: {
+                source: 'manual_ai_organized',
+                tags: org.tags || [],
+                key_points: org.key_points || [],
+                original_content: input,
+                created_at: new Date().toISOString()
+              }
+            });
+            if (addResult.success) {
+              this.showToast('AI 整理后已添加记忆');
+            }
+          } else {
+            this.showToast(`AI 整理完成：${result.action === 'replaced' ? '覆盖' : '合并'}旧记忆`);
+          }
+
+          if (org.related_actions?.action_reason) {
+            actionMsg += `\n💡 原因：${org.related_actions.action_reason}`;
+          }
+
+          document.getElementById('manualMemoryInput').value = '';
+          this.loadMemories();
+        } else {
+          this.showToast('AI 整理失败: ' + (result.error || '未知错误'), 'error');
+        }
+      }
+    } catch (error) {
+      console.error('AI 整理记忆失败:', error);
+      this.showToast('AI 整理记忆失败', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🧠 AI 整理后添加'; }
+    }
+  },
+
+  // AI 批量整理记忆
+  async aiBatchOrganizeMemories() {
+    const confirmed = await this.showConfirmDialog('AI 批量整理', '将分析最近 30 条记忆，找出需要合并、覆盖、重新分类的条目。确认继续？');
+    if (!confirmed) return;
+
+    const btn = document.getElementById('aiBatchOrganizeBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '🧠 分析中...'; }
+
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.aiBatchOrganizeMemories();
+
+        if (result.success && result.result) {
+          const r = result.result;
+          const mergeCount = r.merge_groups?.length || 0;
+          const replaceCount = r.replacements?.length || 0;
+          const reclassifyCount = r.reclassify?.length || 0;
+          const totalCount = mergeCount + replaceCount + reclassifyCount;
+
+          if (totalCount === 0) {
+            this.showToast('记忆已比较整洁，无需调整');
+            if (btn) { btn.disabled = false; btn.textContent = '🧠 AI 批量整理'; }
+            return;
+          }
+
+          // 构建预览弹窗
+          let previewHtml = `<div class="ai-organize-preview">
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">分析 ${r.total_analyzed} 条记忆，发现 ${totalCount} 项优化建议：</p>`;
+
+          if (mergeCount > 0) {
+            previewHtml += `<div class="ai-organize-section"><strong>🔄 合并建议（${mergeCount}组）</strong>`;
+            r.merge_groups.forEach((g, i) => {
+              previewHtml += `<div class="ai-organize-item">
+                <span class="import-tag">合并</span>
+                <span>第 ${g.indices.join('、')} 条 → "${this.escapeHtml(g.merged_content?.substring(0, 60) || '')}..."</span>
+                <span style="color:var(--text-tertiary);font-size:11px;">${this.escapeHtml(g.reason || '')}</span>
+              </div>`;
+            });
+            previewHtml += '</div>';
+          }
+
+          if (replaceCount > 0) {
+            previewHtml += `<div class="ai-organize-section"><strong>🔄 覆盖建议（${replaceCount}条）</strong>`;
+            r.replacements.forEach((rep, i) => {
+              previewHtml += `<div class="ai-organize-item">
+                <span class="import-tag">覆盖</span>
+                <span>第 ${rep.old_index} 条 → "${this.escapeHtml(rep.new_content?.substring(0, 60) || '')}..."</span>
+                <span style="color:var(--text-tertiary);font-size:11px;">${this.escapeHtml(rep.reason || '')}</span>
+              </div>`;
+            });
+            previewHtml += '</div>';
+          }
+
+          if (reclassifyCount > 0) {
+            previewHtml += `<div class="ai-organize-section"><strong>🏷️ 分类纠正（${reclassifyCount}条）</strong>`;
+            r.reclassify.forEach((rc, i) => {
+              previewHtml += `<div class="ai-organize-item">
+                <span class="import-tag">重分类</span>
+                <span>第 ${rc.index} 条：${rc.old_type}/${rc.old_biz} → ${rc.new_type}/${rc.new_biz}</span>
+                <span style="color:var(--text-tertiary);font-size:11px;">${this.escapeHtml(rc.reason || '')}</span>
+              </div>`;
+            });
+            previewHtml += '</div>';
+          }
+
+          if (r.summary) {
+            previewHtml += `<div style="margin-top:12px;padding:10px;background:var(--primary-light);border-radius:8px;font-size:13px;">💡 ${this.escapeHtml(r.summary)}</div>`;
+          }
+
+          previewHtml += `<div style="margin-top:16px;display:flex;gap:8px;">
+            <button class="btn primary small" id="applyOrganizeBtn">✅ 应用所有变更</button>
+            <button class="btn secondary small" id="cancelOrganizeBtn">取消</button>
+          </div></div>`;
+
+          // 显示预览（复用 profileImportPreview 区域的样式）
+          const previewEl = document.getElementById('profileImportPreview');
+          if (previewEl) {
+            // 找到记忆面板来展示
+            const memoryPanel = document.querySelector('#memoryPanel .memory-list-container');
+            if (memoryPanel) {
+              const existingPreview = memoryPanel.querySelector('.ai-organize-preview');
+              if (existingPreview) existingPreview.remove();
+
+              const previewDiv = document.createElement('div');
+              previewDiv.className = 'ai-organize-preview-container';
+              previewDiv.innerHTML = previewHtml;
+              memoryPanel.insertBefore(previewDiv, memoryPanel.firstChild);
+
+              // 按钮事件
+              document.getElementById('applyOrganizeBtn')?.addEventListener('click', async () => {
+                await this._applyBatchOrganizeResult(r);
+                previewDiv.remove();
+              });
+              document.getElementById('cancelOrganizeBtn')?.addEventListener('click', () => {
+                previewDiv.remove();
+              });
+            }
+          }
+
+          this.showToast(`分析完成，发现 ${totalCount} 项优化建议`);
+        } else {
+          this.showToast('AI 批量整理失败: ' + (result.error || '未知错误'), 'error');
+        }
+      }
+    } catch (error) {
+      console.error('AI 批量整理失败:', error);
+      this.showToast('AI 批量整理失败', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🧠 AI 批量整理'; }
+    }
+  },
+
+  // 应用批量整理结果
+  async _applyBatchOrganizeResult(result) {
+    let applied = 0;
+
+    try {
+      // 处理合并
+      for (const group of result.merge_groups || []) {
+        if (group.memoryIds?.length >= 2) {
+          // 用第一记忆保存合并内容，删除其余
+          await window.electronAPI.updateMemory(group.memoryIds[0], {
+            content: group.merged_content,
+            type: group.type,
+            business_category: group.business_category,
+            metadata: { merged_at: new Date().toISOString(), merge_reason: group.reason }
+          });
+          for (let i = 1; i < group.memoryIds.length; i++) {
+            await window.electronAPI.deleteMemory(group.memoryIds[i]);
+          }
+          applied++;
+        }
+      }
+
+      // 处理覆盖
+      for (const rep of result.replacements || []) {
+        if (rep.memoryId) {
+          await window.electronAPI.updateMemory(rep.memoryId, {
+            content: rep.new_content,
+            metadata: { replaced_at: new Date().toISOString(), replace_reason: rep.reason }
+          });
+          applied++;
+        }
+      }
+
+      // 处理重分类
+      for (const rc of result.reclassify || []) {
+        if (rc.memoryId) {
+          await window.electronAPI.updateMemory(rc.memoryId, {
+            type: rc.new_type,
+            business_category: rc.new_biz,
+            metadata: { reclassified_at: new Date().toISOString(), reclassify_reason: rc.reason }
+          });
+          applied++;
+        }
+      }
+
+      this.showToast(`已应用 ${applied} 项变更`);
+      this.loadMemories();
+    } catch (error) {
+      console.error('应用整理结果失败:', error);
+      this.showToast('应用部分变更失败', 'error');
+      this.loadMemories();
+    }
+  },
+
+  // AI 整理单条记忆
+  async aiReorganizeSingleMemory(id) {
+    if (!window.electronAPI) return;
+    const result = await window.electronAPI.getMemories({ limit: 200 });
+    const memory = result.memories?.find(m => m.id === id);
+    if (!memory) { this.showToast('记忆不存在', 'error'); return; }
+
+    this.showToast('正在 AI 整理...', 'info');
+    try {
+      const orgResult = await window.electronAPI.aiOrganizeMemory(memory.content);
+      if (orgResult.success && orgResult.organized) {
+        const org = orgResult.organized;
+        await window.electronAPI.updateMemory(id, {
+          content: org.organized_content,
+          type: org.memory_type,
+          business_category: org.business_category,
+          category: org.category,
+          confidence: org.confidence,
+          metadata: {
+            ...(memory.metadata || {}),
+            tags: org.tags || [],
+            key_points: org.key_points || [],
+            reorganized_at: new Date().toISOString()
+          }
+        });
+        this.showToast('记忆已整理更新');
+        this.loadMemories();
+      } else {
+        this.showToast('AI 整理失败: ' + (orgResult.error || '未知错误'), 'error');
+      }
+    } catch (error) {
+      console.error('AI 整理记忆失败:', error);
+      this.showToast('AI 整理失败', 'error');
+    }
+  },
+
   async editMemory(id) {
     if (!window.electronAPI) return;
     
@@ -3766,6 +4292,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       durationInput.value = task.estimatedDuration;
       priorityInput.value = task.priority;
+      // 渲染已关联人物
+      this._renderTaskLinkedPersons(task.linkedPersons || []);
     } else {
       document.getElementById('modalTitle').textContent = '新建任务';
       titleInput.value = task?.title || '';
@@ -3780,6 +4308,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       durationInput.value = task?.estimatedDuration || 60;
       priorityInput.value = task?.priority || 'medium';
+      // 渲染 AI 识别到的人物或空
+      this._renderTaskLinkedPersons(task?.linkedPersons || []);
     }
     
     modal.classList.remove('hidden');
@@ -3789,6 +4319,68 @@ ${JSON.stringify(reportData, null, 2)}`;
   hideTaskModal() {
     document.getElementById('taskModal').classList.add('hidden');
     this.editingTask = null;
+  },
+
+  // 渲染任务关联人物（来自画像）
+  async _renderTaskLinkedPersons(linkedPersons = []) {
+    const container = document.getElementById('taskLinkedPersons');
+    if (!container) return;
+
+    let profilePersons = [];
+    if (window.electronAPI?.profile?.get) {
+      try {
+        const profile = await window.electronAPI.profile.get();
+        profilePersons = profile.frequent_persons || [];
+      } catch (e) {}
+    }
+
+    // 合并：已有关联 + 画像人物（可选）
+    const linkedNames = new Set(linkedPersons.map(p => typeof p === 'string' ? p : p.name));
+    const allPersons = [
+      ...linkedPersons.map(p => typeof p === 'string' ? { name: p } : p),
+      ...profilePersons.filter(p => !linkedNames.has(p.name))
+    ];
+
+    if (allPersons.length === 0) {
+      container.innerHTML = '<span class="linked-persons-empty">暂无关联人物</span>';
+      return;
+    }
+
+    container.innerHTML = allPersons.map(p => {
+      const isLinked = linkedNames.has(p.name);
+      const relationTag = p.relation ? `<span class="person-relation-tag ${this._getRelationClass(p.relation)}">${this.escapeHtml(p.relation)}</span>` : '';
+      const responsibilitiesTag = p.responsibilities ? `<span class="person-resp-tag">${this.escapeHtml(p.responsibilities)}</span>` : '';
+      return `<div class="linked-person-chip ${isLinked ? 'active' : ''}" data-name="${this.escapeHtml(p.name)}" data-relation="${this.escapeHtml(p.relation || '')}">
+        <span class="person-name">${this.escapeHtml(p.name)}</span>${relationTag}${responsibilitiesTag}
+      </div>`;
+    }).join('');
+
+    // 点击切换关联
+    container.querySelectorAll('.linked-person-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        chip.classList.toggle('active');
+      });
+    });
+  },
+
+  _getRelationClass(relation) {
+    if (!relation) return '';
+    const r = relation.toLowerCase();
+    if (['领导', '老板', '总监', 'vp', '经理'].some(k => r.includes(k))) return 'relation-leader';
+    if (['下属', '组员', '徒弟'].some(k => r.includes(k))) return 'relation-subordinate';
+    if (['同事', '同组', '队友'].some(k => r.includes(k))) return 'relation-colleague';
+    if (['客户', '甲方'].some(k => r.includes(k))) return 'relation-client';
+    return '';
+  },
+
+  // 获取当前任务关联的人物
+  _getTaskLinkedPersons() {
+    const container = document.getElementById('taskLinkedPersons');
+    if (!container) return [];
+    return Array.from(container.querySelectorAll('.linked-person-chip.active')).map(chip => ({
+      name: chip.dataset.name,
+      relation: chip.dataset.relation || ''
+    }));
   },
 
   saveTask() {
@@ -3812,7 +4404,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       description: descInput.value.trim(),
       estimatedDuration: parseInt(durationInput.value) || 60,
       priority: priorityInput.value,
-      dueDate: dueInput.value ? new Date(dueInput.value).toISOString() : null
+      dueDate: dueInput.value ? new Date(dueInput.value).toISOString() : null,
+      linkedPersons: this._getTaskLinkedPersons()
     };
     
     if (this.editingTask && this.editingTask.id) {
@@ -3874,6 +4467,11 @@ ${JSON.stringify(reportData, null, 2)}`;
           
           document.getElementById('taskPriority').value = result.task.priority || 'medium';
           document.getElementById('taskDuration').value = result.task.estimatedDuration || 60;
+          
+          // AI 识别到的人物 → 自动关联
+          if (result.task.linked_persons && result.task.linked_persons.length > 0) {
+            this._renderTaskLinkedPersons(result.task.linked_persons.map(name => ({ name })));
+          }
           
           // 显示分析结果
           document.getElementById('aiAnalysisResult').classList.remove('hidden');
@@ -4138,6 +4736,16 @@ ${JSON.stringify(reportData, null, 2)}`;
     const descPreview = task.description ? task.description.substring(0, 200) + (task.description.length > 200 ? '...' : '') : '';
     const hoverContent = `${task.title}\n⏰ ${dueDateStr}\n🔥 优先级: ${priorityLabel}\n⏱ 预计: ${task.estimatedDuration || 60}分钟${descPreview ? '\n\n' + descPreview : ''}`;
     
+    // 关联人物标签
+    const linkedPersonsHtml = (task.linkedPersons && task.linkedPersons.length > 0)
+      ? task.linkedPersons.map(p => {
+          const name = typeof p === 'string' ? p : p.name;
+          const relation = typeof p === 'string' ? '' : (p.relation || '');
+          const relTag = relation ? `<span class="person-relation-tag ${this._getRelationClass(relation)}">${this.escapeHtml(relation)}</span>` : '';
+          return `<span class="task-person-chip">${this.escapeHtml(name)}${relTag}</span>`;
+        }).join('')
+      : '';
+    
     return `
       <div class="task-item${task.isDraft ? ' draft-item' : ''}" data-id="${task.id}" data-hover-content="${this.escapeHtml(hoverContent)}">
         <div class="task-checkbox"></div>
@@ -4148,6 +4756,7 @@ ${JSON.stringify(reportData, null, 2)}`;
             <span>${relativeTime}</span>
             <span>${task.estimatedDuration}分钟</span>
             ${pomodoroCountHtml}
+            ${linkedPersonsHtml}
           </div>
         </div>
         <div class="task-actions">
@@ -4280,27 +4889,28 @@ ${JSON.stringify(reportData, null, 2)}`;
 
       const dialog = document.createElement('div');
       dialog.style.cssText = `
-        width: 380px; max-width: 90%; background: white;
+        width: 380px; max-width: 90%; background: var(--bg-card);
         border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
         overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
       `;
 
       dialog.innerHTML = `
-        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: #1a1a2e;">${title}</div>
-        <div style="padding: 4px 24px 16px; font-size: 13px; color: #6b7280;">${message}</div>
+        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: var(--text-primary);">${title}</div>
+        <div style="padding: 4px 24px 16px; font-size: 13px; color: var(--text-secondary);">${message}</div>
         <div style="padding: 0 24px 20px;">
           <input type="text" class="input-dialog-field" value="${defaultValue.replace(/"/g, '&quot;')}"
-            style="width: 100%; padding: 10px 14px; border: 1.5px solid rgba(0,0,0,0.1);
+            style="width: 100%; padding: 10px 14px; border: 1.5px solid var(--border-color);
             border-radius: 10px; font-size: 14px; outline: none; font-family: inherit;
-            transition: border-color 0.2s, box-shadow 0.2s; background: #f8f9fc;"
+            color: var(--text-primary); background: var(--bg-input);
+            transition: border-color 0.2s, box-shadow 0.2s;"
             placeholder="请输入..." />
         </div>
-        <div style="display: flex; border-top: 0.5px solid rgba(0,0,0,0.06);">
+        <div style="display: flex; border-top: 0.5px solid var(--border-light);">
           <button class="input-dialog-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 500; color: #6b7280; cursor: pointer;
-            border-right: 0.5px solid rgba(0,0,0,0.06); transition: background 0.15s;">取消</button>
+            font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+            border-right: 0.5px solid var(--border-light); transition: background 0.15s;">取消</button>
           <button class="input-dialog-confirm" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 600; color: #4F8EF7; cursor: pointer;
+            font-size: 14px; font-weight: 600; color: var(--primary-color); cursor: pointer;
             transition: background 0.15s;">确定</button>
         </div>
       `;
@@ -4317,14 +4927,14 @@ ${JSON.stringify(reportData, null, 2)}`;
 
       // 输入框聚焦样式
       input.addEventListener('focus', () => {
-        input.style.borderColor = '#4F8EF7';
-        input.style.boxShadow = '0 0 0 3px rgba(79,142,247,0.15)';
-        input.style.background = 'white';
+        input.style.borderColor = 'var(--primary-color)';
+        input.style.boxShadow = '0 0 0 3px var(--input-focus-glow)';
+        input.style.background = 'var(--bg-input)';
       });
       input.addEventListener('blur', () => {
-        input.style.borderColor = 'rgba(0,0,0,0.1)';
+        input.style.borderColor = 'var(--border-color)';
         input.style.boxShadow = 'none';
-        input.style.background = '#f8f9fc';
+        input.style.background = 'var(--bg-input)';
       });
 
       const cleanup = () => {
@@ -4354,7 +4964,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       });
 
       // hover 样式
-      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = '#f5f5f7'; });
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--bg-tertiary)'; });
       cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
       confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = 'rgba(79,142,247,0.06)'; });
       confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.background = 'transparent'; });
@@ -4378,20 +4988,20 @@ ${JSON.stringify(reportData, null, 2)}`;
 
       const dialog = document.createElement('div');
       dialog.style.cssText = `
-        width: 340px; max-width: 90%; background: white;
+        width: 340px; max-width: 90%; background: var(--bg-card);
         border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
         overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
       `;
 
       dialog.innerHTML = `
-        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: #1a1a2e;">${title}</div>
-        <div style="padding: 4px 24px 20px; font-size: 13px; color: #6b7280; line-height: 1.6;">${message}</div>
-        <div style="display: flex; border-top: 0.5px solid rgba(0,0,0,0.06);">
+        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: var(--text-primary);">${title}</div>
+        <div style="padding: 4px 24px 20px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">${message}</div>
+        <div style="display: flex; border-top: 0.5px solid var(--border-light);">
           <button class="confirm-dialog-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 500; color: #6b7280; cursor: pointer;
-            border-right: 0.5px solid rgba(0,0,0,0.06); transition: background 0.15s;">取消</button>
+            font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+            border-right: 0.5px solid var(--border-light); transition: background 0.15s;">取消</button>
           <button class="confirm-dialog-ok" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 600; color: #FF3B30; cursor: pointer;
+            font-size: 14px; font-weight: 600; color: var(--danger-color); cursor: pointer;
             transition: background 0.15s;">确定</button>
         </div>
       `;
@@ -4415,7 +5025,7 @@ ${JSON.stringify(reportData, null, 2)}`;
         if (e.key === 'Enter') { cleanup(); resolve(true); document.removeEventListener('keydown', handler); }
       });
 
-      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = '#f5f5f7'; });
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--bg-tertiary)'; });
       cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
       okBtn.addEventListener('mouseenter', () => { okBtn.style.background = 'rgba(255,59,48,0.06)'; });
       okBtn.addEventListener('mouseleave', () => { okBtn.style.background = 'transparent'; });
@@ -4479,7 +5089,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       const result = await window.electronAPI.optimizer.run({ module, badCases: 30 });
       statusEl.style.display = 'none';
       if (result.success) { await this.loadOptimizerCandidates(); this.showToast('优化器运行完成'); }
-      else { resultsEl.innerHTML = `<p class="error-text">优化器运行失败：${this.escapeHtml(result.error || '')}</p><pre style="font-size:11px; max-height:200px; overflow:auto; background:#f5f5f7; padding:10px; border-radius:8px;">${this.escapeHtml(result.output || '')}</pre>`; }
+      else { resultsEl.innerHTML = `<p class="error-text">优化器运行失败：${this.escapeHtml(result.error || '')}</p><pre style="font-size:11px; max-height:200px; overflow:auto; background:var(--bg-secondary); padding:10px; border-radius:8px;">${this.escapeHtml(result.output || '')}</pre>`; }
     } catch (error) {
       statusEl.style.display = 'none';
       resultsEl.innerHTML = `<p class="error-text">错误：${this.escapeHtml(error.message)}</p>`;
@@ -4654,6 +5264,110 @@ ${JSON.stringify(reportData, null, 2)}`;
       if (suggestionsEl) suggestionsEl.innerHTML = `<p class="error-text">生成建议失败：${this.escapeHtml(error.message)}</p>`;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🔍 生成建议'; }
+    }
+  },
+
+  // AI 批量导入画像
+  async importProfileWithAI() {
+    const text = document.getElementById('profileImportText')?.value.trim();
+    if (!text) {
+      this.showToast('请输入要导入的文本', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('profileImportBtn');
+    const statusEl = document.getElementById('profileImportStatus');
+    const previewEl = document.getElementById('profileImportPreview');
+
+    if (btn) { btn.disabled = true; btn.textContent = '🧠 解析中...'; }
+    if (statusEl) statusEl.textContent = '';
+    if (previewEl) previewEl.classList.add('hidden');
+
+    try {
+      const result = await window.electronAPI.profile.importAI(text);
+      if (!result.success) {
+        this.showToast(result.error || '导入失败', 'error');
+        return;
+      }
+
+      const { preview, stats } = result;
+
+      if (stats.personsAdded === 0 && stats.projectsAdded === 0 && stats.industriesAdded === 0) {
+        if (statusEl) statusEl.textContent = '未发现新的可导入信息';
+        return;
+      }
+
+      // 显示预览
+      if (previewEl) {
+        let html = '<div class="import-preview-summary">';
+        html += `<p style="font-weight:600; margin-bottom:8px;">解析结果预览：</p>`;
+
+        if (preview.persons.length > 0) {
+          html += '<div class="import-preview-section"><strong>👥 人物</strong>';
+          preview.persons.forEach(p => {
+            html += `<div class="import-preview-item">
+              <span class="item-name">${this.escapeHtml(p.name)}</span>
+              ${p.relation ? `<span class="person-relation-tag ${this._getRelationClass(p.relation)}">${this.escapeHtml(p.relation)}</span>` : ''}
+              ${p.responsibilities ? `<span class="person-resp-tag">${this.escapeHtml(p.responsibilities)}</span>` : ''}
+              ${p.company ? `<span style="color:var(--text-tertiary);font-size:11px;">@ ${this.escapeHtml(p.company)}</span>` : ''}
+            </div>`;
+          });
+          html += '</div>';
+        }
+
+        if (preview.projects.length > 0) {
+          html += '<div class="import-preview-section"><strong>📂 项目</strong>';
+          preview.projects.forEach(p => {
+            html += `<div class="import-preview-item">
+              <span class="item-name">${this.escapeHtml(p.name)}</span>
+              <span style="color:var(--text-tertiary);font-size:11px;">${p.status === 'active' ? '进行中' : p.status === 'paused' ? '暂停' : '已完成'}</span>
+              ${p.description ? `<span class="person-resp-tag">${this.escapeHtml(p.description)}</span>` : ''}
+            </div>`;
+          });
+          html += '</div>';
+        }
+
+        if (preview.industries.length > 0) {
+          html += `<div class="import-preview-section"><strong>🏭 行业</strong> ${preview.industries.map(i => `<span class="import-tag">${this.escapeHtml(i)}</span>`).join(' ')}</div>`;
+        }
+
+        if (preview.regions.length > 0) {
+          html += `<div class="import-preview-section"><strong>🌍 区域</strong> ${preview.regions.map(r => `<span class="import-tag">${this.escapeHtml(r)}</span>`).join(' ')}</div>`;
+        }
+
+        const skipped = stats.personsSkipped + stats.projectsSkipped;
+        if (skipped > 0) {
+          html += `<p style="color:var(--text-tertiary);font-size:11px;margin-top:8px;">（${skipped} 项已存在，自动跳过）</p>`;
+        }
+
+        html += `<div style="margin-top:12px;display:flex;gap:8px;">
+          <button class="btn primary small" id="confirmImportBtn">✅ 确认导入</button>
+          <button class="btn secondary small" id="cancelImportBtn">取消</button>
+        </div></div>`;
+
+        previewEl.innerHTML = html;
+        previewEl.classList.remove('hidden');
+
+        document.getElementById('confirmImportBtn')?.addEventListener('click', async () => {
+          const confirmResult = await window.electronAPI.profile.importConfirm(preview);
+          if (confirmResult.success) {
+            this.showToast(`已导入 ${stats.personsAdded} 个人物、${stats.projectsAdded} 个项目、${stats.industriesAdded} 个行业`);
+            document.getElementById('profileImportText').value = '';
+            previewEl.classList.add('hidden');
+            this.loadProfileEditor();
+          } else {
+            this.showToast(confirmResult.error || '导入失败', 'error');
+          }
+        });
+
+        document.getElementById('cancelImportBtn')?.addEventListener('click', () => {
+          previewEl.classList.add('hidden');
+        });
+      }
+    } catch (error) {
+      this.showToast('AI 解析失败：' + error.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🧠 AI 解析并导入'; }
     }
   },
 

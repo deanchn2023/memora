@@ -466,8 +466,15 @@ class KnowledgeFollow {
   }
 
   renderLocalCard(item) {
-    const sourceClass = item.type === 'memory' ? 'local-memory' : 'local-notebook';
-    const sourceLabel = item.type === 'memory' ? '记忆' : '笔记';
+    const sourceClassMap = {
+      'memory': 'local-memory',
+      'notebook': 'local-notebook',
+      'knowledge_atom': 'knowledge-graph',
+      'knowledge_cluster': 'knowledge-graph',
+      'knowledge_article': 'knowledge-article'
+    };
+    const sourceClass = sourceClassMap[item.type] || 'local-notebook';
+    const sourceLabel = this.searchEngine.getSourceLabel(item.source);
     const scoreText = this.searchEngine.formatScore(item.score);
     const timeAgo = this.formatTimeAgo(item.createdAt);
 
