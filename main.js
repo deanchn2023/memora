@@ -6703,58 +6703,70 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
         return null;
       }
 
+      // 辅助：确保值为数组
+      const ensureArray = (val) => Array.isArray(val) ? val : [];
+
       // 记忆：追加（按 id 去重）
       if (importData.memory?.['memories.json']) {
-        const existing = readLocalJSON('memory/memories.json') || [];
+        const importArr = ensureArray(importData.memory['memories.json']);
+        const existing = ensureArray(readLocalJSON('memory/memories.json'));
         const existingIds = new Set(existing.map(m => m.id));
-        const newMemories = importData.memory['memories.json'].filter(m => !existingIds.has(m.id));
+        const newMemories = importArr.filter(m => !existingIds.has(m.id));
         safeWriteJSON('memory/memories.json', [...existing, ...newMemories]);
       }
 
       // 实体图谱：合并
       if (importData.memory?.['entity-graph.json']) {
         const existing = readLocalJSON('memory/entity-graph.json') || {};
-        const merged = { ...importData.memory['entity-graph.json'], ...existing }; // 本地优先
+        const imported = importData.memory['entity-graph.json'];
+        const merged = typeof imported === 'object' && !Array.isArray(imported)
+          ? { ...imported, ...existing }
+          : existing;
         safeWriteJSON('memory/entity-graph.json', merged);
       }
 
       // 笔记：追加（按 id 去重）
       if (importData.notebook?.['notes.json']) {
-        const existing = readLocalJSON('notebook/notes.json') || [];
+        const importArr = ensureArray(importData.notebook['notes.json']);
+        const existing = ensureArray(readLocalJSON('notebook/notes.json'));
         const existingIds = new Set(existing.map(n => n.id));
-        const newNotes = importData.notebook['notes.json'].filter(n => !existingIds.has(n.id));
+        const newNotes = importArr.filter(n => !existingIds.has(n.id));
         safeWriteJSON('notebook/notes.json', [...existing, ...newNotes]);
       }
 
       // 笔记分类：合并
       if (importData.notebook?.['categories.json']) {
-        const existing = readLocalJSON('notebook/categories.json') || [];
+        const importArr = ensureArray(importData.notebook['categories.json']);
+        const existing = ensureArray(readLocalJSON('notebook/categories.json'));
         const existingNames = new Set(existing.map(c => c.name || c));
-        const newCats = importData.notebook['categories.json'].filter(c => !existingNames.has(c.name || c));
+        const newCats = importArr.filter(c => !existingNames.has(c.name || c));
         safeWriteJSON('notebook/categories.json', [...existing, ...newCats]);
       }
 
       // 知识原子：追加
       if (importData.knowledge?.['atoms.json']) {
-        const existing = readLocalJSON('knowledge/atoms.json') || [];
+        const importArr = ensureArray(importData.knowledge['atoms.json']);
+        const existing = ensureArray(readLocalJSON('knowledge/atoms.json'));
         const existingIds = new Set(existing.map(a => a.id));
-        const newAtoms = importData.knowledge['atoms.json'].filter(a => !existingIds.has(a.id));
+        const newAtoms = importArr.filter(a => !existingIds.has(a.id));
         safeWriteJSON('knowledge/atoms.json', [...existing, ...newAtoms]);
       }
 
       // 知识簇：追加
       if (importData.knowledge?.['clusters.json']) {
-        const existing = readLocalJSON('knowledge/clusters.json') || [];
+        const importArr = ensureArray(importData.knowledge['clusters.json']);
+        const existing = ensureArray(readLocalJSON('knowledge/clusters.json'));
         const existingIds = new Set(existing.map(c => c.id));
-        const newClusters = importData.knowledge['clusters.json'].filter(c => !existingIds.has(c.id));
+        const newClusters = importArr.filter(c => !existingIds.has(c.id));
         safeWriteJSON('knowledge/clusters.json', [...existing, ...newClusters]);
       }
 
       // 知识文章索引：追加
       if (importData.knowledge?.['articles-index.json']) {
-        const existing = readLocalJSON('knowledge/articles/articles.json') || [];
+        const importArr = ensureArray(importData.knowledge['articles-index.json']);
+        const existing = ensureArray(readLocalJSON('knowledge/articles/articles.json'));
         const existingIds = new Set(existing.map(a => a.id));
-        const newArticles = importData.knowledge['articles-index.json'].filter(a => !existingIds.has(a.id));
+        const newArticles = importArr.filter(a => !existingIds.has(a.id));
         safeWriteJSON('knowledge/articles/articles.json', [...existing, ...newArticles]);
         // 写入文章 MD 文件
         if (importData.knowledge.articles) {
@@ -6769,17 +6781,19 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
 
       // 知识项：追加
       if (importData.knowledge?.['knowledge-items.json']) {
-        const existing = readLocalJSON('knowledge/knowledge-items.json') || [];
+        const importArr = ensureArray(importData.knowledge['knowledge-items.json']);
+        const existing = ensureArray(readLocalJSON('knowledge/knowledge-items.json'));
         const existingIds = new Set(existing.map(i => i.id));
-        const newItems = importData.knowledge['knowledge-items.json'].filter(i => !existingIds.has(i.id));
+        const newItems = importArr.filter(i => !existingIds.has(i.id));
         safeWriteJSON('knowledge/knowledge-items.json', [...existing, ...newItems]);
       }
 
       // 推荐记录：追加
       if (importData.knowledge?.['recommendations.json']) {
-        const existing = readLocalJSON('knowledge/recommendations.json') || [];
+        const importArr = ensureArray(importData.knowledge['recommendations.json']);
+        const existing = ensureArray(readLocalJSON('knowledge/recommendations.json'));
         const existingIds = new Set(existing.map(r => r.id));
-        const newRecs = importData.knowledge['recommendations.json'].filter(r => !existingIds.has(r.id));
+        const newRecs = importArr.filter(r => !existingIds.has(r.id));
         safeWriteJSON('knowledge/recommendations.json', [...existing, ...newRecs]);
       }
 
@@ -6798,8 +6812,9 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
       // 任务：追加
       if (importData.core?.['memora-data.json']?.tasks) {
         const localData = readLocalJSON('memora-data.json') || { tasks: [], settings: {}, pomodoro: {} };
+        const importTasks = ensureArray(importData.core['memora-data.json'].tasks);
         const existingIds = new Set((localData.tasks || []).map(t => t.id));
-        const newTasks = importData.core['memora-data.json'].tasks.filter(t => !existingIds.has(t.id));
+        const newTasks = importTasks.filter(t => !existingIds.has(t.id));
         localData.tasks = [...(localData.tasks || []), ...newTasks];
         safeWriteJSON('memora-data.json', localData);
       }
