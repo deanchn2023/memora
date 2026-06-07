@@ -3266,7 +3266,13 @@ ipcMain.handle('knowledge:cluster-atom', async (event, atomId, clusterId) => {
 });
 
 ipcMain.handle('knowledge:auto-cluster', async () => {
-  if (!knowledgeStore) return { clustersCreated: 0, atomsAssigned: 0 };
+  if (!knowledgeStore) return { started: false, message: '知识库未初始化' };
+
+  // 防止重复启动
+  if (clusteringRunning) {
+    return { started: false, message: '聚类正在进行中，请等待完成或取消' };
+  }
+
   // 先合并相似簇和清理空簇
   const mergeResult = knowledgeStore.mergeSimilarClusters();
   const cleanupResult = knowledgeStore.cleanupEmptyClusters();
@@ -3276,7 +3282,40 @@ ipcMain.handle('knowledge:auto-cluster', async () => {
       knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
     }
   }
-  return await autoClusterAtoms();
+  const unclustered = knowledgeStore.getAtoms({ unclustered: true });
+
+  // 异步执行聚类，IPC 立即返回
+  clusteringRunning = true;
+  autoClusterAtoms().then(result => {
+    clusteringRunning = false;
+    // 推送完成事件（包含最终结果）
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('knowledge:clustering-complete', {
+        ...result,
+        unclusteredBefore: unclustered.length,
+        message: result.message || null
+      });
+    }
+  }).catch(e => {
+    clusteringRunning = false;
+    console.error('[Knowledge] Async clustering error:', e);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('knowledge:clustering-complete', {
+        clustersCreated: 0, atomsAssigned: 0,
+        unclusteredBefore: unclustered.length,
+        message: `聚类出错：${e.message}`
+      });
+    }
+  });
+
+  return { started: true };
+});
+
+// 取消正在进行的聚类
+ipcMain.handle('knowledge:cancel-clustering', async () => {
+  clusteringAborted = true;
+  console.log('[Knowledge] Clustering cancelled by user');
+  return { success: true };
 });
 
 // 知识文章
@@ -3317,35 +3356,84 @@ ipcMain.handle('knowledge:get-domains', async () => {
   return { domains: knowledgeStore.getDomains() };
 });
 
-// 一键萃取：提取+聚类+合成
+// 一键萃取：提取+聚类+合成（异步，通过事件推送结果）
 ipcMain.handle('knowledge:distill-all', async () => {
-  if (!knowledgeStore) return { success: false };
-  // 先合并相似簇和清理空簇
-  knowledgeStore.mergeSimilarClusters();
-  knowledgeStore.cleanupEmptyClusters();
-  // 更新簇状态（合并后可能有新 mature 簇）
-  for (const cluster of knowledgeStore.getClusters()) {
-    if (cluster.status === 'growing' && cluster.atom_ids.length >= 3) {
-      knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
-    }
+  if (!knowledgeStore) return { started: false, message: '知识库未初始化' };
+
+  // 防止重复启动
+  if (clusteringRunning) {
+    return { started: false, message: '聚类正在进行中，请等待完成或取消' };
   }
-  const clusterResult = await autoClusterAtoms();
-  // 自动合成成熟簇的文章
-  const matureClusters = knowledgeStore.getClusters({ status: 'mature' });
-  const articlesGenerated = [];
-  for (const cluster of matureClusters) {
-    if (!cluster.article_id) {
-      const result = await generateArticle(cluster.id);
-      if (result.success) articlesGenerated.push(result.article);
+
+  // 异步执行
+  clusteringRunning = true;
+  (async () => {
+    try {
+      // 先合并相似簇和清理空簇
+      knowledgeStore.mergeSimilarClusters();
+      knowledgeStore.cleanupEmptyClusters();
+      // 更新簇状态（合并后可能有新 mature 簇）
+      for (const cluster of knowledgeStore.getClusters()) {
+        if (cluster.status === 'growing' && cluster.atom_ids.length >= 3) {
+          knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
+        }
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-progress', {
+          currentBatch: 0, totalBatches: 1, atomsAssigned: 0,
+          message: '正在智能聚类...'
+        });
+      }
+
+      const clusterResult = await autoClusterAtoms();
+
+      // 自动合成成熟簇的文章
+      const matureClusters = knowledgeStore.getClusters({ status: 'mature' });
+      const articlesGenerated = [];
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-progress', {
+          currentBatch: 1, totalBatches: 1, atomsAssigned: clusterResult.atomsAssigned || 0,
+          message: `聚类完成，正在生成 ${matureClusters.filter(c => !c.article_id).length} 篇文章...`
+        });
+      }
+
+      for (const cluster of matureClusters) {
+        if (!cluster.article_id) {
+          const result = await generateArticle(cluster.id);
+          if (result.success) articlesGenerated.push(result.article);
+        }
+      }
+
+      const distillResult = {
+        success: true,
+        clustersCreated: clusterResult.clustersCreated,
+        atomsAssigned: clusterResult.atomsAssigned,
+        articlesGenerated: articlesGenerated.length,
+        articles: articlesGenerated,
+        cancelled: clusterResult.cancelled || false,
+        message: clusterResult.message || null
+      };
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-complete', distillResult);
+      }
+    } catch (e) {
+      console.error('[Knowledge] Distill-all error:', e);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-complete', {
+          success: false,
+          clustersCreated: 0, atomsAssigned: 0,
+          articlesGenerated: 0, articles: [],
+          message: `萃取出错：${e.message}`
+        });
+      }
+    } finally {
+      clusteringRunning = false;
     }
-  }
-  return {
-    success: true,
-    clustersCreated: clusterResult.clustersCreated,
-    atomsAssigned: clusterResult.atomsAssigned,
-    articlesGenerated: articlesGenerated.length,
-    articles: articlesGenerated
-  };
+  })();
+
+  return { started: true };
 });
 
 // 从指定笔记提取原子
@@ -3931,33 +4019,100 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments }) 
     }
 
     const startTs = Date.now();
+    console.log('[Agent] Invoke (streaming) - intent:', intent, 'model:', apiConfig.model, 'baseUrl:', apiConfig.baseUrl);
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
       body: JSON.stringify({
-        model: apiConfig.model, messages, temperature: 0.5,
-        // 有图片附件时不强制 JSON 格式（多模态模型可能不兼容）
-        ...(attachments?.length ? {} : { response_format: { type: 'json_object' } })
+        model: apiConfig.model, messages, temperature: 0.5, stream: true,
+        // chat 模式（LLM直接对话）不强制 JSON 格式，让模型自然回复
+        // 其他 agent 模式且无图片附件时强制 JSON 格式
+        ...(intent === 'chat' ? {} : (attachments?.length ? {} : { response_format: { type: 'json_object' } }))
       })
     });
 
-    if (!response.ok) return { success: false, error: 'AI调用失败' };
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error('[Agent] API error:', response.status, errText);
+      return { success: false, error: `AI调用失败(${response.status}): ${errText.substring(0, 200)}` };
+    }
     incrementAICallCount();
 
-    const data = await response.json();
-    let aiContent = data.choices?.[0]?.message?.content || '';
+    // 流式读取 SSE，逐块推送给渲染进程
+    let fullContent = '';
+    let usage = null;
 
-    feedbackLogger.recordTrace({
-      trace_id: traceId, ts: new Date(startTs).toISOString(),
-      module: `agent_${intent}`, prompt_version: `${intent}_v2.0`,
-      model: apiConfig.model,
-      input: { text: query, attachments: attachments ? attachments.map(a => ({ name: a.name, type: a.type, size: a.size })) : [], injected_vars: { positive_ids: positiveExamples.map(p => p.fb_id), negative_ids: negativeExamples.map(n => n.fb_id) } },
-      output: aiContent, latency_ms: Date.now() - startTs,
-      tokens: data.usage || null
-    });
+    (async () => {
+      try {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-    let parsed; try { parsed = JSON.parse(aiContent); } catch { parsed = null; }
-    return { success: true, agentType: intent, traceId, result: parsed || { text: aiContent } };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data:')) continue;
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr === '[DONE]') {
+              // 流结束
+              mainWindow.webContents.send('agent:stream', { event: 'done', agentType: intent, traceId, fullContent, usage });
+              break;
+            }
+            try {
+              const parsed = JSON.parse(dataStr);
+              const delta = parsed.choices?.[0]?.delta;
+              if (delta?.content) {
+                fullContent += delta.content;
+                mainWindow.webContents.send('agent:stream', {
+                  event: 'delta',
+                  content: delta.content,
+                  agentType: intent,
+                  fullContent
+                });
+              }
+              if (parsed.usage) usage = parsed.usage;
+              // 处理推理内容（如 deepseek-r1 思考过程）
+              if (delta?.reasoning_content) {
+                mainWindow.webContents.send('agent:stream', {
+                  event: 'reasoning',
+                  content: delta.reasoning_content,
+                  agentType: intent
+                });
+              }
+            } catch (e) {
+              // 忽略解析错误
+            }
+          }
+        }
+
+        // 流结束时确保发送 done（防止 [DONE] 未被解析到的情况）
+        mainWindow.webContents.send('agent:stream', { event: 'done', agentType: intent, traceId, fullContent, usage });
+
+        // 记录反馈追踪
+        feedbackLogger.recordTrace({
+          trace_id: traceId, ts: new Date(startTs).toISOString(),
+          module: `agent_${intent}`, prompt_version: `${intent}_v2.0`,
+          model: apiConfig.model,
+          input: { text: query, attachments: attachments ? attachments.map(a => ({ name: a.name, type: a.type, size: a.size })) : [], injected_vars: { positive_ids: positiveExamples.map(p => p.fb_id), negative_ids: negativeExamples.map(n => n.fb_id) } },
+          output: fullContent, latency_ms: Date.now() - startTs,
+          tokens: usage
+        });
+        console.log('[Agent] Stream done - length:', fullContent.length, 'latency:', Date.now() - startTs, 'ms');
+      } catch (e) {
+        console.error('[Agent] Stream error:', e.message);
+        mainWindow.webContents.send('agent:stream', { event: 'error', error: e.message, agentType: intent, fullContent });
+      }
+    })();
+
+    // 立即返回，后续通过 agent:stream 事件推送
+    return { success: true, streaming: true, agentType: intent, traceId };
   } catch (error) { return { success: false, error: error.message }; }
 });
 
@@ -4233,7 +4388,7 @@ function buildInlinePrompt(intent, profile, ctx) {
       let extra = '';
       if (ctx.memories?.length) extra += `\n# 相关记忆\n${ctx.memories.map(m => `- [${m.type}] ${m.content}`).join('\n')}`;
       if (ctx.tasks?.pending?.length) extra += `\n# 待办(${ctx.tasks.pending.length}条)\n${ctx.tasks.pending.slice(0,10).map(t => `- ${t.title}(${t.priority})`).join('\n')}`;
-      return `你是「忆境 Memora」AI助手，服务${name}。简洁实用、可操作、中文回答。输出JSON：{text:"回答",suggestions:[],related_tasks:[],reasoning_steps:[]}${extra}`;
+      return `你是「忆境 Memora」AI助手，服务${name}。简洁实用、可操作、中文回答。\n\n## 行为准则\n1. 用自然语言回复，支持简单 markdown 格式（如加粗、列表）\n2. 不要输出 JSON 格式\n3. 优先引用上述记忆/任务中的信息\n4. 主动发现问题并提建议\n5. 如果不确定，说明情况\n${extra}`;
     }
   }
 }
@@ -4935,22 +5090,54 @@ async function extractKnowledgeAtoms(content, sourceNoteId, tags) {
   }
 }
 
-// 知识聚类：将未归簇的原子智能分组
-async function autoClusterAtoms() {
-  try {
-    const unclustered = knowledgeStore.getAtoms({ unclustered: true });
-    if (unclustered.length < 3) {
-      console.log('[Knowledge] Too few unclustered atoms for clustering:', unclustered.length);
-      return { clustersCreated: 0, atomsAssigned: 0 };
-    }
+// ========== 知识聚类配置 ==========
+const CLUSTERING_CONFIG = {
+  BATCH_SIZE: 80,                    // 每批最大原子数
+  SINGLE_CALL_THRESHOLD: 80,         // 单次调用阈值
+  ATOM_CONTENT_MAX_LENGTH: 80,       // 原子内容截断长度
+  CLUSTER_INFO_MAX_COUNT: 30,        // 已有簇最大展示数
+  MAX_TOKENS_BATCH: 4000,            // 分批模式输出 token 上限
+  MAX_TOKENS_SINGLE: 2000,           // 单次模式输出 token 上限
+  TEMPERATURE: 0.3,                  // 聚类温度
+  BATCH_DELAY_MS: 500,               // 批次间隔（避免 QPS 限制）
+  MAX_RETRIES: 2,                    // 单批最大重试次数
+};
 
-    const apiConfig = getAPIConfig();
-    const promptPath = path.join(PROMPT_DIR, 'knowledge_clustering.md');
-    let promptTemplate;
-    try {
-      promptTemplate = fs.readFileSync(promptPath, 'utf8');
-    } catch (e) {
-      promptTemplate = `将以下知识原子按主题聚类。
+let clusteringAborted = false;
+let clusteringRunning = false;
+
+// 原子内容压缩：保留核心语义，截断过长内容
+function compressAtomContent(atom) {
+  let content = atom.content || '';
+  const maxLen = CLUSTERING_CONFIG.ATOM_CONTENT_MAX_LENGTH;
+  if (content.length > maxLen) {
+    content = content.substring(0, Math.floor(maxLen * 0.75)) + '...' + content.substring(content.length - Math.floor(maxLen * 0.25));
+  }
+  return content;
+}
+
+// 簇信息精简：只保留 ID + 名称 + 关键词
+function compressClusterInfo(cluster) {
+  const kw = (cluster.keywords || []).slice(0, 3).join('/');
+  return `ID:${cluster.id} | ${cluster.name} | ${kw}`;
+}
+
+// 分批逻辑
+function splitIntoBatches(atoms, batchSize = CLUSTERING_CONFIG.BATCH_SIZE) {
+  const batches = [];
+  for (let i = 0; i < atoms.length; i += batchSize) {
+    batches.push(atoms.slice(i, i + batchSize));
+  }
+  return batches;
+}
+
+// 加载聚类 prompt 模板
+function loadClusteringPromptTemplate() {
+  const promptPath = path.join(PROMPT_DIR, 'knowledge_clustering.md');
+  try {
+    return fs.readFileSync(promptPath, 'utf8');
+  } catch (e) {
+    return `将以下知识原子按主题聚类。
 
 重要规则：
 1. 优先归入已有簇，只有确实无法归入时才新建簇
@@ -4966,20 +5153,34 @@ async function autoClusterAtoms() {
 
 输出严格JSON：
 {"assignments":[{"atom_id":"...","cluster_id":"已有簇ID或null","new_cluster_name":"新建时","new_cluster_description":"新建时","new_cluster_keywords":["新建时"]}],"mature_cluster_ids":[]}`;
-    }
+  }
+}
 
-    const existingClusters = knowledgeStore.getClusters().map(c =>
-      `ID: ${c.id} | 名称: ${c.name} | 领域: ${c.domain} | 关键词: ${c.keywords.join('/')}`
-    ).join('\n');
+// 构建聚类 prompt（使用压缩内容）
+function buildClusteringPrompt(existingClusters, batchAtoms, promptTemplate) {
+  // 已有簇：按原子数排序取前 N 个
+  const sortedClusters = [...existingClusters]
+    .sort((a, b) => (b.atom_ids?.length || 0) - (a.atom_ids?.length || 0))
+    .slice(0, CLUSTERING_CONFIG.CLUSTER_INFO_MAX_COUNT);
 
-    const unclusteredStr = unclustered.map(a =>
-      `ID: ${a.id} | 内容: ${a.content} | 类型: ${a.type} | 领域: ${a.domain}`
-    ).join('\n');
+  const clusterStr = sortedClusters.map(c => compressClusterInfo(c)).join('\n');
+  const atomStr = batchAtoms.map(a =>
+    `ID:${a.id} | ${compressAtomContent(a)} | ${a.type} | ${a.domain}`
+  ).join('\n');
 
-    const prompt = promptTemplate
-      .replace('{existing_clusters}', existingClusters || '（暂无）')
-      .replace('{unclustered_atoms}', unclusteredStr);
+  return promptTemplate
+    .replace('{existing_clusters}', clusterStr || '（暂无）')
+    .replace('{unclustered_atoms}', atomStr);
+}
 
+// 单批 AI 调用 + 解析
+async function processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount = 0) {
+  const prompt = buildClusteringPrompt(existingClusters, batchAtoms, promptTemplate);
+  const maxTokens = batchAtoms.length <= CLUSTERING_CONFIG.SINGLE_CALL_THRESHOLD
+    ? CLUSTERING_CONFIG.MAX_TOKENS_SINGLE
+    : CLUSTERING_CONFIG.MAX_TOKENS_BATCH;
+
+  try {
     const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -4989,12 +5190,22 @@ async function autoClusterAtoms() {
       body: JSON.stringify({
         model: apiConfig.model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 2000
+        temperature: CLUSTERING_CONFIG.TEMPERATURE,
+        max_tokens: maxTokens
       })
     });
 
-    if (!response.ok) return { clustersCreated: 0, atomsAssigned: 0 };
+    if (!response.ok) {
+      // 429 限流
+      if (response.status === 429 && retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+        console.warn('[Knowledge] Rate limited, retrying in 5s...');
+        await new Promise(r => setTimeout(r, 5000));
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount + 1);
+      }
+      const errBody = await response.text().catch(() => '');
+      console.error('[Knowledge] AI API error:', response.status, errBody.substring(0, 300));
+      return { success: false, error: `AI 服务调用失败（${response.status}）`, assignments: [] };
+    }
 
     const data = await response.json();
     const rawText = data.choices?.[0]?.message?.content || '';
@@ -5004,54 +5215,185 @@ async function autoClusterAtoms() {
       const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       parsed = JSON.parse(jsonStr);
     } catch (e) {
-      console.error('[Knowledge] Clustering parse error:', e);
-      return { clustersCreated: 0, atomsAssigned: 0 };
+      // JSON 解析失败，重试
+      if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+        console.warn('[Knowledge] Clustering parse error, retrying...', retryCount + 1);
+        await new Promise(r => setTimeout(r, 1000));
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount + 1);
+      }
+      console.error('[Knowledge] Clustering parse error after retries:', e, 'Raw:', rawText.substring(0, 200));
+      return { success: false, error: 'AI 返回格式异常，无法解析聚类结果', assignments: [] };
     }
 
-    let clustersCreated = 0;
-    let atomsAssigned = 0;
-    const newClusterMap = {};
+    return { success: true, assignments: parsed.assignments || [], mature_cluster_ids: parsed.mature_cluster_ids || [] };
+  } catch (e) {
+    if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+      console.warn('[Knowledge] Batch error, retrying...', retryCount + 1, e.message);
+      await new Promise(r => setTimeout(r, 1000));
+      return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount + 1);
+    }
+    return { success: false, error: e.message, assignments: [] };
+  }
+}
 
-    for (const assignment of (parsed.assignments || [])) {
-      let clusterId = assignment.cluster_id;
+// 应用聚类结果（创建簇 + 归属原子）
+function applyClusteringAssignments(assignments, unclustered) {
+  let clustersCreated = 0;
+  let atomsAssigned = 0;
 
-      // 新建簇前检查：是否已有同名簇？如有则直接归入
-      if (!clusterId && assignment.new_cluster_name) {
-        const existingCluster = knowledgeStore.getClusters().find(
-          c => c.name === assignment.new_cluster_name
-        );
-        if (existingCluster) {
-          // 同名簇已存在，直接归入
-          clusterId = existingCluster.id;
-          console.log('[Knowledge] Reusing existing cluster:', existingCluster.name);
-        } else {
-          const cluster = knowledgeStore.addCluster({
-            name: assignment.new_cluster_name,
-            description: assignment.new_cluster_description || '',
-            keywords: assignment.new_cluster_keywords || [],
-            atom_ids: [],
-            domain: unclustered.find(a => a.id === assignment.atom_id)?.domain || '通用'
-          });
-          if (cluster) {
-            newClusterMap[assignment.atom_id] = cluster.id;
-            clusterId = cluster.id;
-            clustersCreated++;
-          }
+  for (const assignment of assignments) {
+    let clusterId = assignment.cluster_id;
+
+    // 新建簇前检查：是否已有同名簇？如有则直接归入
+    if (!clusterId && assignment.new_cluster_name) {
+      const existingCluster = knowledgeStore.getClusters().find(
+        c => c.name === assignment.new_cluster_name
+      );
+      if (existingCluster) {
+        clusterId = existingCluster.id;
+        console.log('[Knowledge] Reusing existing cluster:', existingCluster.name);
+      } else {
+        const cluster = knowledgeStore.addCluster({
+          name: assignment.new_cluster_name,
+          description: assignment.new_cluster_description || '',
+          keywords: assignment.new_cluster_keywords || [],
+          atom_ids: [],
+          domain: unclustered.find(a => a.id === assignment.atom_id)?.domain || '通用'
+        });
+        if (cluster) {
+          clusterId = cluster.id;
+          clustersCreated++;
         }
       }
-
-      // 归入簇
-      if (clusterId) {
-        const result = knowledgeStore.clusterAtom(assignment.atom_id, clusterId);
-        if (result) atomsAssigned++;
-      }
     }
 
-    // 更新成熟簇状态
-    for (const clusterId of (parsed.mature_cluster_ids || [])) {
-      const cluster = knowledgeStore.getClusterById(clusterId);
-      if (cluster && cluster.status === 'growing') {
-        knowledgeStore.updateCluster(clusterId, { status: 'mature' });
+    // 归入簇
+    if (clusterId) {
+      const result = knowledgeStore.clusterAtom(assignment.atom_id, clusterId);
+      if (result) atomsAssigned++;
+    }
+  }
+
+  return { clustersCreated, atomsAssigned };
+}
+
+// 知识聚类：将未归簇的原子智能分组（支持分批处理）
+async function autoClusterAtoms() {
+  try {
+    const unclustered = knowledgeStore.getAtoms({ unclustered: true });
+    if (unclustered.length < 3) {
+      console.log('[Knowledge] Too few unclustered atoms for clustering:', unclustered.length);
+      return {
+        clustersCreated: 0,
+        atomsAssigned: 0,
+        message: unclustered.length === 0
+          ? '没有待聚类的知识原子，所有原子都已归入知识簇'
+          : `待聚类原子仅 ${unclustered.length} 个，至少需要 3 个才能进行智能聚类`
+      };
+    }
+
+    clusteringAborted = false;
+    const apiConfig = getAPIConfig();
+    console.log('[Knowledge] autoClusterAtoms starting:', {
+      unclusteredCount: unclustered.length,
+      apiKey: apiConfig.apiKey ? `${apiConfig.apiKey.substring(0, 8)}...` : 'MISSING',
+      baseUrl: apiConfig.baseUrl,
+      model: apiConfig.model
+    });
+    const promptTemplate = loadClusteringPromptTemplate();
+    const existingClusters = knowledgeStore.getClusters();
+
+    let totalClustersCreated = 0;
+    let totalAtomsAssigned = 0;
+    const failedBatches = [];
+    let wasAborted = false;
+
+    // 判断是否需要分批
+    if (unclustered.length <= CLUSTERING_CONFIG.SINGLE_CALL_THRESHOLD) {
+      // 单次调用模式（原子数 ≤ 阈值）
+      console.log('[Knowledge] Single-batch clustering:', unclustered.length, 'atoms');
+
+      // 通知前端开始
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-progress', {
+          currentBatch: 1, totalBatches: 1, atomsAssigned: 0,
+          message: '正在智能聚类...'
+        });
+      }
+
+      const result = await processClusteringBatch(unclustered, existingClusters, promptTemplate, apiConfig);
+
+      if (result.success) {
+        const applyResult = applyClusteringAssignments(result.assignments, unclustered);
+        totalClustersCreated = applyResult.clustersCreated;
+        totalAtomsAssigned = applyResult.atomsAssigned;
+
+        // 更新成熟簇状态
+        for (const clusterId of (result.mature_cluster_ids || [])) {
+          const cluster = knowledgeStore.getClusterById(clusterId);
+          if (cluster && cluster.status === 'growing') {
+            knowledgeStore.updateCluster(clusterId, { status: 'mature' });
+          }
+        }
+      } else {
+        return { clustersCreated: 0, atomsAssigned: 0, message: result.error || '聚类失败' };
+      }
+    } else {
+      // 分批模式
+      const batches = splitIntoBatches(unclustered);
+      console.log('[Knowledge] Batch clustering:', unclustered.length, 'atoms in', batches.length, 'batches');
+
+      // 通知前端分批开始
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-progress', {
+          currentBatch: 0, totalBatches: batches.length, atomsAssigned: 0,
+          message: `共 ${batches.length} 批，准备开始...`
+        });
+      }
+
+      for (let i = 0; i < batches.length; i++) {
+        // 检查取消
+        if (clusteringAborted) {
+          console.log('[Knowledge] Clustering aborted at batch', i + 1);
+          wasAborted = true;
+          break;
+        }
+
+        const batch = batches[i];
+        // 每批都获取最新的簇列表（前批可能新建了簇）
+        const currentClusters = knowledgeStore.getClusters();
+
+        // 通知前端进度
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('knowledge:clustering-progress', {
+            currentBatch: i + 1, totalBatches: batches.length, atomsAssigned: totalAtomsAssigned,
+            message: `正在聚类第 ${i + 1}/${batches.length} 批（${batch.length} 个原子）...`
+          });
+        }
+
+        const result = await processClusteringBatch(batch, currentClusters, promptTemplate, apiConfig);
+
+        if (result.success) {
+          const applyResult = applyClusteringAssignments(result.assignments, batch);
+          totalClustersCreated += applyResult.clustersCreated;
+          totalAtomsAssigned += applyResult.atomsAssigned;
+
+          // 更新成熟簇状态
+          for (const clusterId of (result.mature_cluster_ids || [])) {
+            const cluster = knowledgeStore.getClusterById(clusterId);
+            if (cluster && cluster.status === 'growing') {
+              knowledgeStore.updateCluster(clusterId, { status: 'mature' });
+            }
+          }
+        } else {
+          failedBatches.push({ batch: i + 1, error: result.error });
+          console.warn('[Knowledge] Batch', i + 1, 'failed:', result.error);
+        }
+
+        // 批间延迟（避免 QPS 限制）
+        if (i < batches.length - 1) {
+          await new Promise(r => setTimeout(r, CLUSTERING_CONFIG.BATCH_DELAY_MS));
+        }
       }
     }
 
@@ -5059,25 +5401,39 @@ async function autoClusterAtoms() {
     const mergeResult = knowledgeStore.mergeSimilarClusters();
     const cleanupResult = knowledgeStore.cleanupEmptyClusters();
 
-    // 合并后再检查 mature 状态（合并后原子数可能增加）
+    // 合并后再检查 mature 状态
     for (const cluster of knowledgeStore.getClusters()) {
       if (cluster.status === 'growing' && cluster.atom_ids.length >= 3) {
         knowledgeStore.updateCluster(cluster.id, { status: 'mature' });
       }
     }
 
-    console.log('[Knowledge] Clustering done:', clustersCreated, 'clusters created,', atomsAssigned, 'atoms assigned,',
-      mergeResult.mergeCount, 'merged,', cleanupResult.removed, 'emptied');
+    console.log('[Knowledge] Clustering done:', totalClustersCreated, 'clusters created,',
+      totalAtomsAssigned, 'atoms assigned,', mergeResult.mergeCount, 'merged,',
+      cleanupResult.removed, 'emptied');
 
-    // 通知前端
+    // 通知前端完成
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('knowledge:clusters-updated', { clustersCreated, atomsAssigned });
+      mainWindow.webContents.send('knowledge:clusters-updated', {
+        clustersCreated: totalClustersCreated, atomsAssigned: totalAtomsAssigned
+      });
+      mainWindow.webContents.send('knowledge:clustering-progress', {
+        currentBatch: -1, totalBatches: 0, atomsAssigned: totalAtomsAssigned,
+        message: '聚类完成', done: true,
+        clustersCreated: totalClustersCreated, failedBatches: failedBatches.length
+      });
     }
 
-    return { clustersCreated, atomsAssigned };
+    const message = wasAborted
+      ? `聚类已取消（已处理 ${totalAtomsAssigned} 个原子）`
+      : failedBatches.length > 0
+        ? `${failedBatches.length} 批失败（${failedBatches.map(f => `第${f.batch}批`).join('、')}），其余已完成`
+        : null;
+
+    return { clustersCreated: totalClustersCreated, atomsAssigned: totalAtomsAssigned, message, cancelled: wasAborted };
   } catch (e) {
     console.error('[Knowledge] autoClusterAtoms error:', e);
-    return { clustersCreated: 0, atomsAssigned: 0 };
+    return { clustersCreated: 0, atomsAssigned: 0, message: `聚类出错：${e.message}` };
   }
 }
 

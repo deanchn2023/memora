@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   knowledgeDeleteCluster: (id, atomAction) => ipcRenderer.invoke('knowledge:delete-cluster', id, atomAction),
   knowledgeClusterAtom: (atomId, clusterId) => ipcRenderer.invoke('knowledge:cluster-atom', atomId, clusterId),
   knowledgeAutoCluster: () => ipcRenderer.invoke('knowledge:auto-cluster'),
+  knowledgeCancelClustering: () => ipcRenderer.invoke('knowledge:cancel-clustering'),
   knowledgeGetArticles: (filter) => ipcRenderer.invoke('knowledge:get-articles', filter),
   knowledgeGetArticle: (id) => ipcRenderer.invoke('knowledge:get-article', id),
   knowledgeGenerateArticle: (clusterId) => ipcRenderer.invoke('knowledge:generate-article', clusterId),
@@ -103,6 +104,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onKnowledgeClustersUpdated: (callback) => {
     ipcRenderer.on('knowledge:clusters-updated', (event, data) => callback(data));
+  },
+  onKnowledgeClusteringProgress: (callback) => {
+    ipcRenderer.on('knowledge:clustering-progress', (event, data) => callback(data));
+  },
+  removeKnowledgeClusteringProgressListeners: () => {
+    ipcRenderer.removeAllListeners('knowledge:clustering-progress');
+  },
+  onKnowledgeClusteringComplete: (callback) => {
+    ipcRenderer.on('knowledge:clustering-complete', (event, data) => callback(data));
+  },
+  removeKnowledgeClusteringCompleteListeners: () => {
+    ipcRenderer.removeAllListeners('knowledge:clustering-complete');
   },
   onKnowledgeArticleGenerated: (callback) => {
     ipcRenderer.on('knowledge:article-generated', (event, data) => callback(data));
@@ -168,6 +181,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // v1.1 Agent 智能助手
   agent: {
     invoke: (query, agentType, attachments) => ipcRenderer.invoke('agent:invoke', { query, agentType, attachments }),
+    stop: () => ipcRenderer.invoke('agent:stop'),
+  },
+  onAgentStream: (callback) => {
+    ipcRenderer.on('agent:stream', (event, data) => callback(data));
+  },
+  removeAgentListeners: () => {
+    ipcRenderer.removeAllListeners('agent:stream');
   },
 
   // v1.2 Phase 3: Prompt 优化器 + 历史记录

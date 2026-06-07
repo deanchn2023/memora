@@ -611,26 +611,16 @@ class KnowledgeDistillation {
     // 记录聚类前的簇 ID，用于后续高亮新建的簇
     const beforeClusterIds = new Set(this.clusters.map(c => c.id));
 
-    // 显示进度面板
-    this.showClusteringProgress();
-    this._updateClusteringStep('analyzing', '正在分析知识原子...');
+    // 先注册完成监听（防止竞态：IPC 返回前事件就已发出）
+    let completeFired = false;
+    const completeHandler = async (data) => {
+      if (completeFired) return; // 防止重复触发
+      completeFired = true;
 
-    try {
-      // 模拟分步进度（后端是单次调用，前端用定时器推进进度）
-      const stepTimer = setInterval(() => {
-        const steps = this._clusteringSteps || [];
-        const currentIdx = steps.findIndex(s => s.status === 'active');
-        if (currentIdx < 1) {
-          this._updateClusteringStep('calling_ai', '正在调用 AI 进行智能聚类...');
-        }
-      }, 3000);
-
-      const result = await window.electronAPI.knowledgeAutoCluster();
-
-      clearInterval(stepTimer);
-
-      // 完成进度
-      this._updateClusteringStep('done', '聚类完成！');
+      // 清理监听
+      if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+        window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+      }
 
       // 刷新所有数据
       await Promise.all([
@@ -642,21 +632,54 @@ class KnowledgeDistillation {
       // 找出新建的簇
       const newClusters = this.clusters.filter(c => !beforeClusterIds.has(c.id));
 
-      // 延迟后隐藏进度，显示结果
-      setTimeout(() => {
+      // 隐藏进度，显示结果
+      this.hideClusteringProgress();
+      this.showClusteringResult(data, newClusters);
+    };
+
+    if (window.electronAPI?.onKnowledgeClusteringComplete) {
+      window.electronAPI.onKnowledgeClusteringComplete(completeHandler);
+    }
+
+    // 显示进度面板
+    this.showClusteringProgress();
+
+    try {
+      // 异步启动聚类（IPC 立即返回，不等待完成）
+      const startResult = await window.electronAPI.knowledgeAutoCluster();
+      if (!startResult.started) {
+        // 清理监听
+        if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+          window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+        }
         this.hideClusteringProgress();
-        this.showClusteringResult(result, newClusters);
-      }, 800);
+        this.showClusteringResult({ clustersCreated: 0, atomsAssigned: 0, message: startResult.message || '无法启动聚类' }, []);
+        return;
+      }
 
     } catch (e) {
-      this._updateClusteringStep('error', '聚类出错：' + e.message);
-      setTimeout(() => this.hideClusteringProgress(), 2000);
+      if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+        window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+      }
+      this.hideClusteringProgress();
+      this.showClusteringResult({ clustersCreated: 0, atomsAssigned: 0, message: '聚类出错：' + e.message }, []);
+    }
+  }
+
+  cancelClustering() {
+    if (window.electronAPI?.knowledgeCancelClustering) {
+      window.electronAPI.knowledgeCancelClustering();
+      this._updateClusteringProgressText('正在取消...');
     }
   }
 
   showClusteringProgress() {
     const grid = document.getElementById('knowledgeClusterGrid');
     if (!grid) return;
+
+    // 移除旧进度
+    const old = document.getElementById('kdClusteringProgress');
+    if (old) old.remove();
 
     const progressEl = document.createElement('div');
     progressEl.id = 'kdClusteringProgress';
@@ -665,75 +688,90 @@ class KnowledgeDistillation {
       <div class="kd-clustering-inner">
         <div class="kd-clustering-spinner"></div>
         <h4 class="kd-clustering-title">🧠 智能聚类进行中</h4>
-        <div class="kd-clustering-steps">
-          <div class="kd-clustering-step" data-step="analyzing">
-            <span class="kd-step-icon">⏳</span>
-            <span class="kd-step-label">分析知识原子</span>
+        <div class="kd-clustering-batch-progress">
+          <div class="kd-batch-bar-track">
+            <div class="kd-batch-bar-fill" id="kdBatchBarFill" style="width: 0%"></div>
           </div>
-          <div class="kd-clustering-step" data-step="calling_ai">
-            <span class="kd-step-icon">⏳</span>
-            <span class="kd-step-label">AI 智能分组</span>
-          </div>
-          <div class="kd-clustering-step" data-step="creating">
-            <span class="kd-step-icon">⏳</span>
-            <span class="kd-step-label">创建知识簇</span>
-          </div>
-          <div class="kd-clustering-step" data-step="done">
-            <span class="kd-step-icon">⏳</span>
-            <span class="kd-step-label">完成</span>
+          <div class="kd-batch-info">
+            <span id="kdBatchProgress">准备中...</span>
+            <span id="kdBatchAtomCount">0 个原子已归类</span>
           </div>
         </div>
         <p class="kd-clustering-status" id="kdClusteringStatus">正在分析知识原子...</p>
+        <button class="kd-clustering-cancel-btn" id="kdCancelClusteringBtn">取消聚类</button>
       </div>
     `;
     grid.prepend(progressEl);
-    this._clusteringSteps = [];
-  }
 
-  _updateClusteringStep(step, message) {
-    const statusEl = document.getElementById('kdClusteringStatus');
-    if (statusEl) statusEl.textContent = message;
+    // 绑定取消按钮
+    const cancelBtn = document.getElementById('kdCancelClusteringBtn');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => this.cancelClustering());
+    }
 
-    const allSteps = document.querySelectorAll('.kd-clustering-step');
-    const stepOrder = ['analyzing', 'calling_ai', 'creating', 'done'];
-    const currentIdx = stepOrder.indexOf(step);
-
-    allSteps.forEach((el, idx) => {
-      const stepName = el.dataset.step;
-      const stepIdx = stepOrder.indexOf(stepName);
-      const icon = el.querySelector('.kd-step-icon');
-
-      if (stepName === step && step !== 'error') {
-        el.classList.add('active');
-        el.classList.remove('completed', 'error');
-        if (icon) icon.textContent = '🔄';
-      } else if (stepIdx < currentIdx) {
-        el.classList.remove('active', 'error');
-        el.classList.add('completed');
-        if (icon) icon.textContent = '✅';
-      } else if (step === 'error') {
-        if (stepName === 'calling_ai' || stepName === 'creating') {
-          el.classList.add('error');
-          if (icon) icon.textContent = '❌';
-        }
-      } else {
-        el.classList.remove('active', 'completed', 'error');
-        if (icon) icon.textContent = '⏳';
-      }
-    });
-
-    // "done" 状态时把所有步骤标记为完成
-    if (step === 'done') {
-      allSteps.forEach(el => {
-        el.classList.remove('active', 'error');
-        el.classList.add('completed');
-        const icon = el.querySelector('.kd-step-icon');
-        if (icon) icon.textContent = '✅';
-      });
+    // 监听后端进度推送
+    if (window.electronAPI?.onKnowledgeClusteringProgress) {
+      this._clusteringProgressHandler = (data) => {
+        this._handleClusteringProgress(data);
+      };
+      window.electronAPI.onKnowledgeClusteringProgress(this._clusteringProgressHandler);
     }
   }
 
+  _handleClusteringProgress(data) {
+    if (data.done) {
+      // 聚类完成 — 进度条拉满，但结果展示由 clustering-complete 事件处理
+      const barFill = document.getElementById('kdBatchBarFill');
+      if (barFill) barFill.style.width = '100%';
+      const progressText = document.getElementById('kdBatchProgress');
+      if (progressText) progressText.textContent = '聚类完成';
+      const atomCount = document.getElementById('kdBatchAtomCount');
+      if (atomCount) atomCount.textContent = `${data.atomsAssigned || 0} 个原子已归类`;
+      const statusEl = document.getElementById('kdClusteringStatus');
+      if (statusEl) statusEl.textContent = `新建 ${data.clustersCreated || 0} 个知识簇`;
+      // 隐藏取消按钮
+      const cancelBtn = document.getElementById('kdCancelClusteringBtn');
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      return;
+    }
+
+    // 更新进度条
+    const { currentBatch, totalBatches, atomsAssigned, message } = data;
+    const progress = totalBatches > 0 ? (currentBatch / totalBatches * 100) : 0;
+
+    const barFill = document.getElementById('kdBatchBarFill');
+    if (barFill) barFill.style.width = `${progress}%`;
+
+    const progressText = document.getElementById('kdBatchProgress');
+    if (progressText) progressText.textContent = currentBatch > 0 ? `${currentBatch}/${totalBatches} 批` : '准备中...';
+
+    const atomCount = document.getElementById('kdBatchAtomCount');
+    if (atomCount) atomCount.textContent = `${atomsAssigned || 0} 个原子已归类`;
+
+    const statusEl = document.getElementById('kdClusteringStatus');
+    if (statusEl) statusEl.textContent = message || '正在聚类...';
+  }
+
+  _updateClusteringProgressText(message) {
+    const statusEl = document.getElementById('kdClusteringStatus');
+    if (statusEl) statusEl.textContent = message;
+  }
+
+  _updateClusteringStep(step, message) {
+    // 保留兼容性，现在由 _handleClusteringProgress 处理
+    const statusEl = document.getElementById('kdClusteringStatus');
+    if (statusEl) statusEl.textContent = message;
+  }
+
   hideClusteringProgress() {
+    // 移除进度监听
+    if (window.electronAPI?.removeKnowledgeClusteringProgressListeners) {
+      window.electronAPI.removeKnowledgeClusteringProgressListeners();
+    }
+    if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+      window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+    }
+    this._clusteringProgressHandler = null;
     const el = document.getElementById('kdClusteringProgress');
     if (el) el.remove();
   }
@@ -752,6 +790,12 @@ class KnowledgeDistillation {
 
     const hasNewClusters = newClusters.length > 0;
     const hasAssignments = result.atomsAssigned > 0;
+    const hasMessage = !!result.message;
+
+    // 判断结果类型
+    const isSuccess = hasNewClusters || hasAssignments;
+    const isWarning = !isSuccess && hasMessage;
+    const isInfo = !isSuccess && !hasMessage;
 
     let clustersHtml = '';
     if (hasNewClusters) {
@@ -765,11 +809,24 @@ class KnowledgeDistillation {
       `).join('');
     }
 
+    // 确定图标和标题
+    let icon, title;
+    if (isSuccess) {
+      icon = '🎉';
+      title = '聚类完成';
+    } else if (isWarning) {
+      icon = '⚠️';
+      title = '聚类未完成';
+    } else {
+      icon = 'ℹ️';
+      title = '聚类结果';
+    }
+
     resultEl.innerHTML = `
-      <div class="kd-result-inner">
+      <div class="kd-result-inner ${isWarning ? 'warning' : ''}">
         <div class="kd-result-header">
-          <span class="kd-result-icon">${hasNewClusters || hasAssignments ? '🎉' : 'ℹ️'}</span>
-          <h4>聚类完成</h4>
+          <span class="kd-result-icon">${icon}</span>
+          <h4>${title}</h4>
           <button class="kd-result-close" data-kd-action="dismissClusteringResult" title="关闭">✕</button>
         </div>
         <div class="kd-result-stats">
@@ -781,15 +838,25 @@ class KnowledgeDistillation {
             <span class="kd-result-stat-num">${result.atomsAssigned || 0}</span>
             <span class="kd-result-stat-label">归类原子</span>
           </div>
+          ${result.unclusteredBefore !== undefined ? `
+          <div class="kd-result-stat">
+            <span class="kd-result-stat-num">${result.unclusteredBefore}</span>
+            <span class="kd-result-stat-label">待处理原子</span>
+          </div>` : ''}
         </div>
         ${hasNewClusters ? `
           <div class="kd-result-clusters">
             <h5>新建知识簇</h5>
             ${clustersHtml}
           </div>
-        ` : `
-          <p class="kd-result-hint">${!hasAssignments ? '没有需要聚类的原子，继续积累知识吧！' : '原子已归入已有知识簇'}</p>
-        `}
+        ` : ''}
+        ${hasMessage ? `
+          <div class="kd-result-message ${isWarning ? 'warning' : 'info'}">${this.escHtml(result.message)}</div>
+        ` : !hasNewClusters && !hasAssignments ? `
+          <p class="kd-result-hint">所有知识原子都已归入知识簇，无需聚类</p>
+        ` : !hasNewClusters && hasAssignments ? `
+          <p class="kd-result-hint">原子已归入已有知识簇</p>
+        ` : ''}
       </div>
     `;
 
@@ -802,6 +869,12 @@ class KnowledgeDistillation {
         if (card) card.classList.add('kd-highlight-new');
       });
     }, 100);
+
+    // 10秒后自动移除结果面板（如果用户没手动关闭）
+    setTimeout(() => {
+      const el = document.getElementById('kdClusteringResult');
+      if (el) el.remove();
+    }, 10000);
 
     // 5秒后自动移除高亮
     setTimeout(() => {
@@ -820,11 +893,16 @@ class KnowledgeDistillation {
     if (!window.electronAPI?.knowledgeDistillAll) return;
 
     const beforeClusterIds = new Set(this.clusters.map(c => c.id));
-    this.showActionProgress('正在一键萃取...', 'AI 正在聚类并生成知识文章');
 
-    try {
-      const result = await window.electronAPI.knowledgeDistillAll();
-      this.hideActionProgress();
+    // 先注册完成监听（防止竞态）
+    let completeFired = false;
+    const completeHandler = async (data) => {
+      if (completeFired) return;
+      completeFired = true;
+
+      if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+        window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+      }
 
       // 刷新数据
       await Promise.all([
@@ -835,14 +913,36 @@ class KnowledgeDistillation {
 
       const newClusters = this.clusters.filter(c => !beforeClusterIds.has(c.id));
 
-      this.showToast(`萃取完成！新建 ${result.clustersCreated} 簇，归类 ${result.atomsAssigned} 原子，生成 ${result.articlesGenerated} 篇文章`);
+      this.hideClusteringProgress();
+      this.showToast(`萃取完成！新建 ${data.clustersCreated || 0} 簇，归类 ${data.atomsAssigned || 0} 原子，生成 ${data.articlesGenerated || 0} 篇文章`);
 
-      // 如果有新簇，显示结果面板
-      if (newClusters.length > 0 || result.articlesGenerated > 0) {
-        this.showClusteringResult(result, newClusters);
+      if (newClusters.length > 0 || (data.articlesGenerated || 0) > 0) {
+        this.showClusteringResult(data, newClusters);
       }
+    };
+
+    if (window.electronAPI?.onKnowledgeClusteringComplete) {
+      window.electronAPI.onKnowledgeClusteringComplete(completeHandler);
+    }
+
+    this.showClusteringProgress();
+
+    try {
+      const startResult = await window.electronAPI.knowledgeDistillAll();
+      if (!startResult.started) {
+        if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+          window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+        }
+        this.hideClusteringProgress();
+        this.showToast(startResult.message || '无法启动萃取');
+        return;
+      }
+
     } catch (e) {
-      this.hideActionProgress();
+      if (window.electronAPI?.removeKnowledgeClusteringCompleteListeners) {
+        window.electronAPI.removeKnowledgeClusteringCompleteListeners();
+      }
+      this.hideClusteringProgress();
       this.showToast('萃取出错：' + e.message);
     }
   }
