@@ -177,6 +177,15 @@ class KnowledgeDistillation {
         this.showToast('知识文章已生成：' + (data.article?.title || ''));
       });
     }
+    // 监听登录状态变化，更新聚类按钮
+    if (window.electronAPI?.onAuthChanged) {
+      window.electronAPI.onAuthChanged((data) => {
+        this._isLoggedIn = !!data.isLoggedIn;
+        this._updateClusterButtonStates();
+        // 登录状态变化时重新渲染聚类区域（按钮文字/禁用状态）
+        this.renderClusterGrid();
+      });
+    }
   }
 
   // ========== 子视图切换 ==========
@@ -233,8 +242,20 @@ class KnowledgeDistillation {
         const qResult = await window.electronAPI.knowledgeGetAtoms({ type: 'question' });
         this.questions = qResult.atoms || [];
       }
+      // 加载聚类次数统计
+      if (window.electronAPI?.knowledgeClusteringStats) {
+        this._clusteringStats = await window.electronAPI.knowledgeClusteringStats();
+      }
+      // 加载登录状态（用于聚类按钮禁用控制）
+      if (window.electronAPI?.authGetState) {
+        const authState = await window.electronAPI.authGetState();
+        this._isLoggedIn = !!authState.isLoggedIn;
+      } else {
+        this._isLoggedIn = false;
+      }
       this.renderStats();
       this.renderDomainFilter();
+      this._updateClusterButtonStates();
     } catch (e) {
       console.error('[KnowledgeDistillation] loadStats error:', e);
     }
@@ -290,6 +311,8 @@ class KnowledgeDistillation {
     if (!statsEl) return;
     const s = this.stats;
     const questionCount = this.questions.length || (s.totalAtoms ? s.unclusteredAtoms : 0);
+    // 聚类次数（异步加载，可能还没拿到）
+    const clusterQuota = this._clusteringStats ? `· <span class="stat-item"><span class="stat-num">${this._clusteringStats.remaining}/${this._clusteringStats.limit}</span> 聚类次数</span>` : '';
     statsEl.innerHTML = `
       <span class="stat-item"><span class="stat-num">${s.totalAtoms || 0}</span> 知识原子</span>
       <span class="stat-dot">·</span>
@@ -298,6 +321,7 @@ class KnowledgeDistillation {
       <span class="stat-item"><span class="stat-num">${s.totalArticles || 0}</span> 知识文章</span>
       <span class="stat-dot">·</span>
       <span class="stat-item"><span class="stat-num">${questionCount}</span> 待解决</span>
+      ${clusterQuota}
     `;
   }
 
@@ -307,6 +331,15 @@ class KnowledgeDistillation {
     const current = select.value;
     select.innerHTML = '<option value="">全部领域</option>' +
       this.domains.map(d => `<option value="${d}" ${d === current ? 'selected' : ''}>${d}</option>`).join('');
+  }
+
+  _updateClusterButtonStates() {
+    // 按钮始终可点击，由 distillAll()/autoCluster() 内部做登录检查
+    const distillBtn = document.getElementById('knowledgeDistillBtn');
+    if (distillBtn) {
+      distillBtn.disabled = false;
+      distillBtn.title = '';
+    }
   }
 
   renderClusterGrid() {
@@ -359,6 +392,9 @@ class KnowledgeDistillation {
 
     // 未归簇原子
     if (this.atoms.length > 0) {
+      // 始终渲染可点击按钮，由 autoCluster() 内部做登录检查
+      // 避免因 auth 时序问题导致按钮永久 disabled
+      const clusterBtnHtml = `<button class="kd-action-btn primary" data-kd-action="autoCluster">智能聚类</button>`;
       html += `
         <div class="kd-cluster-card status-unclustered">
           <div class="kd-cluster-header">
@@ -371,7 +407,7 @@ class KnowledgeDistillation {
             <span class="kd-meta-item">待聚类</span>
           </div>
           <div class="kd-cluster-actions">
-            <button class="kd-action-btn primary" data-kd-action="autoCluster">智能聚类</button>
+            ${clusterBtnHtml}
           </div>
         </div>`;
     }
@@ -607,6 +643,24 @@ class KnowledgeDistillation {
 
   async autoCluster() {
     if (!window.electronAPI?.knowledgeAutoCluster) return;
+
+    // 登录检查：聚类功能需要登录
+    if (window.electronAPI?.authGetState) {
+      const authState = await window.electronAPI.authGetState();
+      if (!authState.isLoggedIn) {
+        this.showToast('聚类功能需要登录后使用，请先登录');
+        return;
+      }
+    }
+
+    // 检查聚类每日次数
+    if (window.electronAPI?.knowledgeClusteringStats) {
+      const stats = await window.electronAPI.knowledgeClusteringStats();
+      if (stats.remaining <= 0) {
+        this.showToast(`今日聚类次数已用完（${stats.count}/${stats.limit}），明天再试`);
+        return;
+      }
+    }
 
     // 记录聚类前的簇 ID，用于后续高亮新建的簇
     const beforeClusterIds = new Set(this.clusters.map(c => c.id));
@@ -891,6 +945,24 @@ class KnowledgeDistillation {
 
   async distillAll() {
     if (!window.electronAPI?.knowledgeDistillAll) return;
+
+    // 登录检查：聚类功能需要登录
+    if (window.electronAPI?.authGetState) {
+      const authState = await window.electronAPI.authGetState();
+      if (!authState.isLoggedIn) {
+        this.showToast('聚类功能需要登录后使用，请先登录');
+        return;
+      }
+    }
+
+    // 检查聚类每日次数
+    if (window.electronAPI?.knowledgeClusteringStats) {
+      const stats = await window.electronAPI.knowledgeClusteringStats();
+      if (stats.remaining <= 0) {
+        this.showToast(`今日聚类次数已用完（${stats.count}/${stats.limit}），明天再试`);
+        return;
+      }
+    }
 
     const beforeClusterIds = new Set(this.clusters.map(c => c.id));
 

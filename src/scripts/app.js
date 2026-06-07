@@ -89,6 +89,13 @@ const App = {
       console.error('[App] setupClipboardListener() failed:', e);
     }
 
+    try {
+      Audit.init();
+      console.log('[App] Audit.init() completed');
+    } catch (e) {
+      console.error('[App] Audit.init() failed:', e);
+    }
+
     // 恢复视觉偏好（主题、字体大小、效果开关）
     this._restoreVisualPrefs();
     
@@ -545,8 +552,8 @@ const App = {
     // 延迟加载：只在首次切换到标签时加载数据
     if (!this._settingsTabLoaded[tabName]) {
       this._settingsTabLoaded[tabName] = true;
-      if (tabName === 'api') this._loadApiConfig();
-      if (tabName === 'adp') this._loadAdpConfig();
+      if (tabName === 'llm') this._loadApiConfig();
+      if (tabName === 'agent') this._loadAdpConfig();
       if (tabName === 'memory') this.loadMemories();
       if (tabName === 'profile') this.loadProfileEditor();
       if (tabName === 'prompt') this.loadPromptFiles();
@@ -646,7 +653,7 @@ const App = {
    * 已登录显示全部
    */
   _updateSettingsTabVisibility(isLoggedIn) {
-    const hiddenTabsWhenLoggedOut = ['adp', 'prompt', 'profile', 'memory'];
+    const hiddenTabsWhenLoggedOut = ['agent', 'prompt', 'profile', 'memory'];
     document.querySelectorAll('.settings-tab').forEach(tab => {
       const tabName = tab.dataset.tab;
       if (hiddenTabsWhenLoggedOut.includes(tabName)) {
@@ -707,8 +714,8 @@ const App = {
   _updateConfigServerHints(fromServer) {
     const apiHint = document.getElementById('apiServerHint');
     const adpHint = document.getElementById('adpServerHint');
-    const apiPanel = document.getElementById('apiPanel');
-    const adpPanel = document.getElementById('adpPanel');
+    const apiPanel = document.getElementById('llmPanel');
+    const adpPanel = document.getElementById('agentPanel');
     
     if (fromServer) {
       apiHint?.classList.remove('hidden');
@@ -1221,7 +1228,7 @@ const App = {
     // 只加载当前活跃标签页的数据（延迟加载其他标签）
     if (window.electronAPI) {
       const activeTab = document.querySelector('.settings-tab.active');
-      const tabName = activeTab?.dataset.tab || 'api';
+      const tabName = activeTab?.dataset.tab || 'llm';
       this.switchSettingsTab(tabName);
     }
   },
@@ -4651,6 +4658,13 @@ ${JSON.stringify(reportData, null, 2)}`;
 
   setupClipboardListener() {
     if (window.electronAPI) {
+      // 主进程剪贴板日志 → DevTools Console
+      if (window.electronAPI.onClipboardLog) {
+        window.electronAPI.onClipboardLog((msg) => {
+          console.log(msg);
+        });
+      }
+      
       window.electronAPI.onClipboardTaskDetected((data) => {
         this.handleClipboardTask(data);
       });

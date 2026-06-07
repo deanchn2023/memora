@@ -9,30 +9,31 @@ class ClipboardBuffer {
   constructor(options = {}) {
     this.maxFragments = options.maxFragments || 20;
     this.maxTotalLength = options.maxTotalLength || 3000;
-    this.stableTimeoutNormal = options.stableTimeoutNormal || 3000;
-    this.stableTimeoutHighFreq = options.stableTimeoutHighFreq || 5000;
-    this.stableTimeoutUltraFreq = options.stableTimeoutUltraFreq || 8000;
+    this.stableTimeoutNormal = options.stableTimeoutNormal || 5000;
+    this.stableTimeoutHighFreq = options.stableTimeoutHighFreq || 7000;
+    this.stableTimeoutUltraFreq = options.stableTimeoutUltraFreq || 10000;
 
     this.fragments = [];
     this.lastUpdateTime = 0;
     this.stableTimer = null;
     this.isStable = true;
-    this.onStable = null; // 回调：稳定后触发分析
+    this.onStable = null;
+    this._logTarget = null;
   }
 
-  /**
-   * 追加一个片段到暂存器
-   * @param {string} text - 剪贴板文本
-   * @param {object} preClassifyResult - 预分类结果
-   * @param {number} stableTimeout - 建议的稳定超时（由 FreqController 计算）
-   * @returns {boolean} true=成功追加, false=被丢弃
-   */
+  setLogTarget(logFn) {
+    this._logTarget = logFn;
+  }
+
+  _log(msg) {
+    console.log(msg);
+    if (this._logTarget) this._logTarget(msg);
+  }
+
   addFragment(text, preClassifyResult, stableTimeout) {
-    // 检查是否已达上限
     const currentLength = this.fragments.reduce((sum, f) => sum + f.text.length, 0);
     if (this.fragments.length >= this.maxFragments || currentLength + text.length > this.maxTotalLength) {
-      // 达到上限，立即稳定
-      console.log(`[Buffer] Limit reached (${this.fragments.length} fragments, ${currentLength} chars), forcing stable`);
+      this._log(`[Buffer] 🚫 达到上限 (${this.fragments.length}条, ${currentLength}字), 强制合并`);
       this._forceStable();
       return false;
     }
@@ -40,51 +41,46 @@ class ClipboardBuffer {
     this.fragments.push({
       text,
       timestamp: Date.now(),
-      preClassifyResult
+      hash: null
     });
     this.lastUpdateTime = Date.now();
     this.isStable = false;
 
-    // 重置稳定计时器
     this._resetStableTimer(stableTimeout || this.stableTimeoutNormal);
-    console.log(`[Buffer] Fragment added (${this.fragments.length}/${this.maxFragments}), stable timeout: ${stableTimeout}ms`);
+    this._log(`[Buffer] ➕ 第${this.fragments.length}条入缓冲区 | "${text.substring(0, 50).replace(/\n/g, '↵')}${text.length > 50 ? '...' : ''}" | 等${stableTimeout}ms后合并`);
 
     return true;
   }
 
-  /**
-   * 重置稳定计时器
-   */
   _resetStableTimer(timeout) {
     if (this.stableTimer) {
       clearTimeout(this.stableTimer);
+      this._log(`[Buffer] 🔄 又检测到新复制，重置稳定计时器 → ${timeout}ms`);
     }
     this.stableTimer = setTimeout(() => {
       this._onStableTimeout();
     }, timeout);
   }
 
-  /**
-   * 稳定超时触发
-   */
   _onStableTimeout() {
     this.stableTimer = null;
     this.isStable = true;
-    console.log(`[Buffer] Stable after ${this.fragments.length} fragments`);
+    this._log(`[Buffer] ⏰ 稳定超时触发! ${this.fragments.length}条内容将合并`);
+    this.fragments.forEach((f, i) => {
+      this._log(`[Buffer]   #${i + 1}: "${f.text.substring(0, 40).replace(/\n/g, '↵')}${f.text.length > 40 ? '...' : ''}" (${f.text.length}字)`);
+    });
 
     if (this.onStable) {
       const mergedText = this.getMergedText();
       const fragmentCount = this.fragments.length;
-      this.onStable(mergedText, fragmentCount);
+      const { getClipboardHash } = require('./hashUtils');
+      const fragmentHashes = this.fragments.map(f => getClipboardHash(f.text));
+      this.onStable(mergedText, fragmentCount, fragmentHashes);
     }
 
-    // 清空暂存
     this.fragments = [];
   }
 
-  /**
-   * 强制稳定（达到上限时）
-   */
   _forceStable() {
     if (this.stableTimer) {
       clearTimeout(this.stableTimer);
@@ -97,14 +93,13 @@ class ClipboardBuffer {
     if (this.onStable) {
       const mergedText = this.getMergedText();
       const fragmentCount = this.fragments.length;
-      this.onStable(mergedText, fragmentCount);
+      const { getClipboardHash } = require('./hashUtils');
+      const fragmentHashes = this.fragments.map(f => getClipboardHash(f.text));
+      this.onStable(mergedText, fragmentCount, fragmentHashes);
     }
     this.fragments = [];
   }
 
-  /**
-   * 合并所有片段为完整文本
-   */
   getMergedText() {
     if (this.fragments.length === 0) return '';
     if (this.fragments.length === 1) return this.fragments[0].text;
@@ -113,30 +108,18 @@ class ClipboardBuffer {
     return `[以下是从剪贴板分 ${this.fragments.length} 次复制的内容，按时间顺序拼接]\n\n${parts.join('\n\n---\n\n')}`;
   }
 
-  /**
-   * 当前片段数
-   */
   get fragmentCount() {
     return this.fragments.length;
   }
 
-  /**
-   * 当前总长度
-   */
   get totalLength() {
     return this.fragments.reduce((sum, f) => sum + f.text.length, 0);
   }
 
-  /**
-   * 是否有暂存中的内容
-   */
   get hasContent() {
     return this.fragments.length > 0;
   }
 
-  /**
-   * 销毁
-   */
   destroy() {
     if (this.stableTimer) {
       clearTimeout(this.stableTimer);

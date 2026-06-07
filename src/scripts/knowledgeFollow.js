@@ -1019,7 +1019,7 @@ class KnowledgeFollow {
     const settingsBtn = document.getElementById('openSettingsBtn');
     if (settingsBtn) settingsBtn.click();
     setTimeout(() => {
-      const adpTab = document.querySelector('.settings-tab[data-tab="adp"]');
+      const adpTab = document.querySelector('.settings-tab[data-tab="agent"]');
       if (adpTab) adpTab.click();
     }, 200);
   }

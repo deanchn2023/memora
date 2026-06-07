@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="styles/localFiles.css">
   <link rel="stylesheet" href="styles/knowledgeDistillation.css">
   <link rel="stylesheet" href="styles/appearance.css">
+  <link rel="stylesheet" href="styles/audit.css">
   <script src="scripts/i18n.js"></script>
 </head>
 <body>
@@ -56,6 +57,7 @@
         </div>
         <div class="header-actions">
           <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><linearGradient id="aBtnBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="12" fill="url(#aBtnBg)"/><text x="20" y="27" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="700" fill="white">M</text></svg></button>
+          <button class="audit-btn" id="openAuditBtn" data-tooltip="审计日志"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
           <!-- AI 助手模式切换 -->
           <div class="ai-mode-toggle hidden" id="aiModeToggle">
             <button class="ai-mode-btn active" data-mode="agent" id="aiModeAgent">🤖 Agent</button>
@@ -816,7 +818,7 @@
   <!-- 设置Modal -->
   <div class="modal hidden" id="settingsModal">
     <div class="modal-overlay"></div>
-    <div class="modal-content" style="max-width: 800px;">
+    <div class="modal-content" style="max-width: 960px;">
       <div class="modal-header">
         <h3 data-i18n="settings.title">设置</h3>
         <button class="modal-close" id="closeSettingsBtn">×</button>
@@ -824,18 +826,18 @@
       <div class="modal-body">
         <!-- 设置标签页 -->
         <div class="settings-tabs">
-          <button class="settings-tab active" data-tab="api" data-i18n="settings.tab.api">API配置</button>
-          <button class="settings-tab" data-tab="adp" data-i18n="settings.tab.adp">ADP配置</button>
+          <button class="settings-tab active" data-tab="llm" data-i18n="settings.tab.llm">LLM</button>
+          <button class="settings-tab" data-tab="agent" data-i18n="settings.tab.agent">Agent</button>
           <button class="settings-tab" data-tab="prompt" data-i18n="settings.tab.prompts">Prompt</button>
-          <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">用户画像</button>
-          <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆管理</button>
+          <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">画像</button>
+          <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆</button>
           <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">外观</button>
-          <button class="settings-tab" data-tab="data" data-i18n="settings.tab.data">数据管理</button>
+          <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
         
         <!-- API配置 -->
-        <div class="settings-panel hidden" id="apiPanel">
+        <div class="settings-panel hidden" id="llmPanel">
           <!-- 登录状态提示 -->
           <div id="apiServerHint" class="config-server-hint hidden">
             <span class="config-server-badge">🏢 组织配置</span>
@@ -869,7 +871,7 @@
         </div>
         
         <!-- ADP配置 -->
-        <div class="settings-panel hidden" id="adpPanel">
+        <div class="settings-panel hidden" id="agentPanel">
           <!-- 登录状态提示 -->
           <div id="adpServerHint" class="config-server-hint hidden">
             <span class="config-server-badge">🏢 组织配置</span>
@@ -1246,7 +1248,7 @@
         </div>
 
         <!-- 数据管理 -->
-        <div class="settings-panel hidden" id="dataPanel">
+        <div class="settings-panel hidden" id="backupPanel">
           <div class="data-management-section">
             <div class="data-section-header">
               <span class="data-section-icon">📦</span>
@@ -1442,7 +1444,50 @@
     </div>
   </div>
 
-  <script>
+  <!-- AI 审计日志面板 -->
+  <div class="audit-overlay hidden" id="auditOverlay">
+    <div class="audit-panel">
+      <div class="audit-header">
+        <h3>🔍 AI 审计日志</h3>
+        <button class="audit-close-btn" id="closeAuditBtn">×</button>
+      </div>
+      <div class="audit-toolbar">
+        <select id="auditDateRange">
+          <option value="1d">今天</option>
+          <option value="3d">近3天</option>
+          <option value="7d" selected>近一周</option>
+          <option value="30d">近一个月</option>
+        </select>
+        <select id="auditModuleFilter">
+          <option value="">全部模块</option>
+        </select>
+        <input type="text" id="auditSearchInput" class="audit-search-input" placeholder="搜索关键词...">
+        <button class="audit-search-btn" id="auditSearchBtn">搜索</button>
+      </div>
+      <div class="audit-stats" id="auditStatsSummary"></div>
+      <div class="audit-daily-chart" id="auditDailyChart"></div>
+      <div class="audit-body">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>模块</th>
+              <th>状态</th>
+              <th>Token</th>
+              <th>耗时</th>
+              <th>输入预览</th>
+            </tr>
+          </thead>
+          <tbody id="auditLogsBody"></tbody>
+        </table>
+      </div>
+      <div class="audit-footer">
+        <button class="audit-page-btn" id="auditPrevBtn">上一页</button>
+        <span class="audit-page-info" id="auditPageInfo">第 1 / 1 页</span>
+        <button class="audit-page-btn" id="auditNextBtn">下一页</button>
+      </div>
+    </div>
+  </div>
   window.onerror = function(msg, url, line, col, error) {
     console.error('[JS Error]', msg, 'at line', line);
     return false;
@@ -1464,6 +1509,7 @@
 <script src="scripts/knowledgeDistillation.js"></script>
 <script src="scripts/documents.js"></script>
 <script src="scripts/localFiles.js"></script>
+<script src="scripts/audit.js"></script>
 <script src="scripts/app.js"></script>
 <script>
   console.log('[HTML] All scripts loaded');

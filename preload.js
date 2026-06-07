@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   knowledgeGetStats: () => ipcRenderer.invoke('knowledge:get-stats'),
   knowledgeGetDomains: () => ipcRenderer.invoke('knowledge:get-domains'),
   knowledgeDistillAll: () => ipcRenderer.invoke('knowledge:distill-all'),
+  knowledgeClusteringStats: () => ipcRenderer.invoke('knowledge:clustering-stats'),
   knowledgeExtractAtoms: (noteId) => ipcRenderer.invoke('knowledge:extract-atoms', noteId),
   onKnowledgeAtomsUpdated: (callback) => {
     ipcRenderer.on('knowledge:atoms-updated', (event, data) => callback(data));
@@ -223,8 +224,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getClipboardHashCount: () => ipcRenderer.invoke('get-clipboard-hash-count'),
   clipboardGetConfig: () => ipcRenderer.invoke('clipboard:get-config'),
   clipboardUpdateConfig: (config) => ipcRenderer.invoke('clipboard:update-config', config),
+  clipboardDiagnostic: () => ipcRenderer.invoke('clipboard:diagnostic'),
+  clipboardForceAnalyze: () => ipcRenderer.invoke('clipboard:force-analyze'),
+  
+  // AI 审计日志
+  auditQuery: (options) => ipcRenderer.invoke('audit:query', options),
+  auditModules: () => ipcRenderer.invoke('audit:modules'),
+  auditDailyStats: (days) => ipcRenderer.invoke('audit:daily-stats', days),
+  auditCleanup: () => ipcRenderer.invoke('audit:cleanup'),
   
   // 事件监听
+  onClipboardLog: (callback) => {
+    ipcRenderer.on('clipboard-log', (event, msg) => callback(msg));
+  },
   onClipboardTaskDetected: (callback) => {
     ipcRenderer.on('clipboard-task-detected', (event, data) => callback(data));
   },

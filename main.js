@@ -27,9 +27,123 @@ let isAnalyzing = false; // 防止并发分析
 let processedClipboardHashes = new Set();
 const MAX_CLIPBOARD_HASHES = 500; // 限制哈希记录数量防止内存膨胀
 
+// 🔧 辅助函数：同时输出到主进程终端和前端 DevTools
+function _sendLog(msg) {
+  console.log(msg);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.webContents.send('clipboard-log', msg);
+    } catch (_) {}
+  }
+}
+
 // 数据库层（JSON文件存储）
 const { Database } = require('./src/scripts/database');
 let db;
+
+// AI 调用审计日志
+const AIAuditLogger = require('./auditLogger');
+let auditLogger = null;
+
+/**
+ * 审计封装的 DeepSeek API 调用
+ * 所有 DeepSeek API 调用应使用此函数替代原生 fetch，自动记录审计日志
+ * @param {object} params
+ * @param {string} params.module - 调用模块名
+ * @param {object} params.apiConfig - { baseUrl, apiKey, model }
+ * @param {Array} params.messages - OpenAI 格式 messages
+ * @param {object} params.fetchOptions - 额外 fetch 参数 (temperature, max_tokens, stream, response_format 等)
+ * @param {string} params.traceId - 可选追踪ID
+ * @param {AbortSignal} params.signal - 可选 AbortSignal
+ * @returns {Promise<{response: Response, auditId: string}>}
+ */
+async function auditedDeepSeekCall({ module, apiConfig, messages, fetchOptions = {}, traceId, signal }) {
+  const startTime = Date.now();
+  let auditRecord = {
+    module,
+    model: apiConfig.model,
+    baseUrl: apiConfig.baseUrl,
+    input: {
+      systemPromptLen: messages.find(m => m.role === 'system')?.content?.length || 0,
+      userPromptLen: messages.filter(m => m.role === 'user').reduce((sum, m) => {
+        const len = typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length;
+        return sum + len;
+      }, 0),
+      userPrompt: messages.filter(m => m.role === 'user').map(m => {
+        if (typeof m.content === 'string') return m.content;
+        return m.content.filter(c => c.type === 'text').map(c => c.text).join(' ');
+      }).join('\n'),
+    },
+    output: { status: null, contentLen: 0, content: '', finishReason: null },
+    tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    latencyMs: 0,
+    error: null,
+    traceId: traceId || null,
+  };
+
+  try {
+    const body = {
+      model: apiConfig.model,
+      messages,
+      ...fetchOptions,
+    };
+
+    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
+    });
+
+    auditRecord.output.status = response.status;
+
+    // 对于非流式调用，解析响应并记录 token
+    if (!fetchOptions.stream && response.ok) {
+      // Clone response 以便审计日志可以读取 body
+      const clonedResponse = response.clone();
+      try {
+        const data = await clonedResponse.json();
+        if (data.choices?.[0]?.message?.content) {
+          auditRecord.output.content = data.choices[0].message.content;
+          auditRecord.output.contentLen = data.choices[0].message.content.length;
+          auditRecord.output.finishReason = data.choices?.[0]?.finish_reason || null;
+        }
+        if (data.usage) {
+          auditRecord.tokens = {
+            prompt_tokens: data.usage.prompt_tokens || 0,
+            completion_tokens: data.usage.completion_tokens || 0,
+            total_tokens: data.usage.total_tokens || 0,
+          };
+        }
+      } catch (_) {}
+    }
+
+    auditRecord.latencyMs = Date.now() - startTime;
+
+    if (!response.ok) {
+      try {
+        const errBody = await response.clone().text();
+        auditRecord.error = `HTTP ${response.status}: ${errBody.substring(0, 200)}`;
+      } catch (_) {
+        auditRecord.error = `HTTP ${response.status} ${response.statusText}`;
+      }
+    }
+
+    return { response, auditId: auditRecord.id };
+  } catch (err) {
+    auditRecord.error = err.message;
+    auditRecord.latencyMs = Date.now() - startTime;
+    throw err;
+  } finally {
+    // 异步记录审计日志，不影响主流程
+    if (auditLogger) {
+      try { auditLogger.record(auditRecord); } catch (_) {}
+    }
+  }
+}
 
 // i18n
 const { I18n } = require('./src/scripts/i18n');
@@ -928,8 +1042,28 @@ function createTray() {
   });
 }
 
-function startClipboardWatcher() {
+function initClipboardWatcher() {
   console.log('[Clipboard] Starting smart clipboard scheduler...');
+  
+  // 🔧 启动前自检
+  const selfCheck = {
+    hasClipboard: !!clipboard,
+    hasPowerMonitor: !!powerMonitor,
+    hasMainWindow: !!mainWindow,
+    hasNotebook: !!notebook,
+    currentClipboardText: clipboard?.readText()?.substring(0, 50) || '(空)',
+    apiConfig: getAPIConfig().baseUrl,
+    apiModel: getAPIConfig().model,
+    hasApiKey: !!getAPIConfig().apiKey,
+    canAICall: canMakeAICall(),
+    settingsBuffer: getSetting('clipboard_buffer_enabled'),
+    settingsFreq: getSetting('clipboard_freq_enabled'),
+  };
+  console.log('[Clipboard] 🔍 启动自检:', JSON.stringify(selfCheck, null, 2));
+  
+  if (!mainWindow) {
+    console.error('[Clipboard] ❌ mainWindow 不存在！scheduler 的日志转发将不工作');
+  }
   
   const scheduler = startClipboardWatcher({
     clipboard,
@@ -946,7 +1080,9 @@ function startClipboardWatcher() {
   // 保存引用以便清理
   clipboardWatcher = scheduler;
 
-  console.log('[Clipboard] Smart scheduler started (buffer + dynamic freq + state detect)');
+  console.log('[Clipboard] ✅ Smart scheduler started (buffer + dynamic freq + state detect)');
+  console.log('[Clipboard] 💡 诊断命令: 在 DevTools 控制台运行 await window.electronAPI.clipboardDiagnostic()');
+  console.log('[Clipboard] 💡 强制分析: 在 DevTools 控制台运行 await window.electronAPI.clipboardForceAnalyze()');
 }
 
 // 检查剪切板内容是否已处理过
@@ -1056,27 +1192,43 @@ function setAIDailyLimit(limit) {
 }
 
 async function analyzeClipboardText(text) {
-  if (!text || text.trim().length === 0) return;
-  
-  // 防止并发分析
-  if (isAnalyzing) {
-    console.log('[AI] Previous analysis still in progress, skipping');
+  // 🔧 修复：空文本也要通知 scheduler 重置 isAnalyzing
+  if (!text || text.trim().length === 0) {
+    const scheduler = getScheduler();
+    if (scheduler) scheduler.onAnalysisComplete();
     return;
   }
-  isAnalyzing = true;
-
+  
   try {
-    console.log('[AI] Analyzing clipboard text...');
+    console.log(`[AI] 🔍 开始分析剪贴板内容 (${text.length}字)...`);
+    _sendLog(`[AI] 🔍 开始分析剪贴板内容 (${text.length}字)...`);
     
-    // 1. 先去重检查
-    if (isClipboardProcessed(text)) {
-      console.log('[AI] Duplicate content detected, skipping AI call');
-      isAnalyzing = false;
+    // 1. 去重检查 — 🔧 修复：只对非缓冲区合并的文本做检查
+    //    缓冲区合并文本由 scheduler 统一管理去重，不在这里重复检查
+    const isBufferMerged = text.startsWith('[以下是从剪贴板分');
+    if (!isBufferMerged && isClipboardProcessed(text)) {
+      console.log('[AI] 🔁 内容已处理过，跳过AI调用');
+      _sendLog('[AI] 🔁 内容已处理过，跳过AI调用');
       return;
     }
+    if (isBufferMerged) {
+      console.log('[AI] 📎 合并文本模式，跳过去重检查（由 scheduler 管理）');
+      _sendLog('[AI] 📎 合并文本模式，跳过去重检查（由 scheduler 管理）');
+    }
     
-    // 2. 预分类器检查（在调用AI之前先过滤）
-    const preResult = preClassify(text);
+    // 2. 预分类器检查（合并文本已由 scheduler 逐条过滤，跳过二次检查）
+    let preResult;
+    if (isBufferMerged) {
+      // 合并文本直接通过，不再做 preClassify
+      // 但仍需检测强信号用于 prompt 增强
+      const hasAtMention = /@\S+/.test(text);
+      const hasNumberedList = /\d+[）\).]\s*/.test(text);
+      preResult = { shouldAnalyze: true, reason: '缓冲区合并文本（已逐条预分类）', hasAtMention, hasNumberedList };
+      _sendLog(`[AI] 📎 合并文本模式 | @提及:${hasAtMention} | 编号列表:${hasNumberedList}`);
+    } else {
+      preResult = preClassify(text);
+      _sendLog(`[AI] 🏷️ 预分类结果: ${preResult.shouldAnalyze ? '✅通过' : '🚫拒绝'} | 原因: ${preResult.reason}`);
+    }
     
     // 保存到记忆系统（调试期：保存所有剪切板内容）
     let analysisResult = null;
@@ -1086,16 +1238,18 @@ async function analyzeClipboardText(text) {
     
     if (!preResult.shouldAnalyze) {
       console.log('[AI] Pre-classification rejected:', preResult.reason);
+      _sendLog(`[AI] 🚫 预分类拒绝: ${preResult.reason}`);
       // 闲聊/无效内容不入记事本，仅记录日志
       console.log('[Notebook] Skipped: pre-classification rejected -', preResult.reason);
-      isAnalyzing = false;
       return;
     }
     console.log('[AI] Pre-classification passed:', preResult.reason);
+    _sendLog(`[AI] ✅ 预分类通过: ${preResult.reason}`);
     
     // 3. 检查AI调用次数限制
     if (!canMakeAICall()) {
       console.log('[AI] Daily limit reached, skipping analysis');
+      _sendLog('[AI] ⛔ 每日AI调用次数已达上限');
       // 保存到记事本
       if (notebook) {
         notebook.addNote({
@@ -1107,12 +1261,13 @@ async function analyzeClipboardText(text) {
           }
         }); // addNote 自动去重，返回 null 表示重复
       }
-      isAnalyzing = false;
       return;
     }
     
     // 获取API配置
     const apiConfig = getAPIConfig();
+    _sendLog(`[AI] 📡 API配置: baseUrl=${apiConfig.baseUrl} model=${apiConfig.model} hasKey=${!!apiConfig.apiKey}`);
+
     
     // 生成 trace_id 用于反馈闭环
     const traceId = feedbackLogger ? feedbackLogger.newTraceId() : `tr_${Date.now()}_local`;
@@ -1123,11 +1278,16 @@ async function analyzeClipboardText(text) {
     const currentHour = now.getHours();
     const timePeriod = currentHour < 6 ? '凌晨' : currentHour < 12 ? '上午' : currentHour < 18 ? '下午' : '晚上';
     let userPrompt = `[当前时间：${now.toLocaleString('zh-CN')} 周${currentDayOfWeek} ${timePeriod}]\n\n分析以下文本：\n\n${text}`;
-    if (preResult.hasAtMention) {
-      userPrompt += '\n\n[预分类信号：检测到@提及，这通常是强待办信号]';
-    }
-    if (preResult.hasNumberedList) {
-      userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
+    if (isBufferMerged) {
+      userPrompt += '\n\n[预分类信号：这是用户连续多次复制的内容，已自动合并。请仔细分析每条内容，特别是含@提及的条目——这通常意味着有人被分配了待办任务。如果任何一条是待办，请标记 is_task=true]';
+      userPrompt += '\n\n[关键规则：合并文本中可能包含上下文信息（如分工表、背景描述）+ 待办任务。description 必须包含足够的上下文信息，让人仅看 description 就能理解待办的具体内容。例如：如果文本包含"BSC分工：p6...p11..."和"@Dean 准备起来吧"，description 应写为"BSC分工表中@Dean需要准备的待办任务（涉及p6公有云收入、p7私有化收入等分工）"，而非仅仅写"准备起来"]';
+    } else {
+      if (preResult.hasAtMention) {
+        userPrompt += '\n\n[预分类信号：检测到@提及，这通常是强待办信号]';
+      }
+      if (preResult.hasNumberedList) {
+        userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
+      }
     }
 
     // 关联检测：注入最近处理的条目供 AI 参考
@@ -1142,27 +1302,25 @@ async function analyzeClipboardText(text) {
     }
     
     // 构建 system prompt，注入动态数据
-    const systemPrompt = buildClipboardAnalysisPrompt(traceId);
+    _sendLog('[AI] 🔧 构建 system prompt...');
+    let systemPrompt;
+    try {
+      systemPrompt = buildClipboardAnalysisPrompt(traceId);
+      _sendLog(`[AI] ✅ System prompt 构建完成 (${systemPrompt.length}字)`);
+    } catch (promptErr) {
+      _sendLog(`[AI] ❌ System prompt 构建失败: ${promptErr.message}`);
+      throw promptErr; // 重新抛出，让外层 catch 处理
+    }
     
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ]
-      })
+    _sendLog(`[AI] 📤 调用AI API: ${apiConfig.baseUrl}/chat/completions model=${apiConfig.model}`);
+    const { response } = await auditedDeepSeekCall({
+      module: 'clipboard_analysis',
+      apiConfig,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      traceId,
     });
     
     // 记录 AI 调用 trace
@@ -1179,6 +1337,12 @@ async function analyzeClipboardText(text) {
 
     if (!response.ok) {
       console.error('[AI] API response not OK:', response.status);
+      _sendLog(`[AI] ❌ API响应异常: status=${response.status} ${response.statusText}`);
+      // 尝试读取错误信息
+      try {
+        const errBody = await response.text();
+        _sendLog(`[AI] ❌ 错误详情: ${errBody.substring(0, 300)}`);
+      } catch (_) {}
       // 保存到记忆系统
       if (memoryStore) {
         const bizCat = classifyBusinessContext(text);
@@ -1196,7 +1360,6 @@ async function analyzeClipboardText(text) {
           importance: 'low'
         });
       }
-      isAnalyzing = false;
       return;
     }
 
@@ -1206,6 +1369,7 @@ async function analyzeClipboardText(text) {
     
     const data = await response.json();
     console.log('[AI] Response received:', JSON.stringify(data).substring(0, 200));
+    _sendLog(`[AI] 📨 收到AI响应 (status=${response.status})`);
     
     if (data.choices && data.choices[0] && data.choices[0].message) {
       let result;
@@ -1221,16 +1385,19 @@ async function analyzeClipboardText(text) {
         confidence = result.confidence || 0;
         isTask = result.is_task || false;
         taskTitle = result.title || null;
-        console.log('[AI] Parsed result:', JSON.stringify({
+        const summary = JSON.stringify({
           is_valid_info: result.is_valid_info,
           is_task: result.is_task,
           needs_recommendation: result.needs_recommendation,
           recommendation_intent: result.recommendation_intent,
           recommendation_query: result.recommendation_query,
           confidence: result.confidence
-        }));
+        });
+        console.log('[AI] Parsed result:', summary);
+        _sendLog(`[AI] 🎯 解析结果: is_valid_info=${result.is_valid_info} is_task=${result.is_task} confidence=${confidence} title=${taskTitle}`);
       } catch (e) {
         console.error('[AI] Failed to parse response:', e, 'Raw:', data.choices[0].message.content?.substring(0, 200));
+        _sendLog(`[AI] ❌ 解析AI响应失败: ${e.message} | Raw: ${data.choices[0].message.content?.substring(0, 100)}`);
         // 保存到记忆系统
         if (memoryStore) {
           const bizCat = classifyBusinessContext(text);
@@ -1249,7 +1416,6 @@ async function analyzeClipboardText(text) {
             importance: 'low'
           });
         }
-        isAnalyzing = false;
         return;
       }
       
@@ -1313,7 +1479,6 @@ async function analyzeClipboardText(text) {
       // 重复内容跳过
       if (associationResult.action === 'duplicate') {
         console.log('[Association] Duplicate content, skipping save');
-        isAnalyzing = false;
         return;
       }
 
@@ -1368,25 +1533,14 @@ async function analyzeClipboardText(text) {
       if (memoryStore && result.is_valid_info && (result.is_task || confidence >= 0.7)) {
         // 调用记忆提取Prompt
         try {
-          const memoryResponse = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiConfig.apiKey}`
-            },
-            body: JSON.stringify({
-              model: apiConfig.model,
-              messages: [
-                {
-                  role: 'system',
-                  content: getCurrentMemoryPrompt()
-                },
-                {
-                  role: 'user',
-                  content: `从以下文本中提取结构化记忆：\n\n${text}`
-                }
-              ]
-            })
+          const { response: memoryResponse } = await auditedDeepSeekCall({
+            module: 'clipboard_memory',
+            apiConfig,
+            messages: [
+              { role: 'system', content: getCurrentMemoryPrompt() },
+              { role: 'user', content: `从以下文本中提取结构化记忆：\n\n${text}` }
+            ],
+            traceId,
           });
           
           if (memoryResponse.ok) {
@@ -1471,6 +1625,7 @@ async function analyzeClipboardText(text) {
       if (result.is_task && confidence >= FILTER_CONFIG.confidenceThreshold) {
         // 高置信度：自动弹出建议
         console.log('[AI] High confidence task detected:', result.title, 'confidence:', confidence);
+        _sendLog(`[AI] ✅ 高置信度待办! title="${result.title}" confidence=${confidence} (阈值=${FILTER_CONFIG.confidenceThreshold})`);
         // 时间语义校验：确保 AI 解析的小时与原始文本中的上午/下午语义一致
         let dueDateISO = result.time?.normalized ? new Date(result.time.normalized).toISOString() : null;
         if (dueDateISO && result.time?.raw) {
@@ -1494,6 +1649,7 @@ async function analyzeClipboardText(text) {
       } else if (result.is_task && confidence >= FILTER_CONFIG.lowConfidenceThreshold) {
         // 中等置信度：静默加入候选
         console.log('[AI] Medium confidence task, adding to candidates:', result.title, 'confidence:', confidence);
+        _sendLog(`[AI] 🟡 中等置信度待办: title="${result.title}" confidence=${confidence}`);
         mainWindow.webContents.send('clipboard-candidate-detected', {
           rawText: text,
           task: {
@@ -1507,6 +1663,7 @@ async function analyzeClipboardText(text) {
         });
       } else {
         console.log('[AI] No task or low confidence:', result.reason || 'confidence too low');
+        _sendLog(`[AI] ℹ️ 未识别为待办: is_task=${result.is_task} confidence=${confidence} 阈值=${FILTER_CONFIG.confidenceThreshold}/${FILTER_CONFIG.lowConfidenceThreshold} reason=${result.reason || 'N/A'}`);
       }
 
       // 知识跟随：AI 判断需要推荐时，异步调用 ADP
@@ -1518,35 +1675,28 @@ async function analyzeClipboardText(text) {
       }
     }
   } catch (error) {
-    console.error('[AI] Analysis failed:', error);
+    console.error('[AI] ❌ 分析失败:', error);
+    _sendLog(`[AI] ❌ 分析失败: ${error.message}\n${error.stack?.substring(0, 200)}`);
   } finally {
-    isAnalyzing = false;
+    console.log('[AI] ✅ 分析流程结束');
+    _sendLog('[AI] ✅ 分析流程结束');
+    // 通知 Scheduler 分析完成，处理待重试队列
+    const scheduler = getScheduler();
+    if (scheduler) scheduler.onAnalysisComplete();
   }
 }
 
 async function estimateTaskDuration(task) {
   try {
     const apiConfig = getAPIConfig();
-    
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          {
-            role: 'system',
-            content: '你是一个时间管理专家，能够准确预估任务所需时间。只返回数字（分钟数）。'
-          },
-          {
-            role: 'user',
-            content: `预估以下任务需要多少分钟完成：\n\n任务：${task.title}\n描述：${task.description || '无'}`
-          }
-        ]
-      })
+
+    const { response } = await auditedDeepSeekCall({
+      module: 'estimate_duration',
+      apiConfig,
+      messages: [
+        { role: 'system', content: '你是一个时间管理专家，能够准确预估任务所需时间。只返回数字（分钟数）。' },
+        { role: 'user', content: `预估以下任务需要多少分钟完成：\n\n任务：${task.title}\n描述：${task.description || '无'}` }
+      ],
     });
 
     const data = await response.json();
@@ -1724,25 +1874,13 @@ ipcMain.handle('analyze-task', async (event, text) => {
       userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
     }
     
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          {
-            role: 'system',
-            content: getCurrentAIPrompt()
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ]
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'analyze_task',
+      apiConfig,
+      messages: [
+        { role: 'system', content: getCurrentAIPrompt() },
+        { role: 'user', content: userPrompt }
+      ],
     });
     
     if (!response.ok) {
@@ -1894,26 +2032,14 @@ ipcMain.handle('analyze-clipboard', async (event, text) => {
 - 遇到 **@任何人 + 行动要求** → **is_task=true, confidence >= 0.9**
 - 遇到 **编号列表（1）2）3）等）+ 行动描述** → **is_task=true, confidence >= 0.85**`;
 
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          {
-            role: 'system',
-            content: clipboardPrompt
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        temperature: 0.3
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'analyze_clipboard',
+      apiConfig,
+      messages: [
+        { role: 'system', content: clipboardPrompt },
+        { role: 'user', content: text }
+      ],
+      fetchOptions: { temperature: 0.3 },
     });
     
     if (!response.ok) {
@@ -1970,22 +2096,13 @@ ${feedback}
       return { success: false, error: '每日调用次数已达上限' };
     }
     
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          {
-            role: 'user',
-            content: optimizePrompt
-          }
-        ],
-        temperature: 0.5
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'optimize_prompt',
+      apiConfig,
+      messages: [
+        { role: 'user', content: optimizePrompt }
+      ],
+      fetchOptions: { temperature: 0.5 },
     });
     
     if (!response.ok) {
@@ -2105,6 +2222,8 @@ ipcMain.handle('clear-api-key', async () => {
 const DEFAULT_ADP_APP_KEY = 'EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm';
 // 知识推荐和知识搜索使用的专用 AppKey（与通用 ADP 助手不同）
 const DEFAULT_ADP_KNOWLEDGE_APP_KEY = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
+// 知识聚类使用的 AppKey（默认与智能推荐相同）
+const DEFAULT_ADP_CLUSTERING_APP_KEY = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
 
 ipcMain.handle('get-adp-config', async () => {
   // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
@@ -2112,18 +2231,21 @@ ipcMain.handle('get-adp-config', async () => {
     const serverAppKey = remoteConfig.adp.app_key || '';
     const serverKnowledgeAppKey = remoteConfig.adp.knowledge_app_key || '';
     const serverSearchAppKey = remoteConfig.adp.search_app_key || '';
+    const serverClusteringAppKey = remoteConfig.adp.clustering_app_key || '';
     return {
       appKey: serverAppKey || DEFAULT_ADP_APP_KEY,
       url: remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
       agentName: remoteConfig.adp.agent_name || '我的AI助手',
       knowledgeAppKey: serverKnowledgeAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
       searchAppKey: serverSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+      clusteringAppKey: serverClusteringAppKey || DEFAULT_ADP_CLUSTERING_APP_KEY,
       fromServer: true,
       // 详细标注每个 Key 的真实来源：server=服务器配置, default=本地默认值, custom=用户自定义
       configSource: {
         appKey: serverAppKey ? 'server' : 'default',
         knowledgeAppKey: serverKnowledgeAppKey ? 'server' : 'default',
         searchAppKey: serverSearchAppKey ? 'server' : 'default',
+        clusteringAppKey: serverClusteringAppKey ? 'server' : 'default',
       }
     };
   }
@@ -2131,17 +2253,20 @@ ipcMain.handle('get-adp-config', async () => {
   const localAppKey = getSetting('adp_app_key') || '';
   const localKnowledgeAppKey = getSetting('adp_knowledge_app_key') || '';
   const localSearchAppKey = getSetting('adp_search_app_key') || '';
+  const localClusteringAppKey = getSetting('adp_clustering_app_key') || '';
   return {
     appKey: localAppKey || DEFAULT_ADP_APP_KEY,
     url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
     agentName: getSetting('adp_agent_name') || '我的AI助手',
     knowledgeAppKey: localKnowledgeAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
     searchAppKey: localSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+    clusteringAppKey: localClusteringAppKey || DEFAULT_ADP_CLUSTERING_APP_KEY,
     fromServer: false,
     configSource: {
       appKey: localAppKey ? 'custom' : 'default',
       knowledgeAppKey: localKnowledgeAppKey ? 'custom' : 'default',
       searchAppKey: localSearchAppKey ? 'custom' : 'default',
+      clusteringAppKey: localClusteringAppKey ? 'custom' : 'default',
     }
   };
 });
@@ -2162,6 +2287,9 @@ ipcMain.handle('set-adp-config', async (event, config) => {
   if (config.searchAppKey !== undefined) {
     setSetting('adp_search_app_key', config.searchAppKey);
   }
+  if (config.clusteringAppKey !== undefined) {
+    setSetting('adp_clustering_app_key', config.clusteringAppKey);
+  }
   return { success: true };
 });
 
@@ -2171,6 +2299,7 @@ ipcMain.handle('clear-adp-config', async () => {
   setSetting('adp_agent_name', '');
   setSetting('adp_knowledge_app_key', '');
   setSetting('adp_search_app_key', '');
+  setSetting('adp_clustering_app_key', '');
   return { success: true };
 });
 
@@ -2752,11 +2881,26 @@ ipcMain.handle('send-adp-message', async (event, message) => {
 
     if (!response.ok) {
       activeChatADPController = null;
+      // 审计日志：HTTP 错误
+      if (auditLogger) {
+        auditLogger.record({
+          module: 'adp_chat',
+          model: 'adp',
+          baseUrl: httpUrl,
+          input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+          output: { status: response.status, contentLen: 0, content: '', finishReason: null },
+          tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          latencyMs: Date.now() - _adpChatStartTime,
+          error: `HTTP ${response.status}`,
+        });
+      }
       return { success: false, error: `ADP请求失败: HTTP ${response.status}`, configSource };
     }
 
     // 立即返回成功，后续通过 IPC 事件流式推送每个 SSE event
     // 异步处理 SSE 流
+    const _adpChatStartTime = Date.now();
+    let _adpChatFullText = '';
     (async () => {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -2786,12 +2930,29 @@ ipcMain.handle('send-adp-message', async (event, message) => {
               // SSE 事件边界
               if (currentData) {
                 if (currentData === '[DONE]') {
+                  // 审计日志：ADP 聊天完成
+                  if (auditLogger) {
+                    auditLogger.record({
+                      module: 'adp_chat',
+                      model: 'adp',
+                      baseUrl: httpUrl,
+                      input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+                      output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'completed' },
+                      tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                      latencyMs: Date.now() - _adpChatStartTime,
+                    });
+                  }
                   mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource });
                   activeChatADPController = null;
                   return;
                 }
                 try {
                   const parsed = JSON.parse(currentData);
+                  // 累积完整文本用于审计日志
+                  const deltaText = parsed.Text || parsed.Content?.[0]?.Text || parsed.payload?.content?.[0]?.text || '';
+                  if (deltaText && (currentEvent === 'text.delta' || currentEvent === 'message.added' || currentEvent === 'content.added')) {
+                    _adpChatFullText += deltaText;
+                  }
                   // 推送完整的 {event, data} 给前端，让前端处理渲染
                   mainWindow.webContents.send('adp:sse-event', {
                     event: currentEvent || parsed.Type || '',
@@ -2819,9 +2980,33 @@ ipcMain.handle('send-adp-message', async (event, message) => {
             });
           } catch (e) {}
         }
+        // 审计日志：流自然结束（非 [DONE]）
+        if (_adpChatFullText && auditLogger) {
+          auditLogger.record({
+            module: 'adp_chat',
+            model: 'adp',
+            baseUrl: httpUrl,
+            input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+            output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'stream_end' },
+            tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latencyMs: Date.now() - _adpChatStartTime,
+          });
+        }
         mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource });
       } catch (e) {
         if (e.name === 'AbortError') {
+          // 审计日志：用户中止
+          if (auditLogger) {
+            auditLogger.record({
+              module: 'adp_chat',
+              model: 'adp',
+              baseUrl: httpUrl,
+              input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+              output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'aborted' },
+              tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+              latencyMs: Date.now() - _adpChatStartTime,
+            });
+          }
           mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource, aborted: true });
         } else {
           mainWindow.webContents.send('adp:sse-event', { event: 'error', data: { Error: { Message: e.message } }, configSource });
@@ -2927,18 +3112,14 @@ ipcMain.handle('memory:ai-organize', async (event, content) => {
 }
 分类：instant=临时, short=近期, long=长期有价值。只输出JSON。`;
 
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `记忆内容：${content}\n\n相关历史记忆：\n${relatedText}` }
-        ],
-        temperature: 0.1,
-        max_tokens: 4096
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'memory_extract',
+      apiConfig,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `记忆内容：${content}\n\n相关历史记忆：\n${relatedText}` }
+      ],
+      fetchOptions: { temperature: 0.1, max_tokens: 4096 },
     });
 
     if (!response.ok) {
@@ -3048,18 +3229,14 @@ ipcMain.handle('memory:ai-batch-organize', async () => {
 }
 规则：合并保留最完整信息；覆盖仅在新信息完全取代旧信息时用；只输出JSON。`;
 
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: memoriesText }
-        ],
-        temperature: 0.1,
-        max_tokens: 4096
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'memory_organize',
+      apiConfig,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: memoriesText }
+      ],
+      fetchOptions: { temperature: 0.1, max_tokens: 4096 },
     });
 
     if (!response.ok) {
@@ -3135,7 +3312,13 @@ ipcMain.handle('memory:ai-batch-organize', async () => {
 // 清空已处理的剪切板哈希记录（用于测试）
 ipcMain.handle('clear-clipboard-hashes', async () => {
   processedClipboardHashes.clear();
-  console.log('[Clipboard] Hashes cleared');
+  // 同时清除 scheduler 的 lastClipboardText，允许重新检测
+  const scheduler = getScheduler();
+  if (scheduler) {
+    scheduler.lastClipboardText = '';
+    scheduler.clearProcessedHashes();
+  }
+  console.log('[Clipboard] Hashes cleared (包括 scheduler 缓存)');
   return { success: true };
 });
 
@@ -3176,6 +3359,139 @@ ipcMain.handle('clipboard:update-config', async (event, config) => {
     }
   }
   console.log('[Clipboard] Config updated:', config);
+  return { success: true };
+});
+
+// 🔧 剪贴板自诊断命令（DevTools 中调用: await window.electronAPI.clipboardDiagnostic()）
+ipcMain.handle('clipboard:diagnostic', async () => {
+  const diag = {
+    timestamp: new Date().toISOString(),
+    scheduler: null,
+    clipboard: null,
+    apiConfig: null,
+    aiCalls: null,
+    settings: null
+  };
+
+  // 1. Scheduler 状态
+  const scheduler = getScheduler();
+  if (scheduler) {
+    diag.scheduler = {
+      isRunning: scheduler.isRunning,
+      isAnalyzing: scheduler.isAnalyzing,
+      lastClipboardText: scheduler.lastClipboardText?.substring(0, 80),
+      processedHashesCount: scheduler.processedHashes.size,
+      pendingAnalysisCount: scheduler.pendingAnalysis.length,
+      bufferFragments: scheduler.buffer.fragmentCount,
+      bufferTotalLength: scheduler.buffer.totalLength,
+      bufferIsStable: scheduler.buffer.isStable,
+      stateDetectorPaused: scheduler.stateDetector.isPaused,
+      freqControllerActive: scheduler.freqController.isActive(),
+      computedInterval: scheduler.freqController.computeInterval(),
+      bufferEnabled: scheduler._isEnabled('clipboard_buffer_enabled'),
+      freqEnabled: scheduler._isEnabled('clipboard_freq_enabled'),
+    };
+  } else {
+    diag.scheduler = '❌ Scheduler 不存在！initClipboardWatcher 可能失败了';
+  }
+
+  // 2. 当前剪贴板内容
+  try {
+    const currentText = clipboard.readText();
+    diag.clipboard = {
+      currentText: currentText?.substring(0, 100) || '(空)',
+      length: currentText?.length || 0,
+      hash: currentText ? getClipboardHash(currentText) : null,
+      isProcessed: currentText ? processedClipboardHashes.has(getClipboardHash(currentText)) : null,
+    };
+  } catch (e) {
+    diag.clipboard = `❌ 读取失败: ${e.message}`;
+  }
+
+  // 3. API 配置
+  try {
+    const config = getAPIConfig();
+    diag.apiConfig = {
+      baseUrl: config.baseUrl,
+      model: config.model,
+      hasApiKey: !!config.apiKey,
+      isCustomKey: config.isCustomKey,
+      dailyLimit: config.dailyLimit,
+    };
+  } catch (e) {
+    diag.apiConfig = `❌ 获取失败: ${e.message}`;
+  }
+
+  // 4. AI 调用计数
+  initAICallCount();
+  diag.aiCalls = {
+    count: parseInt(getSetting(AI_CALLS_KEY) || '0'),
+    date: getSetting(AI_CALLS_DATE_KEY),
+    canCall: canMakeAICall(),
+  };
+
+  // 4.5 聚类调用统计
+  diag.clusteringCalls = getClusteringCallStats();
+
+  // 5. 关键设置
+  diag.settings = {
+    clipboard_buffer_enabled: getSetting('clipboard_buffer_enabled'),
+    clipboard_freq_enabled: getSetting('clipboard_freq_enabled'),
+    clipboard_association_enabled: getSetting('clipboard_association_enabled'),
+    api_key: getSetting('api_key') ? '(已设置)' : '(未设置)',
+    api_base_url: getSetting('api_base_url'),
+    api_model: getSetting('api_model'),
+  };
+
+  console.log('[Diagnostic] 🔍 完整诊断结果:', JSON.stringify(diag, null, 2));
+  return diag;
+});
+
+// 🔧 强制分析当前剪贴板内容（绕过所有缓存和去重）
+ipcMain.handle('clipboard:force-analyze', async () => {
+  const text = clipboard.readText();
+  if (!text) return { error: '剪贴板为空' };
+  
+  // 清除所有缓存
+  processedClipboardHashes.clear();
+  const scheduler = getScheduler();
+  if (scheduler) {
+    scheduler.lastClipboardText = '';
+    scheduler.clearProcessedHashes();
+    scheduler.isAnalyzing = false;
+  }
+  
+  console.log(`[Diagnostic] 🔨 强制分析: "${text.substring(0, 80)}..." (${text.length}字)`);
+  
+  // 直接调用分析
+  try {
+    await analyzeClipboardText(text);
+    return { success: true, textLength: text.length };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// ========== AI 审计日志 IPC ==========
+
+ipcMain.handle('audit:query', async (event, options) => {
+  if (!auditLogger) return { records: [], total: 0, page: 1, pageSize: 20, totalPages: 0, stats: null };
+  return auditLogger.query(options);
+});
+
+ipcMain.handle('audit:modules', async () => {
+  if (!auditLogger) return [];
+  return auditLogger.getModules();
+});
+
+ipcMain.handle('audit:daily-stats', async (event, days) => {
+  if (!auditLogger) return [];
+  return auditLogger.getDailyStats(days || 7);
+});
+
+ipcMain.handle('audit:cleanup', async () => {
+  if (!auditLogger) return;
+  auditLogger.cleanup();
   return { success: true };
 });
 
@@ -3351,9 +3667,20 @@ ipcMain.handle('knowledge:cluster-atom', async (event, atomId, clusterId) => {
 ipcMain.handle('knowledge:auto-cluster', async () => {
   if (!knowledgeStore) return { started: false, message: '知识库未初始化' };
 
+  // 登录检查：聚类功能需要登录
+  if (!authState.isLoggedIn) {
+    return { started: false, message: '聚类功能需要登录后使用', needLogin: true };
+  }
+
   // 防止重复启动
   if (clusteringRunning) {
     return { started: false, message: '聚类正在进行中，请等待完成或取消' };
+  }
+
+  // 每日调用限制检查
+  if (!canMakeClusteringCall()) {
+    const stats = getClusteringCallStats();
+    return { started: false, message: `今日聚类次数已达上限（${stats.count}/${stats.limit}），明天再试` };
   }
 
   // 先合并相似簇和清理空簇
@@ -3391,6 +3718,7 @@ ipcMain.handle('knowledge:auto-cluster', async () => {
     }
   });
 
+  incrementClusteringCallCount();
   return { started: true };
 });
 
@@ -3399,6 +3727,11 @@ ipcMain.handle('knowledge:cancel-clustering', async () => {
   clusteringAborted = true;
   console.log('[Knowledge] Clustering cancelled by user');
   return { success: true };
+});
+
+// 获取聚类调用统计
+ipcMain.handle('knowledge:clustering-stats', async () => {
+  return getClusteringCallStats();
 });
 
 // 知识文章
@@ -3443,9 +3776,20 @@ ipcMain.handle('knowledge:get-domains', async () => {
 ipcMain.handle('knowledge:distill-all', async () => {
   if (!knowledgeStore) return { started: false, message: '知识库未初始化' };
 
+  // 登录检查：聚类功能需要登录
+  if (!authState.isLoggedIn) {
+    return { started: false, message: '聚类功能需要登录后使用', needLogin: true };
+  }
+
   // 防止重复启动
   if (clusteringRunning) {
     return { started: false, message: '聚类正在进行中，请等待完成或取消' };
+  }
+
+  // 每日调用限制检查
+  if (!canMakeClusteringCall()) {
+    const stats = getClusteringCallStats();
+    return { started: false, message: `今日聚类次数已达上限（${stats.count}/${stats.limit}），明天再试` };
   }
 
   // 异步执行
@@ -3516,6 +3860,7 @@ ipcMain.handle('knowledge:distill-all', async () => {
     }
   })();
 
+  incrementClusteringCallCount();
   return { started: true };
 });
 
@@ -3560,21 +3905,15 @@ ipcMain.handle('extract-memory', async (event, content) => {
     
     console.log('[Memory] Calling API with content length:', content.length);
     
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: content }
-        ]
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'memory_extract_ipc',
+      apiConfig,
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: content }
+      ],
     });
-    
+
     console.log('[Memory] API Response status:', response.status);
     
     if (!response.ok) {
@@ -3687,19 +4026,13 @@ async function optimizePrompts() {
       }
     `;
     
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          { role: 'system', content: '你是一个AI助手，擅长优化Prompt和识别规则。' },
-          { role: 'user', content: optimizationPrompt }
-        ]
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'optimize_prompts',
+      apiConfig,
+      messages: [
+        { role: 'system', content: '你是一个AI助手，擅长优化Prompt和识别规则。' },
+        { role: 'user', content: optimizationPrompt }
+      ],
     });
     
     if (response.ok) {
@@ -3779,6 +4112,11 @@ app.whenReady().then(() => {
   db = new Database(app.getPath('userData'));
   db.init();
   console.log('[Database] Database initialized');
+
+  // 初始化 AI 审计日志
+  auditLogger = new AIAuditLogger(app.getPath('userData'));
+  auditLogger.cleanup(); // 清理过期日志
+  console.log('[Audit] AI audit logger initialized');
   
   // 初始化 prompts 目录（从内置目录复制到 userData，确保可写）
   initPrompts();
@@ -3814,7 +4152,7 @@ app.whenReady().then(() => {
   console.log('[App] Window created');
   createTray();
   console.log('[App] Tray created');
-  startClipboardWatcher();
+  initClipboardWatcher();
   console.log('[App] Clipboard watcher started');
   
   // v2.0: 加载自定义服务器地址，然后自动登录
@@ -4102,15 +4440,14 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments }) 
 
     const startTs = Date.now();
     console.log('[Agent] Invoke (streaming) - intent:', intent, 'model:', apiConfig.model, 'baseUrl:', apiConfig.baseUrl);
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-      body: JSON.stringify({
-        model: apiConfig.model, messages, temperature: 0.5, stream: true,
-        // chat 模式（LLM直接对话）不强制 JSON 格式，让模型自然回复
-        // 其他 agent 模式且无图片附件时强制 JSON 格式
+    const { response } = await auditedDeepSeekCall({
+      module: 'agent',
+      apiConfig,
+      messages,
+      fetchOptions: {
+        temperature: 0.5, stream: true,
         ...(intent === 'chat' ? {} : (attachments?.length ? {} : { response_format: { type: 'json_object' } }))
-      })
+      },
     });
 
     if (!response.ok) {
@@ -5112,18 +5449,11 @@ async function extractKnowledgeAtoms(content, sourceNoteId, tags) {
       .replace('{title}', '')
       .replace('{content}', content.substring(0, 1500));
 
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 1000
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'knowledge_extract_atoms',
+      apiConfig,
+      messages: [{ role: 'user', content: prompt }],
+      fetchOptions: { temperature: 0.3, max_tokens: 1000 },
     });
 
     if (!response.ok) {
@@ -5176,17 +5506,55 @@ async function extractKnowledgeAtoms(content, sourceNoteId, tags) {
 const CLUSTERING_CONFIG = {
   BATCH_SIZE: 80,                    // 每批最大原子数
   SINGLE_CALL_THRESHOLD: 80,         // 单次调用阈值
-  ATOM_CONTENT_MAX_LENGTH: 80,       // 原子内容截断长度
-  CLUSTER_INFO_MAX_COUNT: 30,        // 已有簇最大展示数
-  MAX_TOKENS_BATCH: 4000,            // 分批模式输出 token 上限
-  MAX_TOKENS_SINGLE: 2000,           // 单次模式输出 token 上限
+  ATOM_CONTENT_MAX_LENGTH: 60,       // 原子内容截断长度（省 token：从80降到60）
+  CLUSTER_INFO_MAX_COUNT: 20,        // 已有簇最大展示数（省 token：从30降到20）
+  MAX_TOKENS_BATCH: 3000,            // 分批模式输出 token 上限（省 token：从4000降到3000）
+  MAX_TOKENS_SINGLE: 1500,           // 单次模式输出 token 上限（省 token：从2000降到1500）
   TEMPERATURE: 0.3,                  // 聚类温度
   BATCH_DELAY_MS: 500,               // 批次间隔（避免 QPS 限制）
   MAX_RETRIES: 2,                    // 单批最大重试次数
+  DAILY_LIMIT: 1,                    // 每日聚类调用次数上限（省 token）
+  MIN_ATOMS_FOR_CLUSTERING: 3,       // 最少需要多少个未聚类原子才触发 AI 聚类
 };
 
 let clusteringAborted = false;
 let clusteringRunning = false;
+
+// 聚类每日调用计数
+const CLUSTERING_CALLS_KEY = 'memora_clustering_calls_count';
+const CLUSTERING_CALLS_DATE_KEY = 'memora_clustering_calls_date';
+
+function canMakeClusteringCall() {
+  const today = new Date().toISOString().split('T')[0];
+  const storedDate = getSetting(CLUSTERING_CALLS_DATE_KEY);
+  if (storedDate !== today) {
+    setSetting(CLUSTERING_CALLS_KEY, '0');
+    setSetting(CLUSTERING_CALLS_DATE_KEY, today);
+    return true;
+  }
+  const count = parseInt(getSetting(CLUSTERING_CALLS_KEY) || '0');
+  return count < CLUSTERING_CONFIG.DAILY_LIMIT;
+}
+
+function incrementClusteringCallCount() {
+  const today = new Date().toISOString().split('T')[0];
+  const storedDate = getSetting(CLUSTERING_CALLS_DATE_KEY);
+  if (storedDate !== today) {
+    setSetting(CLUSTERING_CALLS_KEY, '1');
+    setSetting(CLUSTERING_CALLS_DATE_KEY, today);
+  } else {
+    const count = parseInt(getSetting(CLUSTERING_CALLS_KEY) || '0');
+    setSetting(CLUSTERING_CALLS_KEY, (count + 1).toString());
+  }
+}
+
+function getClusteringCallStats() {
+  const today = new Date().toISOString().split('T')[0];
+  const storedDate = getSetting(CLUSTERING_CALLS_DATE_KEY);
+  if (storedDate !== today) return { count: 0, limit: CLUSTERING_CONFIG.DAILY_LIMIT, remaining: CLUSTERING_CONFIG.DAILY_LIMIT };
+  const count = parseInt(getSetting(CLUSTERING_CALLS_KEY) || '0');
+  return { count, limit: CLUSTERING_CONFIG.DAILY_LIMIT, remaining: Math.max(0, CLUSTERING_CONFIG.DAILY_LIMIT - count) };
+}
 
 // 原子内容压缩：保留核心语义，截断过长内容
 function compressAtomContent(atom) {
@@ -5255,64 +5623,203 @@ function buildClusteringPrompt(existingClusters, batchAtoms, promptTemplate) {
     .replace('{unclustered_atoms}', atomStr);
 }
 
-// 单批 AI 调用 + 解析
-async function processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount = 0) {
+// 获取聚类用的 ADP 配置
+function getClusteringADPConfig() {
+  let clusteringAppKey, url;
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+    clusteringAppKey = remoteConfig.adp.clustering_app_key || '';
+    url = remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  } else {
+    clusteringAppKey = getSetting('adp_clustering_app_key') || '';
+    url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  }
+  // 回退到 knowledge key
+  if (!clusteringAppKey || clusteringAppKey.trim() === '') {
+    clusteringAppKey = DEFAULT_ADP_CLUSTERING_APP_KEY;
+  }
+  return { clusteringAppKey: clusteringAppKey.trim(), url };
+}
+
+// 单批 AI 调用 + 解析（使用 ADP SSE 接口）
+async function processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount = 0) {
   const prompt = buildClusteringPrompt(existingClusters, batchAtoms, promptTemplate);
-  const maxTokens = batchAtoms.length <= CLUSTERING_CONFIG.SINGLE_CALL_THRESHOLD
-    ? CLUSTERING_CONFIG.MAX_TOKENS_SINGLE
-    : CLUSTERING_CONFIG.MAX_TOKENS_BATCH;
+
+  // 登录检查
+  if (!authState.isLoggedIn) {
+    return { success: false, error: '聚类功能需要登录后使用', assignments: [] };
+  }
+
+  const { clusteringAppKey, url } = getClusteringADPConfig();
+  const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+  const requestBody = {
+    RequestId: requestId,
+    ConversationId: convId,
+    AppKey: clusteringAppKey,
+    VisitorId: getDeviceFingerprint(),
+    Contents: [{ Type: 'text', Text: prompt }],
+    Incremental: true,
+    Stream: 'enable',
+    StreamingThrottle: 5
+  };
+
+  const startTime = Date.now();
 
   try {
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    console.log('[Knowledge] Clustering via ADP, url:', httpUrl, 'appKey:', clusteringAppKey.substring(0, 10) + '...');
+
+    const response = await fetch(httpUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: CLUSTERING_CONFIG.TEMPERATURE,
-        max_tokens: maxTokens
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
       // 429 限流
       if (response.status === 429 && retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
-        console.warn('[Knowledge] Rate limited, retrying in 5s...');
+        console.warn('[Knowledge] ADP rate limited, retrying in 5s...');
         await new Promise(r => setTimeout(r, 5000));
-        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount + 1);
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
       }
       const errBody = await response.text().catch(() => '');
-      console.error('[Knowledge] AI API error:', response.status, errBody.substring(0, 300));
-      return { success: false, error: `AI 服务调用失败（${response.status}）`, assignments: [] };
+      console.error('[Knowledge] ADP API error:', response.status, errBody.substring(0, 300));
+
+      // 记录审计日志
+      if (auditLogger) {
+        auditLogger.record({
+          module: 'knowledge_clustering',
+          model: 'adp',
+          baseUrl: url,
+          input: { systemPromptLen: 0, userPromptLen: prompt.length, userPrompt: prompt },
+          output: { status: response.status, contentLen: 0, content: '', finishReason: null },
+          tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          latencyMs: Date.now() - startTime,
+          error: `HTTP ${response.status}: ${errBody.substring(0, 200)}`,
+        });
+      }
+
+      return { success: false, error: `ADP 服务调用失败（${response.status}）`, assignments: [] };
     }
 
-    const data = await response.json();
-    const rawText = data.choices?.[0]?.message?.content || '';
+    // 读取 SSE 流式响应
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let currentEvent = '';
 
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (clusteringAborted) {
+        reader.cancel();
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim();
+          continue;
+        }
+
+        if (line.startsWith('data:')) {
+          const data = line.substring(5).trim();
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            const eventName = currentEvent || parsed.event || '';
+
+            let deltaText = '';
+            if (eventName === 'text.delta') {
+              deltaText = parsed.Text || parsed.payload?.content?.[0]?.text || parsed.content?.text || '';
+            } else if (eventName === 'message.added' || eventName === 'content.added') {
+              deltaText = parsed.Content?.[0]?.Text || parsed.Text || '';
+            } else if (eventName === 'message.done') {
+              const doneText = parsed.Message?.Content?.[0]?.Text || parsed.Text || '';
+              if (doneText && !fullText) fullText = doneText;
+              break;
+            } else if (eventName === 'response.completed') {
+              break;
+            } else if (eventName === 'error' || parsed.error) {
+              const errMsg = parsed.error?.message || parsed.error?.code || JSON.stringify(parsed.error || parsed);
+              console.error('[Knowledge] Clustering ADP error:', errMsg);
+
+              if (auditLogger) {
+                auditLogger.record({
+                  module: 'knowledge_clustering',
+                  model: 'adp',
+                  baseUrl: url,
+                  input: { systemPromptLen: 0, userPromptLen: prompt.length, userPrompt: prompt },
+                  output: { status: response.status, contentLen: fullText.length, content: fullText, finishReason: 'error' },
+                  tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                  latencyMs: Date.now() - startTime,
+                  error: errMsg,
+                });
+              }
+
+              return { success: false, error: `ADP 错误：${errMsg}`, assignments: [] };
+            }
+
+            if (deltaText) fullText += deltaText;
+          } catch (_) {
+            // 非 JSON 数据，跳过
+          }
+        }
+
+        if (line.trim() === '') {
+          currentEvent = '';
+        }
+      }
+    }
+
+    // 记录审计日志（成功）
+    if (auditLogger) {
+      auditLogger.record({
+        module: 'knowledge_clustering',
+        model: 'adp',
+        baseUrl: url,
+        input: { systemPromptLen: 0, userPromptLen: prompt.length, userPrompt: prompt },
+        output: { status: 200, contentLen: fullText.length, content: fullText, finishReason: 'completed' },
+        tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        latencyMs: Date.now() - startTime,
+      });
+    }
+
+    // 解析 ADP 返回的 JSON
     let parsed;
     try {
-      const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      parsed = JSON.parse(jsonStr);
+      // ADP 可能返回 markdown 包裹的 JSON
+      const jsonStr = fullText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      // 提取 JSON 部分（ADP 可能在 JSON 前后有额外文字）
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]);
+      } else {
+        parsed = JSON.parse(jsonStr);
+      }
     } catch (e) {
       // JSON 解析失败，重试
       if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
-        console.warn('[Knowledge] Clustering parse error, retrying...', retryCount + 1);
+        console.warn('[Knowledge] Clustering parse error (ADP), retrying...', retryCount + 1, 'Raw:', fullText.substring(0, 200));
         await new Promise(r => setTimeout(r, 1000));
-        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount + 1);
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
       }
-      console.error('[Knowledge] Clustering parse error after retries:', e, 'Raw:', rawText.substring(0, 200));
-      return { success: false, error: 'AI 返回格式异常，无法解析聚类结果', assignments: [] };
+      console.error('[Knowledge] Clustering parse error after retries:', e, 'Raw:', fullText.substring(0, 200));
+      return { success: false, error: 'ADP 返回格式异常，无法解析聚类结果', assignments: [] };
     }
 
     return { success: true, assignments: parsed.assignments || [], mature_cluster_ids: parsed.mature_cluster_ids || [] };
   } catch (e) {
     if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
-      console.warn('[Knowledge] Batch error, retrying...', retryCount + 1, e.message);
+      console.warn('[Knowledge] Batch error (ADP), retrying...', retryCount + 1, e.message);
       await new Promise(r => setTimeout(r, 1000));
-      return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, apiConfig, retryCount + 1);
+      return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
     }
     return { success: false, error: e.message, assignments: [] };
   }
@@ -5359,34 +5866,120 @@ function applyClusteringAssignments(assignments, unclustered) {
   return { clustersCreated, atomsAssigned };
 }
 
+// 本地关键词预聚类：基于已有簇的关键词，把明显匹配的原子直接归入，减少 AI 调用量
+function localKeywordPreCluster(unclustered) {
+  if (!knowledgeStore) return { assigned: 0, remaining: unclustered };
+  
+  const existingClusters = knowledgeStore.getClusters();
+  if (existingClusters.length === 0) return { assigned: 0, remaining: unclustered };
+  
+  let assigned = 0;
+  const stillUnclustered = [];
+  
+  for (const atom of unclustered) {
+    let bestMatch = null;
+    let bestScore = 0;
+    const atomContent = (atom.content || '').toLowerCase();
+    const atomDomain = (atom.domain || '').toLowerCase();
+    
+    for (const cluster of existingClusters) {
+      const keywords = (cluster.keywords || []).map(k => k.toLowerCase());
+      const clusterName = (cluster.name || '').toLowerCase();
+      const clusterDomain = (cluster.domain || '').toLowerCase();
+      
+      let score = 0;
+      // 关键词命中
+      for (const kw of keywords) {
+        if (kw.length >= 2 && atomContent.includes(kw)) {
+          score += 2;
+        }
+      }
+      // 簇名命中
+      if (clusterName.length >= 2 && atomContent.includes(clusterName)) {
+        score += 3;
+      }
+      // 同领域加分
+      if (atomDomain && clusterDomain && atomDomain === clusterDomain) {
+        score += 1;
+      }
+      
+      if (score > bestScore && score >= 3) {
+        bestScore = score;
+        bestMatch = cluster;
+      }
+    }
+    
+    if (bestMatch) {
+      const result = knowledgeStore.clusterAtom(atom.id, bestMatch.id);
+      if (result) {
+        assigned++;
+        console.log(`[Knowledge] Local pre-cluster: atom "${atom.content?.substring(0, 30)}..." → cluster "${bestMatch.name}" (score=${bestScore})`);
+      } else {
+        stillUnclustered.push(atom);
+      }
+    } else {
+      stillUnclustered.push(atom);
+    }
+  }
+  
+  return { assigned, remaining: stillUnclustered };
+}
+
 // 知识聚类：将未归簇的原子智能分组（支持分批处理）
 async function autoClusterAtoms() {
   try {
-    const unclustered = knowledgeStore.getAtoms({ unclustered: true });
-    if (unclustered.length < 3) {
+    let unclustered = knowledgeStore.getAtoms({ unclustered: true });
+    if (unclustered.length < CLUSTERING_CONFIG.MIN_ATOMS_FOR_CLUSTERING) {
       console.log('[Knowledge] Too few unclustered atoms for clustering:', unclustered.length);
       return {
         clustersCreated: 0,
         atomsAssigned: 0,
         message: unclustered.length === 0
           ? '没有待聚类的知识原子，所有原子都已归入知识簇'
-          : `待聚类原子仅 ${unclustered.length} 个，至少需要 3 个才能进行智能聚类`
+          : `待聚类原子仅 ${unclustered.length} 个，至少需要 ${CLUSTERING_CONFIG.MIN_ATOMS_FOR_CLUSTERING} 个才能进行智能聚类`
+      };
+    }
+
+    // 本地关键词预聚类：减少需要发往 AI 的原子数量（省 token）
+    const preResult = localKeywordPreCluster(unclustered);
+    let localAssigned = preResult.assigned;
+    unclustered = preResult.remaining;
+    
+    if (localAssigned > 0) {
+      console.log(`[Knowledge] Local pre-cluster assigned ${localAssigned} atoms, ${unclustered.length} remaining for AI`);
+      // 通知前端预聚类结果
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('knowledge:clustering-progress', {
+          currentBatch: 0, totalBatches: 1, atomsAssigned: localAssigned,
+          message: `本地预聚类 ${localAssigned} 个原子，剩余 ${unclustered.length} 个需要 AI 智能聚类...`
+        });
+      }
+    }
+    
+    // 如果预聚类后剩余原子不足，直接返回
+    if (unclustered.length < CLUSTERING_CONFIG.MIN_ATOMS_FOR_CLUSTERING) {
+      return {
+        clustersCreated: 0,
+        atomsAssigned: localAssigned,
+        message: localAssigned > 0
+          ? `本地关键词聚类 ${localAssigned} 个原子，无需 AI 聚类`
+          : '没有待聚类的知识原子'
       };
     }
 
     clusteringAborted = false;
-    const apiConfig = getAPIConfig();
+    const adpConfig = getClusteringADPConfig();
     console.log('[Knowledge] autoClusterAtoms starting:', {
       unclusteredCount: unclustered.length,
-      apiKey: apiConfig.apiKey ? `${apiConfig.apiKey.substring(0, 8)}...` : 'MISSING',
-      baseUrl: apiConfig.baseUrl,
-      model: apiConfig.model
+      adpUrl: adpConfig.url,
+      clusteringAppKey: adpConfig.clusteringAppKey ? `${adpConfig.clusteringAppKey.substring(0, 10)}...` : 'MISSING',
+      isLoggedIn: authState.isLoggedIn,
     });
     const promptTemplate = loadClusteringPromptTemplate();
     const existingClusters = knowledgeStore.getClusters();
 
     let totalClustersCreated = 0;
-    let totalAtomsAssigned = 0;
+    let totalAtomsAssigned = localAssigned; // 包含本地预聚类数量
     const failedBatches = [];
     let wasAborted = false;
 
@@ -5403,7 +5996,7 @@ async function autoClusterAtoms() {
         });
       }
 
-      const result = await processClusteringBatch(unclustered, existingClusters, promptTemplate, apiConfig);
+      const result = await processClusteringBatch(unclustered, existingClusters, promptTemplate);
 
       if (result.success) {
         const applyResult = applyClusteringAssignments(result.assignments, unclustered);
@@ -5453,7 +6046,7 @@ async function autoClusterAtoms() {
           });
         }
 
-        const result = await processClusteringBatch(batch, currentClusters, promptTemplate, apiConfig);
+        const result = await processClusteringBatch(batch, currentClusters, promptTemplate);
 
         if (result.success) {
           const applyResult = applyClusteringAssignments(result.assignments, batch);
@@ -5565,18 +6158,11 @@ async function generateArticle(clusterId) {
       .replace('{cluster_domain}', cluster.domain || '通用')
       .replace('{atoms}', atomsStr);
 
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiConfig.apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.4,
-        max_tokens: 3000
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'knowledge_article',
+      apiConfig,
+      messages: [{ role: 'user', content: prompt }],
+      fetchOptions: { temperature: 0.4, max_tokens: 3000 },
     });
 
     if (!response.ok) return { success: false, error: 'API调用失败' };
@@ -5690,6 +6276,7 @@ async function triggerKnowledgeRecommendation(text, intent) {
 
     console.log('[Knowledge] Calling ADP for recommendation, url:', httpUrl, 'appKey source:', appKeySource, 'appKey:', appKey.substring(0, 10) + '...', 'query:', query.substring(0, 60));
 
+    const _recStartTime = Date.now();
     const response = await fetch(httpUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5793,6 +6380,19 @@ async function triggerKnowledgeRecommendation(text, intent) {
       }
       console.log('[Knowledge] Recommendation saved and pushed to frontend');
     }
+
+    // 审计日志：知识推荐完成
+    if (auditLogger) {
+      auditLogger.record({
+        module: 'knowledge_recommend',
+        model: 'adp',
+        baseUrl: httpUrl,
+        input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
+        output: { status: 200, contentLen: fullText.length, content: fullText, finishReason: 'completed' },
+        tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        latencyMs: Date.now() - _recStartTime,
+      });
+    }
   } catch (e) {
     console.error('[Knowledge] triggerKnowledgeRecommendation error:', e);
   }
@@ -5856,6 +6456,7 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
   // 创建 AbortController 用于取消请求
   const controller = new AbortController();
   activeADPController = controller;
+  const _searchStartTime = Date.now();
 
   try {
     const https = require('https');
@@ -5869,6 +6470,19 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
     });
 
     if (!response.ok) {
+      // 审计日志：HTTP 错误
+      if (auditLogger) {
+        auditLogger.record({
+          module: 'knowledge_search',
+          model: 'adp',
+          baseUrl: httpUrl,
+          input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
+          output: { status: response.status, contentLen: 0, content: '', finishReason: null },
+          tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          latencyMs: Date.now() - _searchStartTime,
+          error: `HTTP ${response.status}`,
+        });
+      }
       return { success: false, error: `ADP请求失败: ${response.status}`, conversationId: convId };
     }
 
@@ -5994,6 +6608,19 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
           if (recs.length > 100) recs.length = 100; // 限制数量
           saveKnowledgeRecommendations(recs);
         }
+
+        // 审计日志：知识搜索完成
+        if (auditLogger) {
+          auditLogger.record({
+            module: 'knowledge_search',
+            model: 'adp',
+            baseUrl: httpUrl,
+            input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
+            output: { status: 200, contentLen: fullText.length, content: fullText, finishReason: 'completed' },
+            tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latencyMs: Date.now() - _searchStartTime,
+          });
+        }
       } catch (readErr) {
         if (readErr.name !== 'AbortError') {
           console.error('[Knowledge] SSE read error:', readErr);
@@ -6010,6 +6637,19 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
       return { success: false, error: '请求已取消', conversationId: convId };
     }
     console.error('[Knowledge] ADP fetch error:', error);
+    // 审计日志：异常
+    if (auditLogger) {
+      auditLogger.record({
+        module: 'knowledge_search',
+        model: 'adp',
+        baseUrl: url,
+        input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
+        output: { status: null, contentLen: 0, content: '', finishReason: null },
+        tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        latencyMs: Date.now() - _searchStartTime,
+        error: error.message,
+      });
+    }
     return { success: false, error: error.message, conversationId: convId };
   }
 });
@@ -6178,28 +6818,15 @@ ipcMain.handle('knowledge:extract-keywords', async (event, { query }) => {
       model = getSetting('model') || DEFAULT_MODEL;
     }
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: 'system',
-            content: '你是一个关键词提取专家。从用户的语义化搜索语句中提取出唯一的核心关键词。只输出1个核心关键词，不超过7个字，不要有其他内容。去除虚词、语气词和修饰语，保留最能代表搜索意图的核心词。例如："如何优化数据库查询性能" → "数据库"，"最近在研究的前端框架有什么推荐" → "前端框架"，"React中useState的使用方法" → "useState"，"机器学习中的梯度下降算法" → "梯度下降"'
-          },
-          {
-            role: 'user',
-            content: query
-          }
-        ],
-        max_tokens: 100,
-        temperature: 0.1
-      }),
-      signal: AbortSignal.timeout(8000)
+    const { response } = await auditedDeepSeekCall({
+      module: 'search_keyword',
+      apiConfig: { baseUrl, apiKey, model },
+      messages: [
+        { role: 'system', content: '你是一个关键词提取专家。从用户的语义化搜索语句中提取出唯一的核心关键词。只输出1个核心关键词，不超过7个字，不要有其他内容。去除虚词、语气词和修饰语，保留最能代表搜索意图的核心词。例如："如何优化数据库查询性能" → "数据库"，"最近在研究的前端框架有什么推荐" → "前端框架"，"React中useState的使用方法" → "useState"，"机器学习中的梯度下降算法" → "梯度下降"' },
+        { role: 'user', content: query }
+      ],
+      fetchOptions: { max_tokens: 100, temperature: 0.1 },
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!response.ok) {
@@ -6328,18 +6955,14 @@ ipcMain.handle('profile:import-ai', async (event, text) => {
 }
 规则：提取所有人物并推断关系(领导/同事/下属/客户/合作伙伴)；项目状态根据描述推断；只输出JSON，不输出markdown。内容尽量精简，name和description要简短。`;
 
-    const response = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-      body: JSON.stringify({
-        model: apiConfig.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: text }
-        ],
-        temperature: 0.1,
-        max_tokens: 8192
-      })
+    const { response } = await auditedDeepSeekCall({
+      module: 'profile_import',
+      apiConfig,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
+      ],
+      fetchOptions: { temperature: 0.1, max_tokens: 8192 },
     });
 
     if (!response.ok) {

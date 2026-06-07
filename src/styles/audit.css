@@ -1,0 +1,477 @@
+/* ============= AI 审计日志 ============= */
+
+.audit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: auditFadeIn 0.2s ease;
+}
+
+.audit-overlay.hidden {
+  display: none;
+}
+
+@keyframes auditFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.audit-panel {
+  width: 90vw;
+  max-width: 1100px;
+  height: 80vh;
+  max-height: 720px;
+  background: var(--bg-primary, #ffffff);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: auditSlideUp 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes auditSlideUp {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.audit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.08));
+}
+
+.audit-header h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.audit-close-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: var(--bg-tertiary, #f5f5f7);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  color: var(--text-secondary);
+}
+
+.audit-close-btn:hover {
+  background: var(--bg-secondary, #eee);
+}
+
+.audit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 24px;
+  border-bottom: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.06));
+  flex-wrap: wrap;
+}
+
+.audit-toolbar select,
+.audit-toolbar input {
+  height: 34px;
+  border: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 13px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.audit-toolbar select:focus,
+.audit-toolbar input:focus {
+  border-color: var(--primary, #007AFF);
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.12);
+}
+
+.audit-search-input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.audit-search-btn {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  background: var(--primary, #007AFF);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.audit-search-btn:hover {
+  filter: brightness(1.08);
+}
+
+/* 统计概览 */
+.audit-stats {
+  display: flex;
+  gap: 6px;
+  padding: 12px 24px;
+  border-bottom: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.06));
+  overflow-x: auto;
+}
+
+.audit-stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 10px;
+  min-width: 80px;
+}
+
+.audit-stat-card.audit-stat-error {
+  background: rgba(255, 59, 48, 0.06);
+}
+
+.audit-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.audit-stat-error .audit-stat-value {
+  color: #FF3B30;
+}
+
+.audit-stat-label {
+  font-size: 11px;
+  color: var(--text-tertiary, #86868b);
+  margin-top: 2px;
+}
+
+/* 每日趋势图 */
+.audit-daily-chart {
+  padding: 8px 24px 4px;
+  border-bottom: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.06));
+}
+
+.audit-chart-empty {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: 8px;
+}
+
+.audit-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 60px;
+}
+
+.audit-chart-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.audit-chart-bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.audit-chart-bar {
+  width: 70%;
+  max-width: 32px;
+  background: linear-gradient(180deg, var(--primary, #007AFF), rgba(0, 122, 255, 0.5));
+  border-radius: 4px 4px 0 0;
+  min-height: 3px;
+  transition: height 0.3s ease;
+}
+
+.audit-chart-label {
+  font-size: 10px;
+  color: var(--text-tertiary, #86868b);
+  margin-top: 2px;
+}
+
+/* 表格 */
+.audit-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.audit-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-secondary, #f5f5f7);
+}
+
+.audit-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.08));
+}
+
+.audit-table td {
+  padding: 7px 12px;
+  border-bottom: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.04));
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.audit-log-row {
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.audit-log-row:hover {
+  background: rgba(0, 122, 255, 0.04);
+}
+
+.audit-row-expanded {
+  background: rgba(0, 122, 255, 0.06) !important;
+}
+
+.audit-cell-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-cell-module {
+  font-size: 12px;
+}
+
+.audit-status-ok { color: #34C759; }
+.audit-status-warn { color: #FF9500; }
+.audit-status-error { color: #FF3B30; }
+
+.audit-cell-tokens {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.audit-cell-latency {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.audit-cell-preview {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.audit-loading,
+.audit-empty,
+.audit-error {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+.audit-error {
+  color: #FF3B30;
+}
+
+/* 详情展开 */
+.audit-detail-row td {
+  padding: 0 12px 12px;
+  border-bottom: 1px solid var(--border-primary, rgba(0, 0, 0, 0.08));
+  background: rgba(0, 122, 255, 0.02);
+}
+
+.audit-detail-content {
+  padding: 12px 0;
+}
+
+.audit-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.audit-detail-section {
+  margin-bottom: 8px;
+}
+
+.audit-detail-section h5 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.audit-detail-section div {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.audit-detail-section b {
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.audit-detail-pre {
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+.audit-error-pre {
+  background: rgba(255, 59, 48, 0.06);
+  color: #FF3B30;
+}
+
+/* 分页 */
+.audit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 24px;
+  border-top: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.08));
+}
+
+.audit-page-btn {
+  height: 32px;
+  padding: 0 14px;
+  border: 0.5px solid var(--border-primary, rgba(0, 0, 0, 0.12));
+  background: var(--bg-primary, #fff);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  transition: all 0.15s ease;
+}
+
+.audit-page-btn:hover:not(:disabled) {
+  background: var(--bg-secondary);
+  border-color: var(--primary, #007AFF);
+}
+
+.audit-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.audit-page-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 审计按钮 */
+.audit-btn {
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.audit-btn:hover {
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.08), rgba(255, 204, 0, 0.08));
+  box-shadow: var(--shadow-xs);
+}
+
+.audit-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .audit-panel {
+    width: 98vw;
+    height: 90vh;
+    max-height: none;
+    border-radius: 12px;
+  }
+
+  .audit-toolbar {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .audit-stats {
+    padding: 8px 12px;
+  }
+
+  .audit-stat-card {
+    padding: 6px 10px;
+    min-width: 60px;
+  }
+
+  .audit-stat-value {
+    font-size: 15px;
+  }
+
+  .audit-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-table td,
+  .audit-table th {
+    padding: 6px 8px;
+  }
+
+  .audit-cell-preview {
+    max-width: 120px;
+  }
+}
