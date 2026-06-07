@@ -92,6 +92,9 @@ class KnowledgeStore {
     this.atoms.unshift(newAtom);
     this.saveAtoms();
 
+    // 标记图谱缓存过期
+    this._markGraphStale();
+
     // 自动匹配知识簇
     if (!newAtom.cluster_id) {
       this._autoAssignCluster(newAtom);
@@ -137,6 +140,7 @@ class KnowledgeStore {
         }
       }
       this.saveAtoms();
+      this._markGraphStale();
       return atom;
     }
     return null;
@@ -485,6 +489,19 @@ class KnowledgeStore {
     if (cluster.article_id && cluster.status !== 'distilled') {
       cluster.status = 'distilled';
     }
+  }
+
+  // 标记图谱缓存过期
+  _markGraphStale() {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const { app } = require('electron');
+      const dbPath = path.join(app.getPath('userData'), 'knowledge', 'knowledge-graph.db');
+      if (fs.existsSync(dbPath) && global.graphDb) {
+        global.graphDb.markStale();
+      }
+    } catch (e) { /* ignore */ }
   }
 
   // 合并相似簇（名称相同或关键词高度重叠）

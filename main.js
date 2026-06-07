@@ -402,6 +402,7 @@ let notebook;
 
 // 知识萃取系统
 let knowledgeStore;
+let graphDb;
 
 // Prompt 引擎
 const PromptEngine = require('./src/scripts/promptEngine');
@@ -2232,6 +2233,7 @@ ipcMain.handle('get-adp-config', async () => {
     const serverKnowledgeAppKey = remoteConfig.adp.knowledge_app_key || '';
     const serverSearchAppKey = remoteConfig.adp.search_app_key || '';
     const serverClusteringAppKey = remoteConfig.adp.clustering_app_key || '';
+    const serverGraphAppKey = remoteConfig.adp.graph_app_key || '';
     return {
       appKey: serverAppKey || DEFAULT_ADP_APP_KEY,
       url: remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
@@ -2239,6 +2241,7 @@ ipcMain.handle('get-adp-config', async () => {
       knowledgeAppKey: serverKnowledgeAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
       searchAppKey: serverSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
       clusteringAppKey: serverClusteringAppKey || DEFAULT_ADP_CLUSTERING_APP_KEY,
+      graphAppKey: serverGraphAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
       fromServer: true,
       // 详细标注每个 Key 的真实来源：server=服务器配置, default=本地默认值, custom=用户自定义
       configSource: {
@@ -2246,6 +2249,7 @@ ipcMain.handle('get-adp-config', async () => {
         knowledgeAppKey: serverKnowledgeAppKey ? 'server' : 'default',
         searchAppKey: serverSearchAppKey ? 'server' : 'default',
         clusteringAppKey: serverClusteringAppKey ? 'server' : 'default',
+        graphAppKey: serverGraphAppKey ? 'server' : 'default',
       }
     };
   }
@@ -2254,6 +2258,7 @@ ipcMain.handle('get-adp-config', async () => {
   const localKnowledgeAppKey = getSetting('adp_knowledge_app_key') || '';
   const localSearchAppKey = getSetting('adp_search_app_key') || '';
   const localClusteringAppKey = getSetting('adp_clustering_app_key') || '';
+  const localGraphAppKey = getSetting('adp_graph_app_key') || '';
   return {
     appKey: localAppKey || DEFAULT_ADP_APP_KEY,
     url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
@@ -2261,12 +2266,14 @@ ipcMain.handle('get-adp-config', async () => {
     knowledgeAppKey: localKnowledgeAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
     searchAppKey: localSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
     clusteringAppKey: localClusteringAppKey || DEFAULT_ADP_CLUSTERING_APP_KEY,
+    graphAppKey: localGraphAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
     fromServer: false,
     configSource: {
       appKey: localAppKey ? 'custom' : 'default',
       knowledgeAppKey: localKnowledgeAppKey ? 'custom' : 'default',
       searchAppKey: localSearchAppKey ? 'custom' : 'default',
       clusteringAppKey: localClusteringAppKey ? 'custom' : 'default',
+      graphAppKey: localGraphAppKey ? 'custom' : 'default',
     }
   };
 });
@@ -2290,6 +2297,9 @@ ipcMain.handle('set-adp-config', async (event, config) => {
   if (config.clusteringAppKey !== undefined) {
     setSetting('adp_clustering_app_key', config.clusteringAppKey);
   }
+  if (config.graphAppKey !== undefined) {
+    setSetting('adp_graph_app_key', config.graphAppKey);
+  }
   return { success: true };
 });
 
@@ -2300,6 +2310,7 @@ ipcMain.handle('clear-adp-config', async () => {
   setSetting('adp_knowledge_app_key', '');
   setSetting('adp_search_app_key', '');
   setSetting('adp_clustering_app_key', '');
+  setSetting('adp_graph_app_key', '');
   return { success: true };
 });
 
@@ -3873,6 +3884,281 @@ ipcMain.handle('knowledge:extract-atoms', async (event, noteId) => {
   return { success: true };
 });
 
+// ========== 知识图谱 IPC ==========
+
+// 图谱构建/获取
+ipcMain.handle('graph:build', async (event, { forceRefresh } = {}) => {
+  if (!graphDb) return { stats: { nodeCount: 0 }, error: 'GraphDB 未初始化' };
+
+  try {
+    // 非强制刷新时：检查缓存
+    if (!forceRefresh) {
+      const stats = graphDb.getStats();
+      if (stats.nodeCount > 0 && !graphDb.isStale()) {
+        const builtAt = graphDb.getBuiltAt();
+        if (builtAt) {
+          const age = Date.now() - new Date(builtAt).getTime();
+          if (age < 24 * 3600 * 1000) {
+            return { source: 'cache', stats: { ...stats, builtAt } };
+          }
+        }
+      }
+    }
+
+    // 调用 ADP 构建
+    const summary = _buildGraphSummary();
+    const prompt = _buildGraphPrompt(summary);
+    const graphData = await _callADPForGraph(prompt);
+
+    if (!graphData || !graphData.nodes) {
+      return { stats: graphDb.getStats(), error: 'ADP 返回数据异常' };
+    }
+
+    // 写入 SQLite
+    graphDb.upsertNodes(graphData.nodes);
+    graphDb.upsertEdges(graphData.edges || []);
+
+    // 保存体检报告
+    if (graphData.health_report) {
+      graphDb.saveHealthReport({
+        report_type: 'full',
+        built_at: new Date().toISOString(),
+        node_count: graphData.nodes.length,
+        edge_count: (graphData.edges || []).length,
+        ...graphData.health_report
+      });
+    }
+
+    graphDb.clearStale();
+    const stats = graphDb.getStats();
+    return { source: 'adp', stats: { ...stats, builtAt: new Date().toISOString() } };
+  } catch (e) {
+    console.error('[Graph] Build error:', e);
+    return { stats: graphDb.getStats(), error: e.message };
+  }
+});
+
+// 查询节点
+ipcMain.handle('graph:get-nodes', async (event, filter) => {
+  if (!graphDb) return { nodes: [] };
+  return { nodes: graphDb.getNodes(filter || {}) };
+});
+
+// 查询边
+ipcMain.handle('graph:get-edges', async (event, filter) => {
+  if (!graphDb) return { edges: [] };
+  return { edges: graphDb.getEdges(filter || {}) };
+});
+
+// 全文搜索
+ipcMain.handle('graph:search', async (event, { query, limit }) => {
+  if (!graphDb) return { nodes: [] };
+  return { nodes: graphDb.searchNodes(query, limit || 20) };
+});
+
+// 图遍历
+ipcMain.handle('graph:neighbors', async (event, { nodeId, depth }) => {
+  if (!graphDb) return { nodes: [] };
+  return { nodes: graphDb.getNeighbors(nodeId, depth || 1) };
+});
+
+// 子图
+ipcMain.handle('graph:subgraph', async (event, { nodeId }) => {
+  if (!graphDb) return { nodes: [], edges: [] };
+  return graphDb.getSubgraph(nodeId);
+});
+
+// 缺口详情
+ipcMain.handle('graph:gap-detail', async (event, { gapId }) => {
+  if (!graphDb) return {};
+  const node = graphDb.getNodeById(gapId);
+  if (!node) return {};
+
+  const profile = _loadProfile();
+  const promptText = fs.readFileSync(path.join(__dirname, 'prompts', 'graph_gap.md'), 'utf8')
+    .replace('{{gap_detail}}', JSON.stringify(node))
+    .replace('{{user_role}}', profile.role || '')
+    .replace('{{industries}}', (profile.industries || []).join(','))
+    .replace('{{active_projects}}', (profile.active_projects || []).join(','));
+
+  const result = await _callADPForGraph(promptText);
+  return result || {};
+});
+
+// 冲突解决
+ipcMain.handle('graph:conflict-resolve', async (event, { conflictId, action }) => {
+  if (!graphDb) return { success: false };
+  // 标记相关节点健康状态
+  if (action === 'keep_both') {
+    // 找到冲突边并标记为场景差异
+    const edges = graphDb.getEdges({ type: 'conflicts_with' });
+    // 更新节点健康状态
+    graphDb.updateNode(conflictId, { health: 'healthy', health_detail: { reason: '已确认：场景差异，不冲突' } });
+  } else if (action === 'merge') {
+    graphDb.updateNode(conflictId, { health: 'healthy', health_detail: { reason: '已合并' } });
+  }
+  graphDb.clearStale();
+  return { success: true };
+});
+
+// AI 仲裁冲突
+ipcMain.handle('graph:conflict-arbitrate', async (event, { conflictId }) => {
+  if (!graphDb) return {};
+  const node = graphDb.getNodeById(conflictId);
+  if (!node) return {};
+
+  const promptText = fs.readFileSync(path.join(__dirname, 'prompts', 'graph_conflict.md'), 'utf8')
+    .replace('{{conflict_detail}}', JSON.stringify(node.health_detail || node));
+
+  const result = await _callADPForGraph(promptText);
+  return { resolution: result };
+});
+
+// 体检报告
+ipcMain.handle('graph:health-report', async () => {
+  if (!graphDb) return { report: null };
+  const report = graphDb.getLatestHealthReport();
+  return { report };
+});
+
+// 过时知识复审
+ipcMain.handle('graph:outdated-review', async (event, { nodeId, action }) => {
+  if (!graphDb) return { success: false };
+  if (action === 'ignore') {
+    graphDb.updateNode(nodeId, { health: 'healthy', health_detail: { reason: '用户确认仍然有效' } });
+  } else if (action === 'review') {
+    graphDb.updateNode(nodeId, { health: 'healthy', health_detail: { reason: '已复审' } });
+  }
+  graphDb.clearStale();
+  return { success: true };
+});
+
+// 图谱统计
+ipcMain.handle('graph:stats', async () => {
+  if (!graphDb) return { nodeCount: 0, edgeCount: 0 };
+  const stats = graphDb.getStats();
+  const builtAt = graphDb.getBuiltAt();
+  return { ...stats, builtAt };
+});
+
+// ========== 图谱辅助函数 ==========
+
+function _buildGraphSummary() {
+  const summary = {
+    domains: {},
+    clusters: [],
+    topEntities: [],
+    personSummary: [],
+    questionList: [],
+    outdatedAtoms: [],
+    profileProjects: [],
+    atomCount: knowledgeStore.atoms.length,
+    memoryCount: memoryStore?.memories?.length || 0,
+    clusterCount: knowledgeStore.clusters.length
+  };
+
+  // 领域分布
+  knowledgeStore.atoms.forEach(a => {
+    const d = a.domain || '未分类';
+    if (!summary.domains[d]) summary.domains[d] = { atomCount: 0, clusterCount: 0, atomTypes: {} };
+    summary.domains[d].atomCount++;
+    summary.domains[d].atomTypes[a.type] = (summary.domains[d].atomTypes[a.type] || 0) + 1;
+  });
+  knowledgeStore.clusters.forEach(c => {
+    const d = c.domain || '未分类';
+    if (!summary.domains[d]) summary.domains[d] = { atomCount: 0, clusterCount: 0, atomTypes: {} };
+    summary.domains[d].clusterCount++;
+  });
+
+  // 知识簇摘要
+  summary.clusters = knowledgeStore.clusters.map(c => ({
+    id: c.id, name: c.name, domain: c.domain,
+    atomCount: c.atom_ids?.length || 0,
+    status: c.status, keywords: c.keywords,
+    daysSinceUpdate: Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 86400000)
+  }));
+
+  // 高频实体
+  if (memoryStore?.entityGraph) {
+    summary.topEntities = Object.entries(memoryStore.entityGraph)
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 50)
+      .map(([name, info]) => ({ name, type: info.type, count: info.count, related: (info.related || []).slice(0, 5) }));
+    summary.personSummary = Object.entries(memoryStore.entityGraph)
+      .filter(([_, info]) => info.type === 'person' || info.count >= 3)
+      .slice(0, 30)
+      .map(([name, info]) => ({ name, count: info.count, related: (info.related || []).slice(0, 5) }));
+  }
+
+  // 问题
+  summary.questionList = knowledgeStore.atoms
+    .filter(a => a.type === 'question' || a.type === 'problem')
+    .map(a => ({ id: a.id, content: a.content.substring(0, 100), domain: a.domain }));
+
+  // 过时检测
+  const ninetyDaysAgo = Date.now() - 90 * 86400000;
+  summary.outdatedAtoms = knowledgeStore.atoms
+    .filter(a => new Date(a.updated_at).getTime() < ninetyDaysAgo)
+    .map(a => ({ id: a.id, content: a.content.substring(0, 80), domain: a.domain, daysSince: Math.floor((Date.now() - new Date(a.updated_at).getTime()) / 86400000) }));
+
+  // 画像
+  const profile = _loadProfile();
+  summary.profileProjects = (profile.active_projects || []).map(p => typeof p === 'string' ? p : p.name);
+
+  return summary;
+}
+
+function _buildGraphPrompt(summary) {
+  const template = fs.readFileSync(path.join(__dirname, 'prompts', 'graph_build.md'), 'utf8');
+  return template.replace('{{summary_json}}', JSON.stringify(summary, null, 2));
+}
+
+function _loadProfile() {
+  try {
+    const profilePath = path.join(app.getPath('userData'), 'profile.json');
+    if (fs.existsSync(profilePath)) {
+      return JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+async function _callADPForGraph(prompt) {
+  const apiConfig = getAPIConfig();
+  if (!apiConfig.apiKey) {
+    throw new Error('API Key 未配置');
+  }
+
+  try {
+    const { response } = await auditedDeepSeekCall({
+      module: 'graph_build',
+      apiConfig: { ...apiConfig, model: 'deepseek-v4-pro' },
+      messages: [{ role: 'user', content: prompt }],
+      fetchOptions: {
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`API 调用失败 (${response.status})`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('返回格式异常');
+    return JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.error('[Graph] ADP call error:', e);
+    return {
+      nodes: [], edges: [],
+      health_report: { summary: {}, gaps: [], outdated: [], conflicts: [], duplicates: [], orphans: [] },
+      overview: { totalNodes: 0, totalEdges: 0, densityDistribution: {}, healthDistribution: {}, topDomains: [], weakestAreas: [], knowledgeScore: 0 }
+    };
+  }
+}
+
 ipcMain.handle('get-memory-prompt', async () => {
   return getCurrentMemoryPrompt();
 });
@@ -4143,6 +4429,16 @@ app.whenReady().then(() => {
   const { KnowledgeStore } = require('./src/scripts/knowledgeStore');
   knowledgeStore = new KnowledgeStore();
   console.log('[KnowledgeStore] Knowledge distillation store initialized');
+
+  // 初始化知识图谱数据库
+  const { GraphDB } = require('./src/scripts/graph/graphDb');
+  graphDb = new GraphDB(app.getPath('userData'));
+  global.graphDb = graphDb;
+  graphDb.init().then(() => {
+    console.log('[GraphDB] Knowledge graph database initialized');
+  }).catch(err => {
+    console.error('[GraphDB] Initialization failed:', err);
+  });
 
   // 初始化反馈系统
   feedbackLogger = new FeedbackLogger();

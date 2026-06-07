@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="styles/knowledgeDistillation.css">
   <link rel="stylesheet" href="styles/appearance.css">
   <link rel="stylesheet" href="styles/audit.css">
+  <link rel="stylesheet" href="styles/graph.css">
   <script src="scripts/i18n.js"></script>
 </head>
 <body>
@@ -253,6 +254,7 @@
             <!-- 子视图切换 Tab -->
             <div class="knowledge-sub-tabs">
               <button class="knowledge-sub-tab active" data-knowledge-tab="graph">🧠 知识图谱</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="global-graph">🗺 全局图谱</button>
               <button class="knowledge-sub-tab" data-knowledge-tab="articles">📚 知识文章</button>
               <button class="knowledge-sub-tab" data-knowledge-tab="questions">❓ 问题列表</button>
               <button class="knowledge-sub-tab" data-knowledge-tab="search">🔍 知识搜索</button>
@@ -295,6 +297,62 @@
                   <p>暂无知识文章</p>
                   <span class="empty-hint">知识簇成熟后可生成文章</span>
                 </div>
+              </div>
+            </div>
+
+            <!-- 子视图：全局图谱 -->
+            <div id="globalGraphView" class="kd-subview hidden global-graph-view">
+              <!-- 工具栏 -->
+              <div class="gg-toolbar">
+                <h3 class="gg-title"><span class="gg-title-icon">🗺</span> 全局知识图谱</h3>
+                <div class="gg-spacer"></div>
+                <input type="text" id="graphSearchInput" class="gg-search" placeholder="搜索节点..." autocomplete="off">
+                <span class="gg-built-at" id="graphBuiltAt"></span>
+                <button class="gg-btn ghost" id="graphRefreshBtn">🔄 重建</button>
+              </div>
+              <!-- 筛选栏 -->
+              <div class="gg-filter-bar">
+                <button class="gg-filter-chip active" data-graph-filter="all">全部</button>
+                <button class="gg-filter-chip" data-graph-filter="domain">领域</button>
+                <button class="gg-filter-chip" data-graph-filter="cluster">知识簇</button>
+                <button class="gg-filter-chip" data-graph-filter="person">人物</button>
+                <button class="gg-filter-chip" data-graph-filter="gap">缺口</button>
+                <button class="gg-filter-chip" data-graph-filter="unhealthy">⚠️ 异常</button>
+              </div>
+              <!-- Canvas -->
+              <div class="gg-canvas-container">
+                <canvas id="graphCanvas"></canvas>
+                <!-- 空状态 -->
+                <div class="gg-empty" id="graphEmptyState">
+                  <div class="ge-inner">
+                    <div class="ge-icon">🗺</div>
+                    <h3 class="ge-title">知识图谱</h3>
+                    <p class="ge-desc">AI 将分析你的知识体系，构建一张可视化图谱</p>
+                    <button class="ge-build-btn" id="graphRefreshBtn2">🚀 构建图谱</button>
+                    <p class="ge-hint">需要登录并配置 ADP</p>
+                  </div>
+                </div>
+                <!-- 加载中 -->
+                <div class="gg-loading hidden" id="graphLoading">
+                  <div class="gl-inner">
+                    <div class="gl-spinner"></div>
+                    <h4 class="gl-title">🗺 正在构建知识图谱</h4>
+                    <p class="gl-desc">AI 正在分析知识体系、检测缺口、识别冲突</p>
+                  </div>
+                </div>
+                <!-- 详情面板 -->
+                <div class="gg-detail-panel hidden" id="graphDetailPanel">
+                  <div class="gg-panel-header">
+                    <span style="font-size:14px;font-weight:600;">节点详情</span>
+                    <button class="gg-panel-close" id="graphPanelClose">✕</button>
+                  </div>
+                  <div class="gg-panel-content" id="graphPanelContent"></div>
+                </div>
+              </div>
+              <!-- 底部信息栏 -->
+              <div class="gg-bottom-bar">
+                <div class="gg-stats-bar" id="graphStatsBar"></div>
+                <div class="gg-health-bar" id="graphHealthBar"></div>
               </div>
             </div>
 
@@ -1507,6 +1565,9 @@
 <script src="scripts/knowledgeSearch.js"></script>
 <script src="scripts/knowledgeFollow.js"></script>
 <script src="scripts/knowledgeDistillation.js"></script>
+  <script src="scripts/graph/forceLayout.js"></script>
+  <script src="scripts/graph/graphRAG.js"></script>
+  <script src="scripts/graph/graphView.js"></script>
 <script src="scripts/documents.js"></script>
 <script src="scripts/localFiles.js"></script>
 <script src="scripts/audit.js"></script>

@@ -11,6 +11,7 @@
     "build:dir": "electron-builder --mac --dir"
   },
   "dependencies": {
+    "sql.js": "^1.14.1",
     "uuid": "^9.0.0",
     "ws": "^8.21.0"
   },
@@ -23,7 +24,10 @@
     "productName": "Memora",
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.png"
     },
     "asar": true,

@@ -233,6 +233,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   auditDailyStats: (days) => ipcRenderer.invoke('audit:daily-stats', days),
   auditCleanup: () => ipcRenderer.invoke('audit:cleanup'),
   
+  // 知识图谱
+  graphBuild: (params) => ipcRenderer.invoke('graph:build', params),
+  graphGetNodes: (filter) => ipcRenderer.invoke('graph:get-nodes', filter),
+  graphGetEdges: (filter) => ipcRenderer.invoke('graph:get-edges', filter),
+  graphSearch: (params) => ipcRenderer.invoke('graph:search', params),
+  graphNeighbors: (params) => ipcRenderer.invoke('graph:neighbors', params),
+  graphSubgraph: (params) => ipcRenderer.invoke('graph:subgraph', params),
+  graphGapDetail: (params) => ipcRenderer.invoke('graph:gap-detail', params),
+  graphConflictResolve: (params) => ipcRenderer.invoke('graph:conflict-resolve', params),
+  graphConflictArbitrate: (params) => ipcRenderer.invoke('graph:conflict-arbitrate', params),
+  graphHealthReport: () => ipcRenderer.invoke('graph:health-report'),
+  graphOutdatedReview: (params) => ipcRenderer.invoke('graph:outdated-review', params),
+  graphStats: () => ipcRenderer.invoke('graph:stats'),
+  
   // 事件监听
   onClipboardLog: (callback) => {
     ipcRenderer.on('clipboard-log', (event, msg) => callback(msg));

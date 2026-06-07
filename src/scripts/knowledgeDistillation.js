@@ -14,7 +14,7 @@ class KnowledgeDistillation {
     this.currentDomain = null;
     this.currentCluster = null;
     this.initialized = false;
-    this.activeSubview = 'graph'; // graph / articles / questions / search / article-detail / cluster-detail
+    this.activeSubview = 'graph'; // graph / global-graph / articles / questions / search / article-detail / cluster-detail
     this.previousSubview = 'graph'; // 记录上一个子视图，用于返回
   }
 
@@ -209,11 +209,13 @@ class KnowledgeDistillation {
     const questionsView = document.getElementById('knowledgeQuestionsView');
     const searchView = document.getElementById('knowledgeSearchView');
     const detailView = document.getElementById('knowledgeDetailView');
+    const globalGraphView = document.getElementById('globalGraphView');
 
     if (graphView) graphView.classList.toggle('hidden', view !== 'graph');
     if (articlesView) articlesView.classList.toggle('hidden', view !== 'articles');
     if (questionsView) questionsView.classList.toggle('hidden', view !== 'questions');
     if (searchView) searchView.classList.toggle('hidden', view !== 'search');
+    if (globalGraphView) globalGraphView.classList.toggle('hidden', view !== 'global-graph');
     // 详情视图在 article-detail 和 cluster-detail 时都显示
     if (detailView) detailView.classList.toggle('hidden', !['article-detail', 'cluster-detail'].includes(view));
 
@@ -223,6 +225,12 @@ class KnowledgeDistillation {
     if (view === 'search' && window.knowledgeFollow) {
       window.knowledgeFollow.init();
       window.knowledgeFollow.onShow();
+    }
+    if (view === 'global-graph' && window.graphView) {
+      window.graphView.init();
+      window.graphView.onShow();
+    } else if (view !== 'global-graph' && window.graphView) {
+      window.graphView.onHide();
     }
   }
 
