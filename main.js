@@ -475,42 +475,36 @@ function initDataDirectories() {
   if (!app.isPackaged) return; // 开发模式不需要迁移
   
   const userData = app.getPath('userData');
-  const asarSrc = __dirname; // ASAR 内部路径（只读）
   
-  // 迁移 memory 目录
+  // 初始化 memory 目录（创建空数据文件，不复制 ASAR 内的开发数据）
   const memoryDest = path.join(userData, 'memory');
-  const memorySrc = path.join(asarSrc, 'src', 'scripts', 'memory');
-  if (!fs.existsSync(memoryDest) && fs.existsSync(memorySrc)) {
+  if (!fs.existsSync(memoryDest)) {
     try {
       fs.mkdirSync(memoryDest, { recursive: true });
-      const files = fs.readdirSync(memorySrc);
-      for (const file of files) {
-        const srcFile = path.join(memorySrc, file);
-        const destFile = path.join(memoryDest, file);
-        if (fs.statSync(srcFile).isFile() && !fs.existsSync(destFile)) {
-          fs.copyFileSync(srcFile, destFile);
-          console.log('[Data] Migrated memory file:', file);
-        }
+      // 写入空的记忆数据
+      if (!fs.existsSync(path.join(memoryDest, 'memories.json'))) {
+        fs.writeFileSync(path.join(memoryDest, 'memories.json'), '[]', 'utf8');
       }
-    } catch (e) { console.error('[Data] Failed to migrate memory:', e); }
+      if (!fs.existsSync(path.join(memoryDest, 'entity-graph.json'))) {
+        fs.writeFileSync(path.join(memoryDest, 'entity-graph.json'), '{}', 'utf8');
+      }
+      console.log('[Data] Initialized empty memory directory');
+    } catch (e) { console.error('[Data] Failed to init memory:', e); }
   }
   
-  // 迁移 notebook 目录
+  // 初始化 notebook 目录（创建空数据文件）
   const notebookDest = path.join(userData, 'notebook');
-  const notebookSrc = path.join(asarSrc, 'src', 'scripts', 'notebook');
-  if (!fs.existsSync(notebookDest) && fs.existsSync(notebookSrc)) {
+  if (!fs.existsSync(notebookDest)) {
     try {
       fs.mkdirSync(notebookDest, { recursive: true });
-      const files = fs.readdirSync(notebookSrc);
-      for (const file of files) {
-        const srcFile = path.join(notebookSrc, file);
-        const destFile = path.join(notebookDest, file);
-        if (fs.statSync(srcFile).isFile() && !fs.existsSync(destFile)) {
-          fs.copyFileSync(srcFile, destFile);
-          console.log('[Data] Migrated notebook file:', file);
-        }
+      if (!fs.existsSync(path.join(notebookDest, 'notes.json'))) {
+        fs.writeFileSync(path.join(notebookDest, 'notes.json'), '[]', 'utf8');
       }
-    } catch (e) { console.error('[Data] Failed to migrate notebook:', e); }
+      if (!fs.existsSync(path.join(notebookDest, 'categories.json'))) {
+        fs.writeFileSync(path.join(notebookDest, 'categories.json'), '[]', 'utf8');
+      }
+      console.log('[Data] Initialized empty notebook directory');
+    } catch (e) { console.error('[Data] Failed to init notebook:', e); }
   }
 }
 
@@ -628,11 +622,11 @@ let feedbackLogger;
 // === 用户画像 ===
 function getDefaultProfile() {
   return {
-    user: { name: '朱从坤', english_name: 'Dean', role: '产品经理 & 全栈开发者', industries: ['AI', 'SaaS', '企业服务'] },
+    user: { name: '', english_name: '', role: '', industries: [] },
     frequent_persons: [],
     active_projects: [],
     preferences: {
-      priority_signals: ['老板', '紧急', 'ASAP', '立即', '今天', '务必'],
+      priority_signals: ['紧急', 'ASAP', '立即', '今天', '务必'],
       low_priority_signals: ['FYI', '有空', '可选', '参考', '随意']
     },
     work_patterns: { peak_hours: ['09:00-12:00', '14:00-17:00'], task_completion_rate: 0.7 },

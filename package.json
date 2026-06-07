@@ -47,7 +47,16 @@
       "package.json",
       "!src/scripts/memory/memories.json",
       "!src/scripts/memory/entity-graph.json",
-      "!src/scripts/notebook/notes.json"
+      "!src/scripts/notebook/notes.json",
+      "!src/scripts/notebook/categories.json",
+      "!**/*.db",
+      "!**/*.sqlite",
+      "!**/*.sqlite3",
+      "!**/feedback/**",
+      "!**/backups/**",
+      "!config-server/**",
+      "!docs/**",
+      "!dist/**"
     ]
   }
 }
