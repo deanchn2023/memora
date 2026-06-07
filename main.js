@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, powerMonitor } = require('electron');
 
 // 防止 EPIPE 崩溃：stdout/stderr 管道关闭时（如终端关闭），console.log 写入会抛出 EPIPE
 process.stdout.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
@@ -14,6 +14,10 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+
+// 剪贴板智能监控系统
+const { startClipboardWatcher, stopClipboardWatcher, getScheduler } = require('./clipboard');
+const { getClipboardHash } = require('./clipboard/hashUtils');
 
 let mainWindow;
 let tray;
@@ -924,24 +928,24 @@ function createTray() {
 }
 
 function startClipboardWatcher() {
-  console.log('[Clipboard] Starting clipboard watcher...');
-  clipboardWatcher = setInterval(() => {
-    try {
-      const currentText = clipboard.readText();
-      if (currentText && currentText !== lastClipboardText) {
-        console.log('[Clipboard] Detected change:', currentText.substring(0, 50));
-        lastClipboardText = currentText;
-        analyzeClipboardText(currentText);
-      }
-    } catch (e) {
-      console.error('[Clipboard] Error reading clipboard:', e);
-    }
-  }, 10000);
-}
+  console.log('[Clipboard] Starting smart clipboard scheduler...');
+  
+  const scheduler = startClipboardWatcher({
+    clipboard,
+    powerMonitor,
+    preClassifyFn: preClassify,
+    analyzeFn: analyzeClipboardText,
+    mainWindow,
+    notebook,
+    getSettingFn: getSetting,
+    processedHashes: processedClipboardHashes,
+    maxHashes: MAX_CLIPBOARD_HASHES
+  });
 
-// 获取剪切板内容的哈希值用于去重
-function getClipboardHash(text) {
-  return text.trim().toLowerCase().hashCode();
+  // 保存引用以便清理
+  clipboardWatcher = scheduler;
+
+  console.log('[Clipboard] Smart scheduler started (buffer + dynamic freq + state detect)');
 }
 
 // 检查剪切板内容是否已处理过
@@ -994,7 +998,8 @@ function incrementAICallCount() {
   setSetting(AI_CALLS_KEY, (count + 1).toString());
 }
 
-// 简单的哈希函数
+// 简单的哈希函数（保留兼容，但标记为废弃）
+// 实际使用 clipboard/hashUtils 中的 getClipboardHash
 String.prototype.hashCode = function() {
   let hash = 0;
   for (let i = 0; i < this.length; i++) {
@@ -1122,6 +1127,17 @@ async function analyzeClipboardText(text) {
     }
     if (preResult.hasNumberedList) {
       userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
+    }
+
+    // 关联检测：注入最近处理的条目供 AI 参考
+    if (getSetting('clipboard_association_enabled') !== false) {
+      const scheduler = getScheduler();
+      if (scheduler) {
+        const recentItems = scheduler.getAssociationHandler().getRecentItemsForPrompt(5);
+        if (recentItems && recentItems !== '（暂无）') {
+          userPrompt += `\n\n[已有相关内容（最近处理的5条）]\n${recentItems}\n\n[如果新内容与已有内容有关联，在结果中增加 associated_with 字段，包含 has_association, target_id, association_type(supplement/update/duplicate/related), reason]`;
+        }
+      }
     }
     
     // 构建 system prompt，注入动态数据
@@ -1274,10 +1290,36 @@ async function analyzeClipboardText(text) {
       }
       if (!noteCategory) noteCategory = 'general';
 
+      // 关联检测：在保存前检查是否与已有内容关联
+      let associationResult = { handled: false, action: null, targetId: null };
+      if (getSetting('clipboard_association_enabled') !== false && result.associated_with) {
+        const scheduler = getScheduler();
+        if (scheduler) {
+          associationResult = scheduler.getAssociationHandler().handleAssociation(result.associated_with, text);
+          console.log('[Association] Result:', associationResult.action, associationResult.targetId);
+
+          // 通知前端关联结果
+          if (associationResult.handled && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('clipboard-association-detected', {
+              action: associationResult.action,
+              targetId: associationResult.targetId,
+              reason: result.associated_with.reason
+            });
+          }
+        }
+      }
+
+      // 重复内容跳过
+      if (associationResult.action === 'duplicate') {
+        console.log('[Association] Duplicate content, skipping save');
+        isAnalyzing = false;
+        return;
+      }
+
       // 仅有效信息保存到记事本
       let savedNoteId = null;
       if (result.is_valid_info && notebook) {
-        const note = notebook.addNote({
+        const noteData = {
           content: text,
           category: noteCategory,
           analyzed: true,
@@ -1294,7 +1336,12 @@ async function analyzeClipboardText(text) {
             needsRecommendation: result.needs_recommendation || false,
             recommendationIntent: result.recommendation_intent || null
           }
-        });
+        };
+        // 关联标记
+        if (associationResult.action === 'related' && associationResult.targetId) {
+          noteData.relatedTo = associationResult.targetId;
+        }
+        const note = notebook.addNote(noteData);
         savedNoteId = note ? note.id : null;
         console.log('[Notebook] Valid info saved to notebook, category:', noteCategory);
         
@@ -3096,6 +3143,41 @@ ipcMain.handle('get-clipboard-hash-count', async () => {
   return processedClipboardHashes.size;
 });
 
+// 获取剪贴板监控配置
+ipcMain.handle('clipboard:get-config', async () => {
+  return {
+    buffer_enabled: getSetting('clipboard_buffer_enabled') !== false,
+    freq_enabled: getSetting('clipboard_freq_enabled') !== false,
+    association_enabled: getSetting('clipboard_association_enabled') !== false,
+    pause_on_lock: getSetting('clipboard_pause_on_lock') !== false,
+    stable_timeout_normal: parseInt(getSetting('clipboard_stable_timeout_normal')) || 3000,
+    stable_timeout_highfreq: parseInt(getSetting('clipboard_stable_timeout_highfreq')) || 5000,
+    stable_timeout_ultrafreq: parseInt(getSetting('clipboard_stable_timeout_ultrafreq')) || 8000,
+    max_fragments: parseInt(getSetting('clipboard_max_fragments')) || 20,
+    max_total_length: parseInt(getSetting('clipboard_max_total_length')) || 3000,
+    freq_normal: parseInt(getSetting('clipboard_freq_normal')) || 2000,
+    freq_idle: parseInt(getSetting('clipboard_freq_idle')) || 15000,
+    idle_threshold: parseInt(getSetting('clipboard_idle_threshold')) || 60000,
+  };
+});
+
+// 更新剪贴板监控配置
+ipcMain.handle('clipboard:update-config', async (event, config) => {
+  const allowedKeys = [
+    'clipboard_buffer_enabled', 'clipboard_freq_enabled', 'clipboard_association_enabled',
+    'clipboard_pause_on_lock', 'clipboard_stable_timeout_normal', 'clipboard_stable_timeout_highfreq',
+    'clipboard_stable_timeout_ultrafreq', 'clipboard_max_fragments', 'clipboard_max_total_length',
+    'clipboard_freq_normal', 'clipboard_freq_idle', 'clipboard_idle_threshold'
+  ];
+  for (const [key, value] of Object.entries(config)) {
+    if (allowedKeys.includes(key)) {
+      setSetting(key, value);
+    }
+  }
+  console.log('[Clipboard] Config updated:', config);
+  return { success: true };
+});
+
 // ========== 记事本相关IPC处理器 ==========
 
 ipcMain.handle('notebook-add-note', async (event, note) => {
@@ -3770,9 +3852,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  if (clipboardWatcher) {
-    clearInterval(clipboardWatcher);
-  }
+  // 使用新的剪贴板调度器停止方法
+  stopClipboardWatcher();
   if (autoBackupTimer) {
     clearInterval(autoBackupTimer);
   }

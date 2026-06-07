@@ -691,8 +691,37 @@
   font-size: 17px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 20px;
+  margin: 0 0 16px;
   letter-spacing: -0.3px;
+}
+
+/* 批次进度条 */
+.kd-clustering-batch-progress {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.kd-batch-bar-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border-light);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.kd-batch-bar-fill {
+  height: 100%;
+  background: var(--primary-color);
+  border-radius: 3px;
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.kd-batch-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .kd-clustering-steps {
@@ -746,7 +775,26 @@
 .kd-clustering-status {
   font-size: 12px;
   color: var(--text-tertiary);
-  margin: 0;
+  margin: 0 0 10px;
+}
+
+/* 取消按钮 */
+.kd-clustering-cancel-btn {
+  display: inline-block;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 0.5px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.kd-clustering-cancel-btn:hover {
+  color: #FF3B30;
+  border-color: rgba(255, 59, 48, 0.3);
+  background: rgba(255, 59, 48, 0.05);
 }
 
 /* ========== 聚类结果面板 ========== */
@@ -889,6 +937,30 @@
   color: var(--text-tertiary);
   margin: 0;
   padding: 8px 0;
+}
+
+.kd-result-message {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+}
+
+.kd-result-message.info {
+  color: var(--text-secondary);
+  background: rgba(79, 142, 247, 0.06);
+  border: 0.5px solid rgba(79, 142, 247, 0.15);
+}
+
+.kd-result-message.warning {
+  color: #8a6d00;
+  background: rgba(255, 149, 0, 0.08);
+  border: 0.5px solid rgba(255, 149, 0, 0.2);
+}
+
+.kd-result-inner.warning {
+  border-top: 2px solid #FF9500;
 }
 
 /* 高亮新建簇动画 */

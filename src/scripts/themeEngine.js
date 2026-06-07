@@ -5,7 +5,7 @@
  */
 const ThemeEngine = (() => {
   const STORAGE_KEY = 'memora-theme';
-  const DEFAULT_THEME = 'sky-blue';
+  const DEFAULT_THEME = 'ocean-dark';
 
   const THEMES = {
     'sky-blue': {

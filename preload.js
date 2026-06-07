@@ -221,10 +221,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 剪切板去重管理
   clearClipboardHashes: () => ipcRenderer.invoke('clear-clipboard-hashes'),
   getClipboardHashCount: () => ipcRenderer.invoke('get-clipboard-hash-count'),
+  clipboardGetConfig: () => ipcRenderer.invoke('clipboard:get-config'),
+  clipboardUpdateConfig: (config) => ipcRenderer.invoke('clipboard:update-config', config),
   
   // 事件监听
   onClipboardTaskDetected: (callback) => {
     ipcRenderer.on('clipboard-task-detected', (event, data) => callback(data));
+  },
+  onClipboardCandidateDetected: (callback) => {
+    ipcRenderer.on('clipboard-candidate-detected', (event, data) => callback(data));
+  },
+  onClipboardBufferStatus: (callback) => {
+    ipcRenderer.on('clipboard-buffer-status', (event, data) => callback(data));
+  },
+  onClipboardAssociationDetected: (callback) => {
+    ipcRenderer.on('clipboard-association-detected', (event, data) => callback(data));
+  },
+  removeClipboardCandidateListeners: () => {
+    ipcRenderer.removeAllListeners('clipboard-candidate-detected');
+  },
+  removeClipboardBufferStatusListeners: () => {
+    ipcRenderer.removeAllListeners('clipboard-buffer-status');
+  },
+  removeClipboardAssociationListeners: () => {
+    ipcRenderer.removeAllListeners('clipboard-association-detected');
   },
   
   onStartPomodoro: (callback) => {

@@ -1860,11 +1860,14 @@ body {
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 10px;
-  background: var(--text-primary);
-  color: white;
+  background: var(--bg-glass-heavy);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
   border-radius: 8px;
+  border: 0.5px solid var(--border-color);
   white-space: nowrap;
   pointer-events: none;
   z-index: 1000;
@@ -1880,7 +1883,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   border: 4px solid transparent;
-  border-top-color: var(--text-primary);
+  border-top-color: var(--border-color);
   margin-bottom: 2px;
   z-index: 1001;
 }
@@ -2148,6 +2151,9 @@ body {
   box-shadow: var(--shadow-xs);
   line-height: 1.7;
   border: 1px solid var(--border-light);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .message.user .message-content {
@@ -2300,6 +2306,183 @@ body {
   animation: cursorBlink 0.8s steps(2) infinite;
   margin-left: 1px;
   font-size: 0.85em;
+}
+
+/* ===== Agent 流式输出 ===== */
+.agent-stream-text {
+  min-height: 20px;
+}
+
+.agent-stream-text .chat-markdown-content::after {
+  content: '▊';
+  display: inline;
+  color: var(--primary-color);
+  animation: cursorBlink 0.8s steps(2) infinite;
+  margin-left: 1px;
+  font-size: 0.85em;
+}
+
+/* Agent 思考过程流式输出 */
+.agent-reasoning-stream {
+  margin-bottom: 8px;
+}
+
+.agent-reasoning-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-glass, rgba(0,0,0,0.03));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 10px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.08));
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  margin-bottom: 6px;
+}
+
+.agent-reasoning-header .reasoning-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.agent-reasoning-header .reasoning-timer {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #86868b);
+  background: var(--bg-glass-heavy, rgba(0,0,0,0.06));
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.agent-reasoning-content {
+  padding: 8px 12px;
+  background: var(--bg-glass, rgba(0,0,0,0.02));
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary, #86868b);
+  max-height: 200px;
+  overflow-y: auto;
+  word-break: break-word;
+  border-left: 2px solid var(--primary-color, #007AFF);
+}
+
+.agent-streaming-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+}
+
+.agent-streaming-dots {
+  animation: streamingPulse 1.2s ease-in-out infinite;
+  color: var(--primary-color, #007AFF);
+  font-size: 8px;
+  letter-spacing: 2px;
+}
+
+@keyframes streamingPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* ===== Chat JSON 友好渲染 ===== */
+.chat-suggestions {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--bg-glass, rgba(0,0,0,0.03));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 10px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.08));
+}
+
+.chat-suggestions-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.chat-suggestion-item {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary, #86868b);
+  padding-left: 4px;
+}
+
+.chat-related-tasks {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.chat-related-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 4px;
+}
+
+.chat-related-tag {
+  display: inline-block;
+  font-size: 12px;
+  padding: 3px 10px;
+  background: var(--bg-glass-heavy, rgba(0,0,0,0.06));
+  border-radius: 8px;
+  color: var(--text-secondary, #86868b);
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.08));
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.chat-reasoning-steps {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--bg-glass, rgba(0,0,0,0.02));
+  border-radius: 10px;
+  border-left: 2px solid var(--primary-color, #007AFF);
+}
+
+.chat-reasoning-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.chat-reasoning-step {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary, #86868b);
+  margin-bottom: 4px;
+}
+
+.chat-reasoning-step .step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary-color, #007AFF);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 /* ===== ADP 进度步骤 ===== */
@@ -2543,8 +2726,10 @@ body {
   font-size: 0.6875rem;
   color: var(--text-secondary);
   line-height: 1.6;
-  max-height: 250px;
+  max-height: 500px;
   overflow-y: auto;
+  word-break: break-word;
+  overflow-wrap: break-word;
   background: rgba(0, 0, 0, 0.015);
   border-top: 0.5px solid var(--border-light);
 }
@@ -2982,6 +3167,18 @@ body {
   background: var(--primary-light);
   color: var(--primary-color);
   letter-spacing: 0.3px;
+}
+
+/* LLM 模式徽标 - 橙色调区分 Agent 蓝色 */
+.agent-badge-llm {
+  background: rgba(255, 149, 0, 0.12);
+  color: #FF9500;
+}
+
+/* ADP 智能体徽标 - 绿色调 */
+.agent-badge-adp {
+  background: rgba(52, 199, 89, 0.12);
+  color: #34C759;
 }
 
 /* Agent 结果卡片 */

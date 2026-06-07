@@ -8,6 +8,8 @@ const App = {
   dbSyncTimer: null, // 数据库同步定时器
   _chatAttachments: [], // 聊天文件附件列表
   _aiAssistantMode: null, // AI 助手模式：'agent' 或 'llm'
+  _agentStreamTimerStart: 0, // Agent 流式计时起点
+  _agentStreamTimerInterval: null, // Agent 流式计时器
   _userAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="uBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0E6FF"/><stop offset="1" stop-color="#E0F0FF"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#uBg)"/><circle cx="20" cy="14.5" r="6.5" fill="#C4B5FD"/><ellipse cx="20" cy="30" rx="10.5" ry="8" fill="#C4B5FD"/><circle cx="17.5" cy="13.8" r="1" fill="#7C3AED"/><circle cx="22.5" cy="13.8" r="1" fill="#7C3AED"/><path d="M18.5 16.2 Q20 17.8 21.5 16.2" stroke="#7C3AED" stroke-width="0.9" fill="none" stroke-linecap="round"/><circle cx="15" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="25" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="12" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/><circle cx="28" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/></svg>`,
   _assistantAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="aBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="14" fill="url(#aBg)"/><text x="20" y="26" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="white">M</text></svg>`,
 
@@ -1277,18 +1279,21 @@ const App = {
     return loggedInSection && !loggedInSection.classList.contains('hidden');
   },
 
-  /** 功能卡片切换快捷问题 */
+  /** 功能卡片切换快捷问题 - 使用事件委托确保 DOM 重建后仍可用 */
   _initFeatureCards() {
-    const cards = document.querySelectorAll('.feature-card');
-    cards.forEach(card => {
-      if (card._boundClick) return; // 避免重复绑定
-      card._boundClick = true;
-      card.addEventListener('click', () => {
-        cards.forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
-        const category = card.dataset.category;
-        this._switchQuickQuestions(category);
-      });
+    const container = document.getElementById('chatMessages');
+    if (!container) return;
+    if (container._featureCardDelegated) return; // 只绑定一次委托
+    container._featureCardDelegated = true;
+    container.addEventListener('click', (e) => {
+      const card = e.target.closest('.feature-card');
+      if (!card) return;
+      const category = card.dataset.category;
+      if (!category) return;
+      // 切换 active 状态
+      container.querySelectorAll('.feature-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      this._switchQuickQuestions(category);
     });
   },
 
@@ -1424,73 +1429,122 @@ const App = {
       if (forceMode === 'adp' || (isAgentMode && !window.electronAPI?.agent?.invoke)) {
         // ADP 模式：走 ADP 智能体流式
       } else if (window.electronAPI?.agent?.invoke) {
-        // Agent 或 LLM 模式：使用本地 AI（agent:invoke 内部会根据意图分类）
-        // LLM 模式强制使用 'chat' 类型，Agent 模式自动分类
+        // Agent 或 LLM 模式：使用本地 AI 流式输出
         const agentType = this._aiAssistantMode === 'llm' ? 'chat' : undefined;
+
+        // 先注册流式监听器（防止竞态：invoke 返回前主进程可能已开始推送事件）
+        this._agentStreamBuffer = [];
+        this._agentStreamListening = true;
+        window.electronAPI.onAgentStream((evt) => {
+          if (this._agentStreamListening) {
+            this._agentStreamBuffer.push(evt);
+          }
+        });
+
         result = await window.electronAPI.agent.invoke(message, agentType, attachmentData);
         
-        if (result.success) {
+        if (result.success && result.streaming) {
+          // 流式模式：处理缓冲事件 + 后续事件
+          this._agentStreaming = true;
+          this._agentCurrentText = '';
+          this._agentReasoningText = '';
+          this._agentCurrentBubble = null;
+          this._agentRenderPending = false;
+          this._agentType = result.agentType;
+          this._agentTraceId = result.traceId;
+          this._agentStreamTimerStart = Date.now();
+          this._agentStreamTimerInterval = setInterval(() => {
+            this._updateAgentStreamTimer();
+          }, 1000);
+
+          // 替换占位符为流式渲染区域
           const messageContent = assistantMessage.querySelector('.message-content');
-          const agentType = result.agentType;
-          const agentLabels = { priority: '🎯 优先级规划', knowledge: '📚 知识梳理', memory: '🧠 记忆整理', report: '📊 日报生成', chat: '💬 智能对话' };
-          
-          let html = `<div class="agent-badge">${agentLabels[agentType] || '💬 对话'}</div>`;
-          
+          const agentLabels = { priority: '🎯 优先级规划', knowledge: '📚 知识梳理', memory: '🧠 记忆整理', report: '📊 日报生成', chat: '🤖 LLM 对话' };
+          const badgeCls = result.agentType === 'chat' ? 'agent-badge agent-badge-llm' : 'agent-badge';
+          messageContent.innerHTML = `<div class="${badgeCls}">${agentLabels[result.agentType] || '💬 对话'}</div><div class="agent-stream-text" id="agentStreamText"></div>`;
+
+          // 切换到直接监听模式，处理缓冲的事件
+          this._agentStreamListening = false;
+          const bufferedEvents = this._agentStreamBuffer || [];
+          this._agentStreamBuffer = [];
+
+          // 处理缓冲事件
+          for (const evt of bufferedEvents) {
+            this._handleAgentStreamEvent(evt, messageContent);
+            if (evt.event === 'done') break;
+          }
+
+          // 如果还没完成，继续等待流式事件
+          if (!bufferedEvents.some(e => e.event === 'done')) {
+            await new Promise((resolve) => {
+              this._agentStreamResolve = resolve;
+              // 监听器已在前面注册，切换为直接处理模式
+              window.electronAPI.removeAgentListeners();
+              window.electronAPI.onAgentStream((evt) => {
+                this._handleAgentStreamEvent(evt, messageContent);
+              });
+            });
+          }
+        } else if (result.success && !result.streaming) {
+          // 兼容旧模式（非流式返回）— 清理预注册的监听器
+          this._agentStreamListening = false;
+          this._agentStreamBuffer = [];
+          window.electronAPI?.removeAgentListeners?.();
+
+          const messageContent = assistantMessage.querySelector('.message-content');
+          const agentLabels = { priority: '🎯 优先级规划', knowledge: '📚 知识梳理', memory: '🧠 记忆整理', report: '📊 日报生成', chat: '🤖 LLM 对话' };
+          const badgeCls = result.agentType === 'chat' ? 'agent-badge agent-badge-llm' : 'agent-badge';
+          let html = `<div class="${badgeCls}">${agentLabels[result.agentType] || '💬 对话'}</div>`;
           if (result.result && typeof result.result === 'object') {
-            html += this.renderAgentResult(result.result, agentType);
+            html += this.renderAgentResult(result.result, result.agentType);
+          } else if (typeof result.result === 'string') {
+            const parsed = this._robustJSONParse(result.result);
+            if (parsed && result.agentType === 'chat') {
+              html += `<div class="chat-markdown-content">${this._renderChatJSONAsMarkdown(parsed)}</div>`;
+            } else if (parsed) {
+              html += this.renderAgentResult(parsed, result.agentType);
+            } else {
+              html += `<div class="chat-markdown-content">${this._renderADPMarkdown(result.result)}</div>`;
+            }
           } else {
             html += `<p>${this.escapeHtml(result.result?.text || JSON.stringify(result.result))}</p>`;
           }
-          
-          // 反馈按钮
           if (result.traceId) {
             html += `<div class="agent-feedback" data-trace-id="${result.traceId}">
               <button class="feedback-btn feedback-accept" title="有用">👍</button>
               <button class="feedback-btn feedback-reject" title="没用">👎</button>
             </div>`;
           }
-          
-          // 添加复制按钮
           html += '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
-
-          // 添加时间戳
           const sendTime = assistantMessage.dataset.sendTime;
           const timeLabel = sendTime
             ? `${this._formatChatTime(new Date(sendTime))} → ${this._formatChatTime(new Date())}`
             : this._formatChatTime(new Date());
           html += `<span class="message-time assistant-time">${timeLabel}</span>`;
-
           messageContent.innerHTML = html;
-          
-          // 绑定复制按钮事件
+          // 绑定按钮事件
           const copyBtn = messageContent.querySelector('.copy-btn');
           if (copyBtn) {
             copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
           }
-          
-          // 绑定反馈按钮事件
           const feedbackDiv = messageContent.querySelector('.agent-feedback');
           if (feedbackDiv) {
-            const traceId = feedbackDiv.dataset.traceId;
+            const tid = feedbackDiv.dataset.traceId;
             feedbackDiv.querySelector('.feedback-accept')?.addEventListener('click', () => {
-              window.electronAPI?.feedback?.accept(traceId, result.result);
+              window.electronAPI?.feedback?.accept(tid, result.result);
               feedbackDiv.innerHTML = '<span class="feedback-done">✓ 感谢反馈</span>';
             });
             feedbackDiv.querySelector('.feedback-reject')?.addEventListener('click', () => {
-              window.electronAPI?.feedback?.reject(traceId, '用户标记无用');
+              window.electronAPI?.feedback?.reject(tid, '用户标记无用');
               feedbackDiv.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
             });
           }
-          
-          // 绑定 Agent 操作按钮事件
           messageContent.querySelectorAll('.agent-action-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
               const action = e.currentTarget.dataset.action;
-              this.handleAgentAction(action, result.result, agentType);
+              this.handleAgentAction(action, result.result, result.agentType);
             });
           });
-          
-          // 绑定可点击任务卡片
           messageContent.querySelectorAll('.agent-task-card').forEach(card => {
             card.addEventListener('click', () => {
               const title = card.dataset.title;
@@ -1501,6 +1555,9 @@ const App = {
             });
           });
         } else {
+          this._agentStreamListening = false;
+          this._agentStreamBuffer = [];
+          window.electronAPI?.removeAgentListeners?.();
           throw new Error(result.error || 'Agent 调用失败');
         }
       } else {
@@ -1571,6 +1628,9 @@ const App = {
       }
     } catch (error) {
       console.error('[AI] Error:', error);
+      this._agentStreamListening = false;
+      this._agentStreamBuffer = [];
+      window.electronAPI?.removeAgentListeners?.();
       const messageContent = assistantMessage.querySelector('.message-content');
       messageContent.innerHTML = `<p class="error-text">抱歉，发生了错误：${this.escapeHtml(error.message)}</p>
         <p class="error-hint">请检查 API 配置或网络连接</p>`;
@@ -1598,6 +1658,366 @@ const App = {
       console.error('[Copy] Failed:', err);
       this.showToast('复制失败', 'error');
     });
+  },
+
+  // ===== Agent 流式渲染（本地 LLM 流式输出） =====
+
+  _handleAgentStreamEvent(evt, messageContent) {
+    const { event, content, agentType, fullContent, traceId, usage, error } = evt;
+
+    if (event === 'done') {
+      this._finishAgentMessage(messageContent, fullContent || this._agentCurrentText, agentType, traceId, usage);
+      return;
+    }
+
+    if (event === 'error') {
+      const errEl = document.createElement('div');
+      errEl.className = 'error-text';
+      errEl.textContent = `❌ ${error || '未知错误'}`;
+      messageContent.appendChild(errEl);
+      this._finishAgentMessage(messageContent, this._agentCurrentText, agentType, traceId);
+      return;
+    }
+
+    if (event === 'reasoning') {
+      // 推理思考过程（如 DeepSeek-R1）—— 流式渲染思考内容
+      this._agentReasoningText += content;
+      if (!this._agentRenderPending) {
+        this._agentRenderPending = true;
+        requestAnimationFrame(() => {
+          const streamEl = document.getElementById('agentStreamText');
+          if (streamEl) {
+            const thinking = this._agentReasoningText;
+            const finalText = this._agentCurrentText;
+            // 停止计时器并更新时间
+            this._updateAgentStreamTimer();
+            if (finalText) {
+              // 已有正式回复内容，正常渲染
+              streamEl.innerHTML = `<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成...</div><div class="chat-markdown-content">${this._renderADPMarkdown(finalText, thinking)}</div>`;
+            } else {
+              // 仅思考阶段，显示思考过程流式输出
+              streamEl.innerHTML = `<div class="agent-reasoning-stream">
+                <div class="agent-reasoning-header">
+                  <span class="thinking-dots"><span></span><span></span><span></span></span>
+                  <span class="reasoning-label">💭 思考中...</span>
+                  <span class="reasoning-timer" id="agentReasoningTimer">${this._formatStreamElapsed()}</span>
+                </div>
+                <div class="agent-reasoning-content">${this._renderReasoningPreview(thinking)}</div>
+              </div>`;
+            }
+          }
+          this._agentRenderPending = false;
+        });
+      }
+      return;
+    }
+
+    if (event === 'delta') {
+      // 流式文本增量
+      this._agentCurrentText = fullContent || (this._agentCurrentText + content);
+      // 使用 requestAnimationFrame 节流渲染
+      if (!this._agentRenderPending) {
+        this._agentRenderPending = true;
+        requestAnimationFrame(() => {
+          const streamEl = document.getElementById('agentStreamText');
+          if (streamEl) {
+            const finalText = this._agentCurrentText;
+            // 停止计时器并更新时间
+            this._updateAgentStreamTimer();
+            // 尝试解析为 JSON（agent 模式可能返回 JSON）
+            if (agentType !== 'chat') {
+              // agent 模式：无论是否 JSON，都显示加载中的提示
+              streamEl.innerHTML = `<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成...</div><div class="chat-markdown-content">${this._renderADPMarkdown(finalText, this._agentReasoningText)}</div>`;
+            } else {
+              // chat 模式：检测是否为 JSON（模型可能仍返回 JSON）
+              const trimmed = finalText.trim();
+              const chatParsed = trimmed.startsWith('{') ? this._robustJSONParse(trimmed) : null;
+              const thinkingHtml = this._agentReasoningText ? this._renderADPThinking(this._agentReasoningText) : '';
+              if (chatParsed) {
+                // JSON 解析成功，即时渲染为友好格式
+                streamEl.innerHTML = `<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成...</div>${thinkingHtml}<div class="chat-markdown-content">${this._renderChatJSONAsMarkdown(chatParsed)}</div>`;
+              } else if (trimmed.startsWith('{')) {
+                // JSON 未完成，尝试提取 text 字段实时渲染
+                const extractedText = this._extractTextFieldFromPartialJSON(trimmed);
+                if (extractedText) {
+                  // 有 text 内容，流式渲染
+                  streamEl.innerHTML = `<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成...</div>${thinkingHtml}<div class="chat-markdown-content">${this._renderADPMarkdown(extractedText)}</div>`;
+                } else {
+                  // JSON 还没到 text 字段，显示加载提示
+                  streamEl.innerHTML = `<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成回复...</div>${thinkingHtml}`;
+                }
+              } else {
+                // 正常 markdown 渲染
+                streamEl.innerHTML = `<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成...</div>${thinkingHtml}<div class="chat-markdown-content">${this._renderADPMarkdown(finalText, this._agentReasoningText)}</div>`;
+              }
+            }
+          }
+          this._agentRenderPending = false;
+        });
+      }
+    }
+
+    // 自动滚动
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  /** 格式化流式耗时 */
+  _formatStreamElapsed() {
+    if (!this._agentStreamTimerStart) return '';
+    const s = Math.floor((Date.now() - this._agentStreamTimerStart) / 1000);
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
+  },
+
+  /** 更新流式计时器显示 */
+  _updateAgentStreamTimer() {
+    const el = document.getElementById('agentReasoningTimer');
+    if (el) el.textContent = this._formatStreamElapsed();
+  },
+
+  /** 渲染思考过程预览（截取+换行处理） */
+  _renderReasoningPreview(text) {
+    if (!text || !text.trim()) return '';
+    const trimmed = text.trim();
+    // 显示最近的思考内容，最多 500 字符
+    const display = trimmed.length > 500 ? '...' + trimmed.slice(-500) : trimmed;
+    return this.escapeHtml(display).replace(/\n/g, '<br>');
+  },
+
+  /** 健壮解析 JSON：支持带注释、多余文本包裹等情况 */
+  _robustJSONParse(text) {
+    if (!text || typeof text !== 'string') return null;
+    let str = text.trim();
+
+    // 1. 直接解析
+    try { const r = JSON.parse(str); if (r && typeof r === 'object') return r; } catch {}
+
+    // 2. 去除 JS 单行注释 (// ...) 和多行注释 (/* ... */)
+    const noComments = str.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    try { const r = JSON.parse(noComments); if (r && typeof r === 'object') return r; } catch {}
+
+    // 3. 尾随逗号清理（,} → }, ,] → ]）
+    const noTrail = noComments.replace(/,\s*([}\]])/g, '$1');
+    try { const r = JSON.parse(noTrail); if (r && typeof r === 'object') return r; } catch {}
+
+    // 4. 提取第一个完整的 {...} JSON 块
+    const firstBrace = str.indexOf('{');
+    if (firstBrace >= 0) {
+      let depth = 0, inStr = false, escape = false;
+      for (let i = firstBrace; i < str.length; i++) {
+        const ch = str[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\') { escape = true; continue; }
+        if (ch === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (ch === '{') depth++;
+        if (ch === '}') { depth--; if (depth === 0) {
+          const extracted = str.substring(firstBrace, i + 1);
+          // 递归用步骤 2-3 的清理逻辑
+          const cleaned = extracted.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/,\s*([}\]])/g, '$1');
+          try { const r = JSON.parse(cleaned); if (r && typeof r === 'object') return r; } catch {}
+          break;
+        }}
+      }
+    }
+
+    return null;
+  },
+
+  /** 从部分 JSON 中提取 text 字段内容（用于流式渲染） */
+  _extractTextFieldFromPartialJSON(str) {
+    if (!str || typeof str !== 'string') return null;
+    // 查找 "text": "..." 或 "text":"..."
+    // 匹配 "text" 键后跟冒号和引号开始的内容
+    const textKeyMatch = str.match(/"text"\s*:\s*"/);
+    if (!textKeyMatch) return null;
+    
+    const startIdx = textKeyMatch.index + textKeyMatch[0].length;
+    let result = '';
+    let i = startIdx;
+    while (i < str.length) {
+      const ch = str[i];
+      if (ch === '\\') {
+        // 转义字符
+        const next = str[i + 1];
+        if (next === 'n') { result += '\n'; i += 2; }
+        else if (next === 't') { result += '\t'; i += 2; }
+        else if (next === '"') { result += '"'; i += 2; }
+        else if (next === '\\') { result += '\\'; i += 2; }
+        else if (next === 'u' && str[i + 5]) { 
+          try { result += JSON.parse('"\\u' + str.substring(i + 2, i + 6) + '"'); i += 6; }
+          catch { result += ch; i++; }
+        }
+        else { result += next || ch; i += next ? 2 : 1; }
+      } else if (ch === '"') {
+        // 字符串结束
+        return result;
+      } else {
+        result += ch;
+        i++;
+      }
+    }
+    // 未闭合的字符串，返回已提取的内容（流式中间状态）
+    return result || null;
+  },
+
+  /** 将 chat 模式误返回的 JSON 转为友好的 Markdown 展示 */
+  _renderChatJSONAsMarkdown(obj) {
+    const parts = [];
+
+    // 主文本
+    const text = obj.text || obj.content || obj.answer || obj.message;
+    if (text) {
+      parts.push(this._renderADPMarkdown(text, this._agentReasoningText));
+    }
+
+    // 建议列表
+    const suggestions = obj.suggestions || obj.recommendations || [];
+    if (suggestions.length) {
+      parts.push(`<div class="chat-suggestions">`);
+      parts.push(`<div class="chat-suggestions-title">💡 建议</div>`);
+      suggestions.forEach(s => {
+        const label = typeof s === 'string' ? s : (s.text || s.label || s.title || JSON.stringify(s));
+        parts.push(`<div class="chat-suggestion-item">• ${this.escapeHtml(label)}</div>`);
+      });
+      parts.push(`</div>`);
+    }
+
+    // 关联任务
+    const tasks = obj.related_tasks || obj.tasks || [];
+    if (tasks.length) {
+      parts.push(`<div class="chat-related-tasks">`);
+      parts.push(`<div class="chat-related-title">📋 相关任务</div>`);
+      tasks.forEach(t => {
+        const label = typeof t === 'string' ? t : (t.title || t.name || JSON.stringify(t));
+        parts.push(`<span class="chat-related-tag">${this.escapeHtml(label)}</span>`);
+      });
+      parts.push(`</div>`);
+    }
+
+    // 推理步骤
+    const steps = obj.reasoning_steps || obj.steps || [];
+    if (steps.length) {
+      parts.push(`<div class="chat-reasoning-steps">`);
+      parts.push(`<div class="chat-reasoning-title">🔍 分析过程</div>`);
+      steps.forEach((s, i) => {
+        const label = typeof s === 'string' ? s : (s.description || s.text || JSON.stringify(s));
+        parts.push(`<div class="chat-reasoning-step"><span class="step-num">${i + 1}</span>${this.escapeHtml(label)}</div>`);
+      });
+      parts.push(`</div>`);
+    }
+
+    // 如果什么都没提取到，回退到原始 JSON 的 markdown 渲染
+    if (!parts.length) {
+      return this._renderADPMarkdown(JSON.stringify(obj, null, 2), this._agentReasoningText);
+    }
+
+    return parts.join('');
+  },
+
+  _finishAgentMessage(messageContent, fullText, agentType, traceId, usage) {
+    // 清理流式状态
+    this._agentStreaming = false;
+    this._agentCurrentBubble = null;
+    if (this._agentStreamTimerInterval) {
+      clearInterval(this._agentStreamTimerInterval);
+      this._agentStreamTimerInterval = null;
+    }
+    window.electronAPI?.removeAgentListeners?.();
+    if (this._agentStreamResolve) {
+      this._agentStreamResolve();
+      this._agentStreamResolve = null;
+    }
+
+    const agentLabels = { priority: '🎯 优先级规划', knowledge: '📚 知识梳理', memory: '🧠 记忆整理', report: '📊 日报生成', chat: '🤖 LLM 对话' };
+    const badgeCls = agentType === 'chat' ? 'agent-badge agent-badge-llm' : 'agent-badge';
+    let html = `<div class="${badgeCls}">${agentLabels[agentType] || '💬 对话'}</div>`;
+
+    // 尝试解析为 JSON（agent 模式或 chat 模式可能返回 JSON）
+    let parsed = this._robustJSONParse(fullText);
+
+    if (parsed && typeof parsed === 'object') {
+      if (agentType === 'chat') {
+        // chat 模式 JSON 兜底：转为友好的 Markdown 展示 + 思考过程
+        const thinkingHtml = this._agentReasoningText ? this._renderADPThinking(this._agentReasoningText) : '';
+        html += `${thinkingHtml}<div class="chat-markdown-content">${this._renderChatJSONAsMarkdown(parsed)}</div>`;
+      } else {
+        html += this.renderAgentResult(parsed, agentType);
+      }
+    } else {
+      // 纯文本模式
+      html += `<div class="chat-markdown-content">${this._renderADPMarkdown(fullText, this._agentReasoningText)}</div>`;
+    }
+
+    // 反馈按钮
+    if (traceId) {
+      html += `<div class="agent-feedback" data-trace-id="${traceId}">
+        <button class="feedback-btn feedback-accept" title="有用">👍</button>
+        <button class="feedback-btn feedback-reject" title="没用">👎</button>
+      </div>`;
+    }
+
+    // 复制按钮
+    html += '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
+
+    // 时间戳
+    const assistantMsg = messageContent.closest('.message.assistant');
+    const sendTime = assistantMsg?.dataset.sendTime;
+    const timeLabel = sendTime
+      ? `${this._formatChatTime(new Date(sendTime))} → ${this._formatChatTime(new Date())}`
+      : this._formatChatTime(new Date());
+    html += `<span class="message-time assistant-time">${timeLabel}</span>`;
+
+    messageContent.innerHTML = html;
+
+    // 绑定按钮事件
+    const copyBtn = messageContent.querySelector('.copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
+    }
+    const feedbackDiv = messageContent.querySelector('.agent-feedback');
+    if (feedbackDiv) {
+      const tid = feedbackDiv.dataset.traceId;
+      feedbackDiv.querySelector('.feedback-accept')?.addEventListener('click', () => {
+        window.electronAPI?.feedback?.accept(tid, parsed || { text: fullText });
+        feedbackDiv.innerHTML = '<span class="feedback-done">✓ 感谢反馈</span>';
+      });
+      feedbackDiv.querySelector('.feedback-reject')?.addEventListener('click', () => {
+        window.electronAPI?.feedback?.reject(tid, '用户标记无用');
+        feedbackDiv.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
+      });
+    }
+
+    // 绑定 Agent 操作按钮事件
+    messageContent.querySelectorAll('.agent-action-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const action = e.currentTarget.dataset.action;
+        this.handleAgentAction(action, parsed, agentType);
+      });
+    });
+
+    // 绑定可点击任务卡片
+    messageContent.querySelectorAll('.agent-task-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const title = card.dataset.title;
+        const schedule = card.dataset.schedule;
+        if (title) {
+          this.showTaskModal({ title, description: `排程时间：${schedule || ''}`, estimatedDuration: 60, priority: 'high' });
+        }
+      });
+    });
+
+    // 绑定思考过程折叠/展开（Agent 流式输出时生成）
+    messageContent.querySelectorAll('.adp-thinking-header').forEach(header => {
+      header.addEventListener('click', () => {
+        header.parentElement.classList.toggle('expanded');
+        const toggle = header.querySelector('.adp-thinking-toggle');
+        if (toggle) toggle.textContent = header.parentElement.classList.contains('expanded') ? '▼' : '▶';
+      });
+    });
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
   },
 
   // ===== ADP SSE 流式渲染（参考 ADP Agent SDK） =====
@@ -1751,6 +2171,12 @@ const App = {
 
     // 折叠进度区域
     this._collapseADPProgress();
+
+    // 添加 ADP 智能体 badge
+    const badgeEl = document.createElement('div');
+    badgeEl.className = 'agent-badge agent-badge-adp';
+    badgeEl.textContent = '🤖 ADP 智能体';
+    messageContent.appendChild(badgeEl);
 
     // 创建回复文本区域
     const replyEl = document.createElement('div');
@@ -2301,6 +2727,11 @@ const App = {
       case 'knowledge': return this.renderKnowledgeResult(result);
       case 'memory': return this.renderMemoryResult(result);
       case 'report': return this.renderReportResult(result);
+      case 'chat': {
+        // LLM 聊天模式：支持 markdown 格式渲染
+        const text = result.text || result.content || JSON.stringify(result, null, 2);
+        return `<div class="chat-markdown-content">${this._renderADPMarkdown(text, '')}</div>`;
+      }
       default: return `<p>${this.escapeHtml(result.text || JSON.stringify(result, null, 2))}</p>`;
     }
   },
@@ -2452,8 +2883,9 @@ const App = {
     if (quickQuestions) {
       chatMessages.appendChild(quickQuestions);
     }
-    
-    chatMessages.innerHTML += `
+
+    // 用 insertAdjacentHTML 避免破坏已恢复的 DOM 事件监听器
+    chatMessages.insertAdjacentHTML('beforeend', `
       <div class="message assistant">
         <div class="message-avatar">${this._assistantAvatarSvg}</div>
         <div class="message-content">
@@ -2461,7 +2893,10 @@ const App = {
           <span class="message-time assistant-time">${this._formatChatTime(new Date())}</span>
         </div>
       </div>
-    `;
+    `);
+
+    // 重新绑定功能卡片事件（事件委托模式下只需一次，此处为安全兜底）
+    this._initFeatureCards();
   },
 
   _formatChatTime(date) {
@@ -4220,6 +4655,29 @@ ${JSON.stringify(reportData, null, 2)}`;
         this.handleClipboardTask(data);
       });
       
+      // 剪贴板候选事件（中等置信度任务）
+      if (window.electronAPI.onClipboardCandidateDetected) {
+        window.electronAPI.onClipboardCandidateDetected((data) => {
+          console.log('[App] Clipboard candidate detected:', data.task?.title);
+          this.handleClipboardCandidate(data);
+        });
+      }
+      
+      // 剪贴板暂存状态
+      if (window.electronAPI.onClipboardBufferStatus) {
+        window.electronAPI.onClipboardBufferStatus((data) => {
+          this.updateClipboardBufferStatus(data);
+        });
+      }
+      
+      // 关联检测通知
+      if (window.electronAPI.onClipboardAssociationDetected) {
+        window.electronAPI.onClipboardAssociationDetected((data) => {
+          console.log('[App] Association detected:', data.action, data.targetId);
+          this.showAssociationNotification(data);
+        });
+      }
+      
       window.electronAPI.onStartPomodoro(() => {
         Pomodoro.start();
       });
@@ -4230,6 +4688,34 @@ ${JSON.stringify(reportData, null, 2)}`;
         this.incrementNewNoteCount();
       });
     }
+  },
+
+  handleClipboardCandidate(data) {
+    // 中等置信度任务：以 toast 提示，不弹弹窗
+    const title = data.task?.title || '未知任务';
+    const confidence = data.task?.confidence ? Math.round(data.task.confidence * 100) : '?';
+    this.showToast(`📋 候选待办: ${title} (${confidence}%)`, 'info');
+  },
+
+  updateClipboardBufferStatus(data) {
+    // 更新暂存状态提示（如果有UI的话）
+    const statusEl = document.getElementById('clipboardBufferStatus');
+    if (statusEl && !data.isStable && data.fragmentCount > 0) {
+      statusEl.textContent = `⏳ 正在聚合内容（${data.fragmentCount} 片段，${data.totalLength} 字）...`;
+      statusEl.style.display = 'block';
+    } else if (statusEl) {
+      statusEl.style.display = 'none';
+    }
+  },
+
+  showAssociationNotification(data) {
+    const actionText = {
+      supplement: '补充了',
+      update: '更新了',
+      related: '关联了'
+    };
+    const action = actionText[data.action] || data.action;
+    this.showToast(`🔗 已${action}相关条目`, 'info');
   },
 
   handleClipboardTask(data) {
