@@ -1,10 +1,10 @@
 /**
  * 知识文档模块 - 对接 ADP Toolkit 公开资源 API
- * Base URL: http://21.91.29.59:3000
+ * BASE_URL 动态获取：优先使用登录环境的 toolkitUrl，未登录则使用默认地址
  */
 
 const Documents = {
-  BASE_URL: 'http://21.91.29.59:3000',
+  BASE_URL: 'http://121.5.164.126:3010', // 默认使用外网可访问的 Beta 地址
   currentType: 'documents', // documents | cases | demos | learning
   currentSort: 'latest', // latest | hot
   currentPage: 1,
@@ -108,9 +108,25 @@ const Documents = {
 
   onShow() {
     this.init();
+    // 动态更新 BASE_URL：优先使用登录环境的 toolkitUrl
+    this._updateBaseUrl();
     // 首次加载数据
     if (this.allData.length === 0) {
       this.fetchData(true);
+    }
+  },
+
+  async _updateBaseUrl() {
+    try {
+      if (window.electronAPI?.authGetState) {
+        const state = await window.electronAPI.authGetState();
+        if (state.toolkitUrl) {
+          this.BASE_URL = state.toolkitUrl;
+          console.log('[Documents] Using toolkitUrl from auth:', this.BASE_URL);
+        }
+      }
+    } catch (err) {
+      console.log('[Documents] Using default BASE_URL:', this.BASE_URL);
     }
   },
 
