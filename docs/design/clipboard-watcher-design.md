@@ -409,28 +409,30 @@ const recentProcessed = recentItems.map(item =>
 ## 8. 实现步骤
 
 ### Phase 1: 基础框架 + 暂存机制
-- [ ] 从 `main.js` 抽取剪贴板监控代码到 `clipboard/` 目录（主进程侧）
-- [ ] 实现 `ClipboardBuffer` 暂存器（时间窗口聚合 + preClassify 入场过滤）
-- [ ] 实现动态稳定超时（高频→延长等待）
-- [ ] 合并后调用现有 `analyzeClipboardText(mergedText)`
-- [ ] 修复 `String.prototype.hashCode` → 改为 `getClipboardHash()` 工具函数
-- [ ] 修复 `clipboard-candidate-detected` 无人消费问题
+- [x] 从 `main.js` 抽取剪贴板监控代码到 `clipboard/` 目录（主进程侧）
+- [x] 实现 `ClipboardBuffer` 暂存器（时间窗口聚合 + preClassify 入场过滤）
+- [x] 实现动态稳定超时（高频→延长等待）
+- [x] 合并后调用现有 `analyzeClipboardText(mergedText)`
+- [x] 修复 `String.prototype.hashCode` → 改为 `getClipboardHash()` 工具函数
+- [x] 修复 `clipboard-candidate-detected` 无人消费问题
 
 ### Phase 2: 动态频率 + 状态感知
-- [ ] 实现 `FrequencyController`（2档：正常/空闲）
-- [ ] 集成 `powerMonitor` 屏幕锁定检测
-- [ ] 屏幕解锁后检查剪贴板是否有新内容
+- [x] 实现 `FrequencyController`（2档：正常/空闲）
+- [x] 集成 `powerMonitor` 屏幕锁定检测
+- [x] 屏幕解锁后检查剪贴板是否有新内容
 
 ### Phase 3: AI 关联检测
-- [ ] 修改 AI 分析 prompt，增加关联检测维度
-- [ ] 实现关联处理逻辑（supplement/update/duplicate/related）
-- [ ] 记事本增加 `appendToNote()` / `updateNote()` 方法
+- [x] 修改 AI 分析 prompt，增加关联检测维度
+- [x] 实现关联处理逻辑（supplement/update/duplicate/related）
+- [x] 记事本增加 supplements/updates 字段支持
 
 ### Phase 4: UI & 配置
-- [ ] 添加设置面板
-- [ ] 添加暂存状态提示
-- [ ] 添加调试日志开关
-- [ ] 回退方案：一键切回简单模式
+- [x] 添加配置获取/更新 IPC（clipboard:get-config / clipboard:update-config）
+- [x] 添加暂存状态提示（clipboard-buffer-status 事件）
+- [x] 添加候选事件处理（clipboard-candidate-detected）
+- [x] 添加关联通知（clipboard-association-detected）
+- [x] 回退方案：配置开关控制（clipboard_buffer_enabled / clipboard_freq_enabled / clipboard_association_enabled）
+- [ ] 设置面板 UI（后续迭代）
 
 ---
 
