@@ -172,6 +172,8 @@ function getDefaultConfig() {
       app_key: 'EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm',
       knowledge_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
       search_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
+      clustering_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
+      graph_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
       url: 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
       agent_name: '我的AI助手'
     },
@@ -313,7 +315,19 @@ app.get('/config/check', authMiddleware, (req, res) => {
 // ADPToolkit Token 验证中间件（支持跨服务认证）
 // 1. 先尝试本地 JWT 验证
 // 2. 失败则解码 ADPToolkit JWT payload（内网互通，信任其 token 结构）
-const ADP_AUTH_URL = 'http://21.91.29.59:3000/api/auth/me';
+// ADPToolkit 服务器地址（从环境变量读取，支持动态配置）
+const DEFAULT_ADP_SERVER_URL = 'http://21.91.29.59:3000';
+const ADP_SERVER_URL = process.env.ADP_SERVER_URL || DEFAULT_ADP_SERVER_URL;
+
+/**
+ * 从请求中获取 ADPToolkit 服务器地址
+ * 优先级：X-Auth-Server header > 环境变量 > 默认值
+ */
+function getAdpServerUrl(req) {
+  const headerUrl = req.headers['x-auth-server'];
+  if (headerUrl) return headerUrl.replace(/\/$/, '');
+  return ADP_SERVER_URL;
+}
 
 async function adpAuthMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -340,7 +354,8 @@ async function adpAuthMiddleware(req, res, next) {
 
   // 2. 代理到 ADPToolkit 验证 token（优先远程验证）
   try {
-    const adpRes = await fetch(ADP_AUTH_URL, {
+    const adpServerUrl = getAdpServerUrl(req);
+    const adpRes = await fetch(`${adpServerUrl}/api/auth/me`, {
       headers: { 'Authorization': `Bearer ${token}` },
       signal: AbortSignal.timeout(3000) // 3秒超时
     });
@@ -400,10 +415,12 @@ app.get('/memora/config', adpAuthMiddleware, async (req, res) => {
   try {
     let orgId = null;
     let orgName = '';
+    let isAdpUser = false;
 
     if ((req.authSource === 'adptoolkit' || req.authSource === 'adptoolkit-decoded') && req.adpUser) {
       // ADPToolkit 用户：通过 organization 名称查找
       orgName = req.adpUser.organization || '';
+      isAdpUser = true;
       if (orgName) {
         const org = db.prepare('SELECT id FROM orgs WHERE name = ?').get(orgName);
         orgId = org?.id || null;
@@ -422,6 +439,18 @@ app.get('/memora/config', adpAuthMiddleware, async (req, res) => {
     const defaultConfig = getDefaultConfig();
 
     if (!orgId) {
+      // ADPToolkit 用户无本地组织映射：尝试从 ADPToolkit 同步配置
+      if (isAdpUser && orgName) {
+        const adpServerUrl = getAdpServerUrl(req);
+        const syncedConfig = await syncConfigFromAdpToolkit(orgName, req.headers.authorization, null, adpServerUrl);
+        if (syncedConfig) {
+          const merged = deepMerge(defaultConfig, syncedConfig);
+          return res.json({
+            ...merged,
+            _meta: { organization: orgName, updated_at: syncedConfig._meta?.updated_at || null, source: 'adptoolkit_sync' }
+          });
+        }
+      }
       return res.json({
         ...defaultConfig,
         _meta: { organization: orgName, updated_at: null, source: 'default' }
@@ -430,6 +459,18 @@ app.get('/memora/config', adpAuthMiddleware, async (req, res) => {
 
     const row = db.prepare('SELECT config, updated_at FROM org_configs WHERE org_id = ?').get(orgId);
     if (!row) {
+      // 本地无配置：尝试从 ADPToolkit 同步
+      if (isAdpUser && orgName) {
+        const adpServerUrl = getAdpServerUrl(req);
+        const syncedConfig = await syncConfigFromAdpToolkit(orgName, req.headers.authorization, null, adpServerUrl);
+        if (syncedConfig) {
+          const merged = deepMerge(defaultConfig, syncedConfig);
+          return res.json({
+            ...merged,
+            _meta: { organization: orgName, updated_at: syncedConfig._meta?.updated_at || null, source: 'adptoolkit_sync' }
+          });
+        }
+      }
       return res.json({
         ...defaultConfig,
         _meta: { organization: orgName, updated_at: null, source: 'default' }
@@ -440,6 +481,25 @@ app.get('/memora/config', adpAuthMiddleware, async (req, res) => {
     const orgConfig = JSON.parse(row.config);
     const merged = deepMerge(defaultConfig, orgConfig);
 
+    // ADPToolkit 用户：检查 ADPToolkit 端配置是否更新，如有则同步
+    // 仅在本地无配置或配置超过 5 分钟未更新时才尝试同步（避免每次请求都超时等待）
+    if (isAdpUser && orgName) {
+      const shouldSync = !row || !row.updated_at || 
+        (Date.now() - new Date(row.updated_at).getTime() > 5 * 60 * 1000);
+      if (shouldSync) {
+        const adpServerUrl = getAdpServerUrl(req);
+        const syncedConfig = await syncConfigFromAdpToolkit(orgName, req.headers.authorization, row?.updated_at, adpServerUrl);
+        if (syncedConfig) {
+          // ADPToolkit 端有更新，返回同步后的配置
+          const syncedMerged = deepMerge(defaultConfig, syncedConfig);
+          return res.json({
+            ...syncedMerged,
+            _meta: { organization: orgName, updated_at: syncedConfig._meta?.updated_at || row.updated_at, source: 'adptoolkit_sync' }
+          });
+        }
+      }
+    }
+
     res.json({
       ...merged,
       _meta: { organization: orgName, updated_at: row.updated_at, source: 'org_config' }
@@ -449,6 +509,76 @@ app.get('/memora/config', adpAuthMiddleware, async (req, res) => {
     res.status(500).json({ message: '服务器错误' });
   }
 });
+
+/**
+ * 从 ADPToolkit 同步配置到本地 config-server
+ * @param {string} orgName - 组织名称
+ * @param {string} authHeader - Authorization header
+ * @param {string|null} localUpdatedAt - 本地配置的 updated_at（用于判断是否需要同步）
+ * @param {string|null} adpServerUrl - ADPToolkit 服务器地址（优先从请求 X-Auth-Server header 获取）
+ * @returns {object|null} 同步到的配置对象，或 null（无需同步/同步失败）
+ */
+async function syncConfigFromAdpToolkit(orgName, authHeader, localUpdatedAt = null, adpServerUrl = null) {
+  try {
+    // 从 ADPToolkit 获取最新配置（使用动态传入的地址或环境变量默认值）
+    const serverUrl = adpServerUrl || ADP_SERVER_URL;
+    const adpConfigUrl = `${serverUrl}/memora/config`;
+    console.log(`[Config Sync] Syncing from ${adpConfigUrl} for org "${orgName}"`);
+    const adpRes = await fetch(adpConfigUrl, {
+      headers: { 'Authorization': authHeader },
+      signal: AbortSignal.timeout(2000)
+    });
+
+    if (!adpRes.ok) {
+      console.log('[Config Sync] ADPToolkit config fetch failed:', adpRes.status);
+      return null;
+    }
+
+    const adpConfig = await adpRes.json();
+    const adpUpdatedAt = adpConfig._meta?.updated_at;
+
+    // 如果 ADPToolkit 端也没有更新，无需同步
+    if (localUpdatedAt && adpUpdatedAt && new Date(adpUpdatedAt) <= new Date(localUpdatedAt)) {
+      return null;
+    }
+
+    // ADPToolkit 端有更新或首次同步
+    if (!adpConfig.api?.model && !adpConfig.adp?.app_key) {
+      // ADPToolkit 也无有效配置
+      return null;
+    }
+
+    console.log(`[Config Sync] Syncing config from ADPToolkit for org "${orgName}", adp_updated=${adpUpdatedAt}, local_updated=${localUpdatedAt}`);
+
+    // 找到或创建本地组织
+    let orgId;
+    const org = db.prepare('SELECT id FROM orgs WHERE name = ?').get(orgName);
+    if (org) {
+      orgId = org.id;
+    } else {
+      // 自动创建组织
+      orgId = 'org-adp-' + orgName.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '').substring(0, 20);
+      const code = 'ADP-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+      db.prepare('INSERT INTO orgs (id, name, code) VALUES (?, ?, ?)').run(orgId, orgName, code);
+      console.log(`[Config Sync] Auto-created org: ${orgName} (${orgId})`);
+    }
+
+    // 提取纯配置（去掉 _meta）
+    const { _meta, ...pureConfig } = adpConfig;
+    const configStr = JSON.stringify(pureConfig, null, 2);
+
+    // 写入/更新本地 org_configs
+    db.prepare('INSERT OR REPLACE INTO org_configs (org_id, config, updated_at) VALUES (?, ?, ?)')
+      .run(orgId, configStr, adpUpdatedAt || new Date().toISOString());
+
+    console.log(`[Config Sync] Config synced for org "${orgName}", model=${pureConfig.api?.model}`);
+
+    return pureConfig;
+  } catch (err) {
+    console.error('[Config Sync] Error:', err.message);
+    return null;
+  }
+}
 
 // 获取当前用户的通知列表
 app.get('/memora/notifications', adpAuthMiddleware, (req, res) => {

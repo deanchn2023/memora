@@ -1,9 +1,9 @@
 {
   "name": "memora",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "忆境 Memora - AI驱动的个人记忆与事项管理助手",
   "main": "main.js",
-  "author": "Dean Chen",
+  "author": "Dean Zhu",
   "license": "MIT",
   "scripts": {
     "start": "electron .",

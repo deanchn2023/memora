@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAuthChanged: (callback) => {
     ipcRenderer.on('auth:changed', (_, data) => callback(data));
   },
+  onConfigUpdated: (callback) => {
+    ipcRenderer.on('config:updated', (_, data) => callback(data));
+  },
   onNotificationsUpdated: (callback) => {
     ipcRenderer.on('notifications:updated', (_, data) => callback(data));
   },
@@ -235,6 +238,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 知识图谱
   graphBuild: (params) => ipcRenderer.invoke('graph:build', params),
+  graphBuildLimit: () => ipcRenderer.invoke('graph:build-limit'),
   graphGetNodes: (filter) => ipcRenderer.invoke('graph:get-nodes', filter),
   graphGetEdges: (filter) => ipcRenderer.invoke('graph:get-edges', filter),
   graphSearch: (params) => ipcRenderer.invoke('graph:search', params),

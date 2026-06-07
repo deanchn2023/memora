@@ -63,6 +63,8 @@ async function auditedDeepSeekCall({ module, apiConfig, messages, fetchOptions =
     module,
     model: apiConfig.model,
     baseUrl: apiConfig.baseUrl,
+    apiKey: apiConfig.apiKey || null,
+    adpAppKey: null,
     input: {
       systemPromptLen: messages.find(m => m.role === 'system')?.content?.length || 0,
       userPromptLen: messages.filter(m => m.role === 'user').reduce((sum, m) => {
@@ -174,6 +176,7 @@ let authState = {
 };
 
 let remoteConfig = null;  // 服务器配置（仅内存，不写磁盘，退出登录即清空）
+let configPollTimer = null;  // 配置定期同步计时器
 
 // 环境配置（默认值）
 const DEFAULT_AUTH_SERVERS = {
@@ -2323,13 +2326,17 @@ async function fetchRemoteConfig() {
   const server = getAuthServer();
   try {
     const res = await fetch(`${server.configUrl}${server.configPath}`, {
-      headers: { 'Authorization': `Bearer ${authState.token}` }
+      headers: {
+        'Authorization': `Bearer ${authState.token}`,
+        'X-Auth-Server': server.authUrl,  // 传递登录服务器地址，供 config-server 同步配置使用
+      }
     });
 
     if (res.ok) {
       const data = await res.json();
       // 仅存内存，不写磁盘，退出登录即消失
       remoteConfig = data;
+      _lastConfigUpdatedAt = data._meta?.updated_at || null;
       console.log('[Auth] Remote config fetched, keys:', Object.keys(data));
       // 校验 ADP 专用 Key：如果服务器返回的 knowledge_app_key / search_app_key 与 app_key 相同，
       // 说明 org_config 未正确配置，使用本地默认值
@@ -2343,10 +2350,20 @@ async function fetchRemoteConfig() {
           console.log('[Auth] search_app_key 未配置或与 app_key 相同，使用本地默认值');
           adp.search_app_key = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
         }
+        if (!adp.clustering_app_key || adp.clustering_app_key === adp.app_key) {
+          console.log('[Auth] clustering_app_key 未配置或与 app_key 相同，使用本地默认值');
+          adp.clustering_app_key = DEFAULT_ADP_CLUSTERING_APP_KEY;
+        }
+        if (!adp.graph_app_key || adp.graph_app_key === adp.app_key) {
+          console.log('[Auth] graph_app_key 未配置或与 app_key 相同，使用本地默认值');
+          adp.graph_app_key = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+        }
       }
       console.log('[Auth] ADP config - app_key:', (data.adp?.app_key || '').substring(0, 10) + '...',
         '| knowledge_app_key:', (data.adp?.knowledge_app_key || '').substring(0, 10) + '...',
-        '| search_app_key:', (data.adp?.search_app_key || '').substring(0, 10) + '...');
+        '| search_app_key:', (data.adp?.search_app_key || '').substring(0, 10) + '...',
+        '| clustering_app_key:', (data.adp?.clustering_app_key || '').substring(0, 10) + '...',
+        '| graph_app_key:', (data.adp?.graph_app_key || '').substring(0, 10) + '...');
     } else if (res.status === 401) {
       // token 失效，自动退出
       console.log('[Auth] Token expired, auto logout');
@@ -2369,6 +2386,8 @@ async function handleLogout(clearToken = true) {
   }
   // 停止通知轮询
   stopNotificationPolling();
+  // 停止配置轮询
+  stopConfigPolling();
   authState = { isLoggedIn: false, token: null, user: null, env, forceLocalConfig: false };
   remoteConfig = null;  // 清空内存中的服务器配置
 
@@ -2382,6 +2401,42 @@ async function handleLogout(clearToken = true) {
   // 通知渲染进程
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('auth:changed', { isLoggedIn: false });
+  }
+}
+
+// 配置定期同步：每 5 分钟拉取一次云端配置，检测是否有更新
+let _lastConfigUpdatedAt = null;  // 上次同步时服务端的 updated_at
+
+function startConfigPolling(intervalMs = 5 * 60 * 1000) {
+  stopConfigPolling();
+  configPollTimer = setInterval(async () => {
+    if (!authState.isLoggedIn || authState.forceLocalConfig) return;
+    try {
+      const oldUpdatedAt = _lastConfigUpdatedAt;
+      await fetchRemoteConfig();
+      // 如果 updated_at 变了，说明云端配置有更新
+      if (remoteConfig?._meta?.updated_at && remoteConfig._meta.updated_at !== oldUpdatedAt) {
+        console.log('[Auth] Cloud config updated:', oldUpdatedAt, '->', remoteConfig._meta.updated_at);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('config:updated', {
+            api: remoteConfig?.api || null,
+            adp: remoteConfig?.adp || null,
+            forceLocalConfig: authState.forceLocalConfig,
+            reason: 'cloud_updated'
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Auth] Config poll error:', err.message);
+    }
+  }, intervalMs);
+  console.log('[Auth] Config polling started, interval:', intervalMs / 1000, 's');
+}
+
+function stopConfigPolling() {
+  if (configPollTimer) {
+    clearInterval(configPollTimer);
+    configPollTimer = null;
   }
 }
 
@@ -2420,6 +2475,14 @@ async function autoLogin() {
       authState.user = data.user || data;
       await fetchRemoteConfig();
       console.log('[Auth] Auto login success:', authState.user?.email || authState.user?.username);
+      // 通知渲染进程配置已更新（确保设置页面等刷新）
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('config:updated', {
+          api: remoteConfig?.api || null,
+          adp: remoteConfig?.adp || null,
+          forceLocalConfig: authState.forceLocalConfig
+        });
+      }
       // 自动登录成功通知
       showNotification('忆境 Memora', `欢迎回来，${authState.user?.name || authState.user?.email || ''}！`);
       // 上报自动登录活动
@@ -2498,6 +2561,12 @@ ipcMain.handle('auth:login', async (event, { email, password, env, rememberMe })
     // 通知渲染进程
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('auth:changed', { isLoggedIn: true, user: data.user, env: authState.env });
+      // 同时发送配置更新事件
+      mainWindow.webContents.send('config:updated', {
+        api: remoteConfig?.api || null,
+        adp: remoteConfig?.adp || null,
+        forceLocalConfig: authState.forceLocalConfig
+      });
     }
 
     console.log('[Auth] Login success:', data.user?.email || data.user?.username, 'env:', authState.env);
@@ -2836,6 +2905,14 @@ ipcMain.handle('updates:check', async () => {
 ipcMain.handle('config:sync', async () => {
   if (!authState.isLoggedIn) return { success: false, error: '未登录' };
   await fetchRemoteConfig();
+  // 通知渲染进程配置已更新
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('config:updated', {
+      api: remoteConfig?.api || null,
+      adp: remoteConfig?.adp || null,
+      forceLocalConfig: authState.forceLocalConfig
+    });
+  }
   return { success: true };
 });
 
@@ -2862,6 +2939,10 @@ ipcMain.handle('send-adp-message', async (event, message) => {
   }
   
   console.log('[ADP Chat] send-adp-message called, configSource:', configSource);
+  
+  // 记录当前使用的 appKey 用于审计（脱敏）
+  const _adpChatAppKey = appKey;
+  const _adpChatModel = `adp_v2${configSource !== 'default' ? `(${configSource})` : ''}`;
   
   const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
   const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
@@ -2896,12 +2977,13 @@ ipcMain.handle('send-adp-message', async (event, message) => {
       if (auditLogger) {
         auditLogger.record({
           module: 'adp_chat',
-          model: 'adp',
+          model: _adpChatModel,
           baseUrl: httpUrl,
+          adpAppKey: _adpChatAppKey,
           input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
           output: { status: response.status, contentLen: 0, content: '', finishReason: null },
           tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-          latencyMs: Date.now() - _adpChatStartTime,
+          latencyMs: Date.now(),
           error: `HTTP ${response.status}`,
         });
       }
@@ -2945,8 +3027,9 @@ ipcMain.handle('send-adp-message', async (event, message) => {
                   if (auditLogger) {
                     auditLogger.record({
                       module: 'adp_chat',
-                      model: 'adp',
+                      model: _adpChatModel,
                       baseUrl: httpUrl,
+                      adpAppKey: _adpChatAppKey,
                       input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
                       output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'completed' },
                       tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -2995,8 +3078,9 @@ ipcMain.handle('send-adp-message', async (event, message) => {
         if (_adpChatFullText && auditLogger) {
           auditLogger.record({
             module: 'adp_chat',
-            model: 'adp',
+            model: _adpChatModel,
             baseUrl: httpUrl,
+            adpAppKey: _adpChatAppKey,
             input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
             output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'stream_end' },
             tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -3010,8 +3094,9 @@ ipcMain.handle('send-adp-message', async (event, message) => {
           if (auditLogger) {
             auditLogger.record({
               module: 'adp_chat',
-              model: 'adp',
+              model: _adpChatModel,
               baseUrl: httpUrl,
+              adpAppKey: _adpChatAppKey,
               input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
               output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'aborted' },
               tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -3899,20 +3984,37 @@ ipcMain.handle('graph:build', async (event, { forceRefresh } = {}) => {
         if (builtAt) {
           const age = Date.now() - new Date(builtAt).getTime();
           if (age < 24 * 3600 * 1000) {
+            console.log('[Graph] Using cached graph, age:', Math.floor(age/3600000), 'hours');
             return { source: 'cache', stats: { ...stats, builtAt } };
           }
         }
       }
     }
 
+    // 检查每日构建限制
+    const buildLimit = _checkGraphBuildLimit();
+    if (!buildLimit.allowed) {
+      return { stats: graphDb.getStats(), error: buildLimit.reason };
+    }
+
+    console.log('[Graph] Starting graph build, forceRefresh:', forceRefresh);
+
     // 调用 ADP 构建
     const summary = _buildGraphSummary();
     const prompt = _buildGraphPrompt(summary);
+    console.log('[Graph] Summary: atoms=' + summary.atomCount + ' clusters=' + summary.clusterCount + ' domains=' + Object.keys(summary.domains).length);
+
+    // 标记本次构建已发起（即使后续失败也算一次）
+    _recordGraphBuild();
+
     const graphData = await _callADPForGraph(prompt);
 
-    if (!graphData || !graphData.nodes) {
-      return { stats: graphDb.getStats(), error: 'ADP 返回数据异常' };
+    if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+      console.warn('[Graph] ADP returned empty data');
+      return { stats: graphDb.getStats(), error: 'ADP 返回数据为空，请稍后再试' };
     }
+
+    console.log('[Graph] Writing to DB: nodes=' + graphData.nodes.length + ' edges=' + (graphData.edges?.length || 0));
 
     // 写入 SQLite
     graphDb.upsertNodes(graphData.nodes);
@@ -3929,13 +4031,31 @@ ipcMain.handle('graph:build', async (event, { forceRefresh } = {}) => {
       });
     }
 
+    // 保存已构建的知识源 ID（用于增量构建）
+    _saveBuiltKnowledgeSnapshot(summary);
+
     graphDb.clearStale();
     const stats = graphDb.getStats();
+    console.log('[Graph] Build complete: nodes=' + stats.nodeCount + ' edges=' + stats.edgeCount);
     return { source: 'adp', stats: { ...stats, builtAt: new Date().toISOString() } };
   } catch (e) {
     console.error('[Graph] Build error:', e);
     return { stats: graphDb.getStats(), error: e.message };
   }
+});
+
+// 查询构建限制
+ipcMain.handle('graph:build-limit', async () => {
+  const limit = _checkGraphBuildLimit();
+  const today = new Date().toISOString().split('T')[0];
+  const count = parseInt(getSetting('graph_build_count') || '0', 10);
+  const stored = getSetting('graph_build_date');
+  return {
+    allowed: limit.allowed,
+    reason: limit.reason || '',
+    usedToday: stored === today ? count : 0,
+    dailyLimit: GRAPH_BUILD_DAILY_LIMIT,
+  };
 });
 
 // 查询节点
@@ -4113,6 +4233,59 @@ function _buildGraphPrompt(summary) {
   return template.replace('{{summary_json}}', JSON.stringify(summary, null, 2));
 }
 
+// ========== 图谱构建限制 & 增量构建 ==========
+
+const GRAPH_BUILD_DAILY_LIMIT = 1; // 每天最多全量构建 1 次
+
+function _checkGraphBuildLimit() {
+  const today = new Date().toISOString().split('T')[0];
+  const stored = getSetting('graph_build_date');
+  const count = parseInt(getSetting('graph_build_count') || '0', 10);
+
+  if (stored === today && count >= GRAPH_BUILD_DAILY_LIMIT) {
+    return { allowed: false, reason: `今日全量构建已使用 ${count}/${GRAPH_BUILD_DAILY_LIMIT} 次，明天再来吧` };
+  }
+  return { allowed: true };
+}
+
+function _recordGraphBuild() {
+  const today = new Date().toISOString().split('T')[0];
+  const stored = getSetting('graph_build_date');
+  let count = parseInt(getSetting('graph_build_count') || '0', 10);
+
+  if (stored !== today) {
+    count = 1;
+  } else {
+    count++;
+  }
+
+  setSetting('graph_build_date', today);
+  setSetting('graph_build_count', String(count));
+  console.log('[Graph] Build recorded: date=' + today + ' count=' + count);
+}
+
+function _saveBuiltKnowledgeSnapshot(summary) {
+  // 记录本次构建涉及的知识 ID，用于后续增量构建
+  const snapshot = {
+    built_at: new Date().toISOString(),
+    atom_ids: (knowledgeStore?.atoms || []).map(a => a.id),
+    cluster_ids: (knowledgeStore?.clusters || []).map(c => c.id),
+    atom_count: summary.atomCount,
+    cluster_count: summary.clusterCount,
+    domain_count: Object.keys(summary.domains).length,
+  };
+  setSetting('graph_build_snapshot', JSON.stringify(snapshot));
+}
+
+function _getBuiltKnowledgeSnapshot() {
+  try {
+    const raw = getSetting('graph_build_snapshot');
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function _loadProfile() {
   try {
     const profilePath = path.join(app.getPath('userData'), 'profile.json');
@@ -4124,31 +4297,170 @@ function _loadProfile() {
 }
 
 async function _callADPForGraph(prompt) {
-  const apiConfig = getAPIConfig();
-  if (!apiConfig.apiKey) {
-    throw new Error('API Key 未配置');
+  // 获取图谱专用 ADP 配置（graphAppKey）
+  let graphAppKey, url;
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+    graphAppKey = remoteConfig.adp.graph_app_key || '';
+    url = remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  } else {
+    graphAppKey = getSetting('adp_graph_app_key') || '';
+    url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  }
+  // 回退到 knowledge key
+  if (!graphAppKey || graphAppKey.trim() === '') {
+    graphAppKey = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
   }
 
+  if (!graphAppKey) {
+    throw new Error('ADP Graph AppKey 未配置');
+  }
+
+  const _startTime = Date.now();
+
   try {
-    const { response } = await auditedDeepSeekCall({
-      module: 'graph_build',
-      apiConfig: { ...apiConfig, model: 'deepseek-v4-pro' },
-      messages: [{ role: 'user', content: prompt }],
-      fetchOptions: {
-        temperature: 0.3,
-        response_format: { type: 'json_object' }
-      }
+    console.log('[Graph] Calling ADP V2 for graph build, prompt length:', prompt.length,
+      '| graphAppKey:', graphAppKey.substring(0, 10) + '...',
+      '| url:', url);
+
+    const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+    const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+    const requestBody = {
+      RequestId: requestId,
+      ConversationId: convId,
+      AppKey: graphAppKey.trim(),
+      VisitorId: getDeviceFingerprint(),
+      Contents: [{ Type: 'text', Text: prompt }],
+      Incremental: true,
+      Stream: 'enable',
+      StreamingThrottle: 5
+    };
+
+    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+
+    const response = await fetch(httpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
     });
 
+    console.log('[Graph] ADP response status:', response.status, response.ok);
+
     if (!response.ok) {
-      throw new Error(`API 调用失败 (${response.status})`);
+      const errText = await response.text().catch(() => '');
+      console.error('[Graph] ADP error response:', errText.substring(0, 300));
+      throw new Error(`ADP 调用失败 (${response.status})`);
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('返回格式异常');
-    return JSON.parse(jsonMatch[0]);
+    // 解析 SSE 流，收集完整文本
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let currentEvent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim();
+          continue;
+        }
+
+        if (line.startsWith('data:')) {
+          const data = line.substring(5).trim();
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            const eventName = currentEvent || parsed.event || '';
+
+            let deltaText = '';
+            if (eventName === 'text.delta') {
+              deltaText = parsed.Text || parsed.payload?.content?.[0]?.text || parsed.payload?.content?.text || parsed.content?.text || parsed.payload?.text || '';
+            } else if (eventName === 'message.added' || eventName === 'content.added') {
+              deltaText = parsed.Content?.[0]?.Text || parsed.Text || parsed.payload?.content?.[0]?.text || parsed.payload?.content?.text || parsed.content?.text || '';
+            } else if (eventName === 'message.done') {
+              const doneText = parsed.Message?.Content?.[0]?.Text || parsed.Text || '';
+              if (doneText && !fullText) {
+                fullText = doneText;
+              }
+              break;
+            } else if (eventName === 'response.completed') {
+              break;
+            } else if (eventName === 'error' || parsed.error) {
+              console.error('[Graph] ADP SSE error:', parsed.error || parsed);
+              throw new Error(`ADP 返回错误: ${parsed.error?.message || JSON.stringify(parsed.error || parsed)}`);
+            }
+
+            if (deltaText) {
+              fullText += deltaText;
+            }
+          } catch (e) {
+            if (e.message.startsWith('ADP 返回错误')) throw e;
+            // 非 JSON 数据，跳过
+          }
+        }
+
+        if (line.trim() === '') {
+          currentEvent = '';
+        }
+      }
+    }
+
+    console.log('[Graph] ADP fullText length:', fullText.length, 'preview:', fullText.substring(0, 100));
+
+    if (!fullText) throw new Error('ADP 返回内容为空');
+
+    // 从 fullText 中提取 JSON
+    const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('ADP 返回格式异常，无 JSON');
+
+    const graphData = JSON.parse(jsonMatch[0]);
+    console.log('[Graph] Parsed graph data: nodes=', graphData.nodes?.length, 'edges=', graphData.edges?.length);
+
+    // 兼容：source/target → source_id/target_id
+    if (graphData.edges) {
+      graphData.edges = graphData.edges.map(e => ({
+        ...e,
+        source_id: e.source_id || e.source,
+        target_id: e.target_id || e.target,
+      }));
+    }
+
+    // 兼容：health 值映射（needs_attention → unhealthy）
+    if (graphData.nodes) {
+      graphData.nodes = graphData.nodes.map(n => ({
+        ...n,
+        health: n.health === 'needs_attention' ? 'unhealthy' : (n.health || 'healthy'),
+      }));
+    }
+
+    // 异步记录审计日志
+    if (auditLogger) {
+      try {
+        auditLogger.record({
+          id: `graph_${Date.now()}`,
+          module: 'graph_build',
+          model: 'adp_v2',
+          baseUrl: httpUrl,
+          adpAppKey: graphAppKey,
+          input: { userPromptLen: prompt.length },
+          output: { status: response.status, contentLen: fullText.length, finishReason: 'completed' },
+          tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          latencyMs: Date.now() - _startTime,
+          error: null,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (_) {}
+    }
+
+    return graphData;
   } catch (e) {
     console.error('[Graph] ADP call error:', e);
     return {
@@ -4455,6 +4767,8 @@ app.whenReady().then(() => {
   loadCustomServerUrls();
   autoLogin().then(() => {
     console.log('[Auth] Auto login process completed');
+    // 登录成功后启动配置定期同步
+    startConfigPolling();
   }).catch(err => {
     console.error('[Auth] Auto login error:', err);
   });
@@ -5988,6 +6302,7 @@ async function processClusteringBatch(batchAtoms, existingClusters, promptTempla
           module: 'knowledge_clustering',
           model: 'adp',
           baseUrl: url,
+          adpAppKey: clusteringAppKey,
           input: { systemPromptLen: 0, userPromptLen: prompt.length, userPrompt: prompt },
           output: { status: response.status, contentLen: 0, content: '', finishReason: null },
           tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -6051,6 +6366,7 @@ async function processClusteringBatch(batchAtoms, existingClusters, promptTempla
                   module: 'knowledge_clustering',
                   model: 'adp',
                   baseUrl: url,
+                  adpAppKey: clusteringAppKey,
                   input: { systemPromptLen: 0, userPromptLen: prompt.length, userPrompt: prompt },
                   output: { status: response.status, contentLen: fullText.length, content: fullText, finishReason: 'error' },
                   tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -6080,6 +6396,7 @@ async function processClusteringBatch(batchAtoms, existingClusters, promptTempla
         module: 'knowledge_clustering',
         model: 'adp',
         baseUrl: url,
+        adpAppKey: clusteringAppKey,
         input: { systemPromptLen: 0, userPromptLen: prompt.length, userPrompt: prompt },
         output: { status: 200, contentLen: fullText.length, content: fullText, finishReason: 'completed' },
         tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -6683,6 +7000,7 @@ async function triggerKnowledgeRecommendation(text, intent) {
         module: 'knowledge_recommend',
         model: 'adp',
         baseUrl: httpUrl,
+        adpAppKey: appKey,
         input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
         output: { status: 200, contentLen: fullText.length, content: fullText, finishReason: 'completed' },
         tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -6772,6 +7090,7 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
           module: 'knowledge_search',
           model: 'adp',
           baseUrl: httpUrl,
+          adpAppKey: appKey,
           input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
           output: { status: response.status, contentLen: 0, content: '', finishReason: null },
           tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -6911,6 +7230,7 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
             module: 'knowledge_search',
             model: 'adp',
             baseUrl: httpUrl,
+            adpAppKey: appKey,
             input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
             output: { status: 200, contentLen: fullText.length, content: fullText, finishReason: 'completed' },
             tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -6939,6 +7259,7 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
         module: 'knowledge_search',
         model: 'adp',
         baseUrl: url,
+        adpAppKey: appKey,
         input: { systemPromptLen: 0, userPromptLen: query.length, userPrompt: query },
         output: { status: null, contentLen: 0, content: '', finishReason: null },
         tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -7744,7 +8065,7 @@ function collectExportData() {
   const userDataPath = app.getPath('userData');
   const exportData = {
     _meta: {
-      version: '2.1.0',
+      version: '2.2.0',
       exportedAt: new Date().toISOString(),
       app: 'Memora',
       checksum: '' // 后面填充

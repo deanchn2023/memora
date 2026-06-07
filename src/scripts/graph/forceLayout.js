@@ -20,67 +20,343 @@ class ForceLayout {
     this.dpr = window.devicePixelRatio || 1;
     this.onNodeClick = null;
     this.onNodeDblClick = null;
+    this.onZoomChange = null;
     this._animFrame = null;
+    this._themeCache = {};
+    this._themeCacheTimer = null;
+    this._frozen = false;
+    this._animating = false;
+    this._animProgress = 0;
+    this._pendingFitView = false;
 
     this._resize();
     this._bindEvents();
+    this._refreshThemeCache();
+
+    // 主题切换时刷新缓存
+    this._themeChangeHandler = () => {
+      setTimeout(() => this._refreshThemeCache(), 100);
+    };
+    window.ThemeEngine?.setOnThemeChange?.(this._themeChangeHandler);
   }
 
-  setData(data) {
-    const { nodes, edges } = data;
+  // 读取 CSS 变量用于 Canvas 渲染（避免硬编码颜色）
+  _refreshThemeCache() {
+    const s = getComputedStyle(document.documentElement);
+    this._themeCache = {
+      textPrimary: s.getPropertyValue('--text-primary').trim() || '#1d1d1f',
+      textSecondary: s.getPropertyValue('--text-secondary').trim() || '#86868b',
+      textTertiary: s.getPropertyValue('--text-tertiary').trim() || '#aeaeb2',
+      bgPrimary: s.getPropertyValue('--bg-primary').trim() || '#f5f5f7',
+      isDark: s.getPropertyValue('--bg-primary').trim() !== '' &&
+        this._isColorDark(s.getPropertyValue('--bg-primary').trim()),
+    };
+  }
+
+  _isColorDark(color) {
+    const c = color.replace('#', '');
+    if (c.length !== 6) return false;
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    return (r * 0.299 + g * 0.587 + b * 0.114) < 128;
+  }
+
+  // 计算确定性环形布局位置（不依赖力模拟）
+  _calcRingLayout() {
     const cx = this.canvas.width / this.dpr / 2;
     const cy = this.canvas.height / this.dpr / 2;
+    const baseR = Math.min(cx, cy) * 0.42;
 
-    // 按 domain 分组环形布局
     const domainGroups = {};
-    nodes.forEach(n => {
+    this.nodes.forEach(n => {
       const group = n.domain || n.type;
       if (!domainGroups[group]) domainGroups[group] = [];
       domainGroups[group].push(n);
     });
 
     const groupKeys = Object.keys(domainGroups);
-    const groupRadius = Math.min(cx, cy) * 0.35;
 
     groupKeys.forEach((key, gi) => {
       const angle = (2 * Math.PI * gi) / groupKeys.length - Math.PI / 2;
-      const gx = cx + groupRadius * Math.cos(angle);
-      const gy = cy + groupRadius * Math.sin(angle);
+      const gx = cx + baseR * Math.cos(angle);
+      const gy = cy + baseR * Math.sin(angle);
 
       domainGroups[key].forEach((n, ni) => {
-        const subAngle = (2 * Math.PI * ni) / domainGroups[key].length;
-        const subR = n.type === 'domain' ? 0 : 70;
-        n.x = gx + subR * Math.cos(subAngle);
-        n.y = gy + subR * Math.sin(subAngle);
-        n.vx = 0;
-        n.vy = 0;
-        n.visible = true;
-        n.dimmed = false;
+        const isDomain = n.type === 'domain';
+        if (isDomain) {
+          n._targetX = gx;
+          n._targetY = gy;
+        } else {
+          const subAngle = (2 * Math.PI * ni) / domainGroups[key].length;
+          const subR = 80 + Math.sqrt(domainGroups[key].length) * 12;
+          n._targetX = gx + subR * Math.cos(subAngle);
+          n._targetY = gy + subR * Math.sin(subAngle);
+        }
       });
     });
+  }
 
+  // 一键重新布局 — 从中心展开到环形布局，动画完成后静止
+  reLayout() {
+    this._refreshThemeCache();
+    const cx = this.canvas.width / this.dpr / 2;
+    const cy = this.canvas.height / this.dpr / 2;
+
+    // 计算目标位置
+    this._calcRingLayout();
+
+    // 先将节点收到中心
+    this.nodes.forEach(n => {
+      n._startX = n.x;
+      n._startY = n.y;
+      // 如果节点在视口外，从中心出发
+      if (!n._startX || !n._startY) {
+        n._startX = cx + (Math.random() - 0.5) * 20;
+        n._startY = cy + (Math.random() - 0.5) * 20;
+      }
+      n.vx = 0;
+      n.vy = 0;
+    });
+
+    // 用动画插值到目标位置（不用力模拟）
+    this._animating = true;
+    this._animProgress = 0;
+    this._frozen = false;
+
+    // 重置变换，稍后自动 fit
+    this.transform = { x: 0, y: 0, scale: 1 };
+
+    if (!this.running) {
+      this.running = true;
+      this._tick();
+    }
+  }
+
+  setData(data) {
+    const { nodes, edges } = data;
+    this._refreshThemeCache();
+
+    const cx = this.canvas.width / this.dpr / 2;
+    const cy = this.canvas.height / this.dpr / 2;
+
+    // 计算目标位置
     this.nodes = nodes;
     this.edges = edges;
-    this.alpha = 1;
+    this._calcRingLayout();
+
+    // 所有节点从中心出发
+    nodes.forEach(n => {
+      n.x = cx + (Math.random() - 0.5) * 16;
+      n.y = cy + (Math.random() - 0.5) * 16;
+      n._startX = n.x;
+      n._startY = n.y;
+      n.vx = 0;
+      n.vy = 0;
+      n.visible = true;
+      n.dimmed = false;
+    });
+
+    // 用动画插值展开
+    this._animating = true;
+    this._animProgress = 0;
+    this._frozen = false;
+    this.alpha = 0;
     this.running = true;
     this._tick();
   }
 
   _tick() {
     if (!this.running) return;
-    if (this.alpha > 0.001) {
+
+    if (this._animating) {
+      // 动画插值模式：节点从起始位置平滑移动到目标位置
+      this._animProgress += 0.018;
+      const t = Math.min(1, this._animProgress);
+      // ease-out cubic
+      const ease = 1 - Math.pow(1 - t, 3);
+
+      this.nodes.forEach(n => {
+        if (n._startX !== undefined && n._targetX !== undefined) {
+          n.x = n._startX + (n._targetX - n._startX) * ease;
+          n.y = n._startY + (n._targetY - n._startY) * ease;
+        }
+      });
+
+      if (t >= 1) {
+        // 动画完成，冻结
+        this._animating = false;
+        this._frozen = true;
+        this.nodes.forEach(n => {
+          n.vx = 0;
+          n.vy = 0;
+          delete n._startX;
+          delete n._startY;
+          delete n._targetX;
+          delete n._targetY;
+        });
+        // 自动适配视口
+        this._fitView();
+        this._pendingFitView = false;
+      }
+    } else if (this.alpha > 0.005 && !this._frozen) {
+      // 力模拟模式（仅用于拖拽后微调）
       this._applyForces();
-      this.alpha *= 0.995;
+      this.alpha *= 0.95;
+      if (this.alpha <= 0.005) {
+        this._frozen = true;
+        this.nodes.forEach(n => { n.vx = 0; n.vy = 0; });
+      }
     }
+
     this._render();
     this._animFrame = requestAnimationFrame(() => this._tick());
   }
 
+  // 聚拢：所有节点向中心收拢
+  gather() {
+    if (this.nodes.length === 0 || this._animating) return;
+    const cx = this.canvas.width / this.dpr / 2;
+    const cy = this.canvas.height / this.dpr / 2;
+
+    this.nodes.forEach(n => {
+      if (!n.visible) return;
+      n._startX = n.x;
+      n._startY = n.y;
+      // 目标：向中心收拢到 30% 的距离
+      n._targetX = cx + (n.x - cx) * 0.15;
+      n._targetY = cy + (n.y - cy) * 0.15;
+    });
+
+    this._animating = true;
+    this._animProgress = 0;
+    this._frozen = false;
+    if (!this.running) {
+      this.running = true;
+      this._tick();
+    }
+  }
+
+  // 扩散：所有节点从当前位置向外扩散
+  scatter() {
+    if (this.nodes.length === 0 || this._animating) return;
+    const cx = this.canvas.width / this.dpr / 2;
+    const cy = this.canvas.height / this.dpr / 2;
+
+    this.nodes.forEach(n => {
+      if (!n.visible) return;
+      n._startX = n.x;
+      n._startY = n.y;
+      // 目标：从中心向外推 1.8 倍
+      n._targetX = cx + (n.x - cx) * 1.8;
+      n._targetY = cy + (n.y - cy) * 1.8;
+    });
+
+    this._animating = true;
+    this._animProgress = 0;
+    this._frozen = false;
+    if (!this.running) {
+      this.running = true;
+      this._tick();
+    }
+
+    // 动画结束后自动 fit
+    this._pendingFitView = true;
+  }
+
+  // 设置缩放级别（0.2 ~ 5）
+  setZoom(scale) {
+    const w = this.canvas.width / this.dpr;
+    const h = this.canvas.height / this.dpr;
+    const centerX = w / 2;
+    const centerY = h / 2;
+    this.transform.x = centerX - (centerX - this.transform.x) * (scale / this.transform.scale);
+    this.transform.y = centerY - (centerY - this.transform.y) * (scale / this.transform.scale);
+    this.transform.scale = scale;
+  }
+
+  // 获取当前缩放级别
+  getZoom() {
+    return this.transform.scale;
+  }
+
+  // 聚焦到指定节点：平移+缩放使其居中
+  focusNode(node, targetScale = 1.5, animated = true) {
+    if (!node) return;
+    const w = this.canvas.width / this.dpr;
+    const h = this.canvas.height / this.dpr;
+
+    if (!animated) {
+      this.transform.x = w / 2 - node.x * targetScale;
+      this.transform.y = h / 2 - node.y * targetScale;
+      this.transform.scale = targetScale;
+      if (this.onZoomChange) this.onZoomChange(targetScale);
+      return;
+    }
+
+    // 动画过渡到目标位置
+    const targetTx = w / 2 - node.x * targetScale;
+    const targetTy = h / 2 - node.y * targetScale;
+    const startTx = this.transform.x;
+    const startTy = this.transform.y;
+    const startScale = this.transform.scale;
+    let progress = 0;
+
+    const animate = () => {
+      progress += 0.04;
+      const t = Math.min(1, progress);
+      const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
+
+      this.transform.x = startTx + (targetTx - startTx) * ease;
+      this.transform.y = startTy + (targetTy - startTy) * ease;
+      this.transform.scale = startScale + (targetScale - startScale) * ease;
+
+      if (this.onZoomChange) this.onZoomChange(this.transform.scale);
+
+      if (t < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+    requestAnimationFrame(animate);
+  }
+
+  // 自动适配视口，确保所有节点可见
+  _fitView() {
+    if (this.nodes.length === 0) return;
+    const visibleNodes = this.nodes.filter(n => n.visible);
+    if (visibleNodes.length === 0) return;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    visibleNodes.forEach(n => {
+      minX = Math.min(minX, n.x);
+      maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y);
+      maxY = Math.max(maxY, n.y);
+    });
+
+    const w = this.canvas.width / this.dpr;
+    const h = this.canvas.height / this.dpr;
+    const padding = 60;
+    const contentW = maxX - minX + padding * 2;
+    const contentH = maxY - minY + padding * 2;
+
+    const scale = Math.min(w / contentW, h / contentH, 2);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    this.transform = {
+      x: w / 2 - centerX * scale,
+      y: h / 2 - centerY * scale,
+      scale: scale
+    };
+    if (this.onZoomChange) this.onZoomChange(scale);
+  }
+
   _applyForces() {
-    const REPULSION = 900;
-    const ATTRACTION = 0.008;
-    const DAMPING = 0.85;
-    const CENTER = 0.008;
+    const REPULSION = 2500;
+    const ATTRACTION = 0.004;
+    const DAMPING = 0.82;
+    const CENTER = 0.002;
     const cx = this.canvas.width / this.dpr / 2;
     const cy = this.canvas.height / this.dpr / 2;
     const visibleNodes = this.nodes.filter(n => n.visible);
@@ -129,6 +405,7 @@ class ForceLayout {
   _render() {
     const { ctx, canvas, transform, dpr } = this;
     const w = canvas.width / dpr, h = canvas.height / dpr;
+    const tc = this._themeCache;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.scale(dpr, dpr);
@@ -157,7 +434,7 @@ class ForceLayout {
       ctx.lineTo(t.x, t.y);
       ctx.strokeStyle = isConflictEdge
         ? (isHoverRelated || isSelectedRelated ? 'rgba(255,59,48,0.6)' : 'rgba(255,59,48,0.25)')
-        : (isHoverRelated || isSelectedRelated ? 'rgba(0,122,255,0.4)' : 'rgba(174,174,178,0.2)');
+        : (isHoverRelated || isSelectedRelated ? 'rgba(91,168,247,0.4)' : (tc.isDark ? 'rgba(148,163,184,0.15)' : 'rgba(174,174,178,0.2)'));
       ctx.lineWidth = Math.max(0.5, (e.strength || 0.3) * 2.5 * (isHoverRelated || isSelectedRelated ? 1.5 : 1));
       ctx.stroke();
       ctx.setLineDash([]);
@@ -165,7 +442,7 @@ class ForceLayout {
       // 边标签
       if (isHoverRelated && e.label) {
         const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
-        ctx.fillStyle = '#86868b';
+        ctx.fillStyle = tc.textSecondary;
         ctx.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(e.label, mx, my - 4);
@@ -222,14 +499,14 @@ class ForceLayout {
 
       // 填充渐变
       const grad = ctx.createRadialGradient(n.x - r * 0.3, n.y - r * 0.3, 0, n.x, n.y, r);
-      grad.addColorStop(0, color + 'ee');
-      grad.addColorStop(1, color + '99');
+      grad.addColorStop(0, color.replace('rgb(', 'rgba(').replace(')', ',0.93)'));
+      grad.addColorStop(1, color.replace('rgb(', 'rgba(').replace(')', ',0.6)'));
       ctx.fillStyle = grad;
       ctx.fill();
 
       // 边框
       if (isHovered || isSelected) {
-        ctx.strokeStyle = '#1d1d1f';
+        ctx.strokeStyle = tc.isDark ? 'rgba(232,236,244,0.6)' : 'rgba(29,29,31,0.8)';
         ctx.lineWidth = 2.5;
         ctx.stroke();
       } else if (n.health === 'outdated') {
@@ -258,15 +535,18 @@ class ForceLayout {
                        : n.health === 'outdated' ? '#FF9500'
                        : n.health === 'duplicate' ? '#86868b'
                        : n.health === 'orphaned' ? '#86868b'
+                       : n.health === 'unanswered' ? '#FF9500'
                        : '#FF3B30';
         ctx.fill();
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = tc.isDark ? 'rgba(21,25,34,0.8)' : '#fff';
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
 
-      // 标签
-      ctx.fillStyle = dimmed ? 'rgba(29,29,31,0.2)' : '#1d1d1f';
+      // 标签 — 根据主题自动适配文字颜色
+      ctx.fillStyle = dimmed
+        ? (tc.isDark ? 'rgba(232,236,244,0.2)' : 'rgba(29,29,31,0.2)')
+        : tc.textPrimary;
       ctx.font = `${isHovered || isSelected ? '600 12' : '500 11'}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
@@ -280,12 +560,19 @@ class ForceLayout {
   }
 
   _renderBgOrbs(w, h) {
-    // 微妙的渐变光球背景
-    const orbs = [
-      { x: w * 0.2, y: h * 0.3, r: 200, color: 'rgba(0,122,255,0.03)' },
-      { x: w * 0.7, y: h * 0.6, r: 250, color: 'rgba(52,199,89,0.03)' },
-      { x: w * 0.5, y: h * 0.8, r: 180, color: 'rgba(255,149,0,0.02)' }
-    ];
+    const tc = this._themeCache;
+    // 微妙的渐变光球背景 — 根据主题调整
+    const orbs = tc.isDark
+      ? [
+          { x: w * 0.2, y: h * 0.3, r: 200, color: 'rgba(91,168,247,0.04)' },
+          { x: w * 0.7, y: h * 0.6, r: 250, color: 'rgba(74,222,128,0.03)' },
+          { x: w * 0.5, y: h * 0.8, r: 180, color: 'rgba(251,191,36,0.02)' }
+        ]
+      : [
+          { x: w * 0.2, y: h * 0.3, r: 200, color: 'rgba(0,122,255,0.03)' },
+          { x: w * 0.7, y: h * 0.6, r: 250, color: 'rgba(52,199,89,0.03)' },
+          { x: w * 0.5, y: h * 0.8, r: 180, color: 'rgba(255,149,0,0.02)' }
+        ];
     orbs.forEach(orb => {
       const grad = this.ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, orb.r);
       grad.addColorStop(0, orb.color);
@@ -298,6 +585,7 @@ class ForceLayout {
   _nodeColor(n) {
     if (n.density === 'gap') return 'rgb(255,59,48)';
     if (n.health === 'conflicting') return 'rgb(255,149,0)';
+    if (n.health === 'unanswered') return 'rgb(255,149,0)';
     const colors = {
       domain: 'rgb(0,122,255)',
       cluster: 'rgb(88,86,214)',
@@ -310,8 +598,12 @@ class ForceLayout {
   }
 
   _radius(n) {
-    const base = { domain: 24, cluster: 17, atom: 12, person: 14, question: 11, gap: 13 };
-    return (base[n.type] || 10) * ((n.weight || 5) / 5);
+    const base = { domain: 28, cluster: 18, atom: 12, person: 14, question: 12, gap: 14 };
+    const b = base[n.type] || 12;
+    // 使用 sqrt 缩放避免极端差异：weight 1-13 映射到合理范围
+    const w = Math.max(1, n.weight || 5);
+    const scale = 0.5 + Math.sqrt(w) * 0.25;
+    return Math.max(8, Math.round(b * scale));
   }
 
   filter(type) {
@@ -392,6 +684,7 @@ class ForceLayout {
     });
 
     this.canvas.addEventListener('mouseup', () => {
+      // 拖拽结束后直接静止，不重启力模拟
       this.dragging = null;
       isPanning = false;
     });
@@ -412,6 +705,7 @@ class ForceLayout {
       this.transform.y = my - (my - this.transform.y) * delta;
       this.transform.scale *= delta;
       this.transform.scale = Math.max(0.2, Math.min(5, this.transform.scale));
+      if (this.onZoomChange) this.onZoomChange(this.transform.scale);
     }, { passive: false });
 
     this.canvas.addEventListener('click', e => {

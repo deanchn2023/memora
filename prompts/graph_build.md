@@ -66,7 +66,7 @@
     }
   ],
   "edges": [
-    { "source": "cluster_react_pattern", "target": "domain_前端开发", "type": "belongs_to", "strength": 0.8, "label": "属于" }
+    { "source_id": "cluster_react_pattern", "target_id": "domain_前端开发", "type": "belongs_to", "strength": 0.8, "label": "属于" }
   ],
   "health_report": {
     "summary": {

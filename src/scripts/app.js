@@ -119,6 +119,36 @@ const App = {
       console.error('[App] Auth listener setup failed:', e);
     }
     
+    // v2.1: 监听云端配置更新事件
+    try {
+      if (window.electronAPI?.onConfigUpdated) {
+        window.electronAPI.onConfigUpdated((data) => {
+          console.log('[App] Config updated from cloud, reason:', data.reason || 'sync');
+          // 刷新设置页面的 API 和 ADP 配置显示
+          this._settingsTabLoaded.api = false;
+          this._settingsTabLoaded.adp = false;
+          // 如果当前正在设置页面，立即刷新
+          const settingsTab = document.querySelector('[data-view="settings"]');
+          if (settingsTab && !settingsTab.classList.contains('hidden')) {
+            this._loadApiConfig();
+            this._loadAdpConfig();
+          }
+          // 刷新组织配置摘要
+          this._loadOrgConfigSummary();
+          // 刷新配置来源提示
+          if (data.api || data.adp) {
+            this._updateConfigServerHints(true);
+          }
+          // 如果是云端自动更新，显示 toast 提示
+          if (data.reason === 'cloud_updated') {
+            this.showToast('云端配置已更新，已自动同步', 'info');
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[App] Config update listener setup failed:', e);
+    }
+    
     // v2.0: 检查初始登录状态
     try {
       if (window.electronAPI?.authGetState) {
@@ -581,6 +611,8 @@ const App = {
       document.getElementById('adpAppKey').value = config.appKey || '';
       document.getElementById('adpKnowledgeAppKey').value = config.knowledgeAppKey || '';
       document.getElementById('adpSearchAppKey').value = config.searchAppKey || '';
+      document.getElementById('adpClusteringAppKey').value = config.clusteringAppKey || '';
+      document.getElementById('adpGraphAppKey').value = config.graphAppKey || '';
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
       
@@ -590,7 +622,9 @@ const App = {
       const appKeySrc = sourceLabel[src.appKey] || '未知';
       const knowledgeSrc = sourceLabel[src.knowledgeAppKey] || '未知';
       const searchSrc = sourceLabel[src.searchAppKey] || '未知';
-      document.getElementById('adpConfigStatus').textContent = `通用Key: ${appKeySrc} | 知识Key: ${knowledgeSrc} | 搜索Key: ${searchSrc}`;
+      const clusteringSrc = sourceLabel[src.clusteringAppKey] || '未知';
+      const graphSrc = sourceLabel[src.graphAppKey] || '未知';
+      document.getElementById('adpConfigStatus').textContent = `通用Key: ${appKeySrc} | 知识Key: ${knowledgeSrc} | 搜索Key: ${searchSrc} | 聚类Key: ${clusteringSrc} | 图谱Key: ${graphSrc}`;
       
       // v2.0: 登录状态时 ADP 面板显示提示
       this._updateConfigServerHints(config.fromServer);
@@ -1149,39 +1183,61 @@ const App = {
   },
 
   _showUpdateModal(updateInfo) {
-    const existing = document.getElementById('updateModal');
+    const existing = document.getElementById('updateNotification');
     if (existing) existing.remove();
 
-    const modal = document.createElement('div');
-    modal.id = 'updateModal';
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-      <div class="modal-content" style="max-width:420px;">
-        <div class="modal-header">
-          <h3>🚀 发现新版本</h3>
-          <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
-        </div>
-        <div class="modal-body" style="padding:20px;">
-          <div style="text-align:center;margin-bottom:16px;">
-            <span style="font-size:48px;">🎉</span>
-            <h2 style="margin:8px 0 4px;font-size:22px;">v${updateInfo.latest_version}</h2>
-            <p style="color:var(--text-secondary);font-size:13px;">当前版本 v${updateInfo.current_version || ''}</p>
+    const notification = document.createElement('div');
+    notification.id = 'updateNotification';
+    notification.innerHTML = `
+      <div class="update-notification-header" onclick="App._toggleUpdateDetail()">
+        <div class="update-notification-title">
+          <span style="font-size:20px;">🚀</span>
+          <div>
+            <div style="font-weight:600;font-size:14px;">发现新版本 v${updateInfo.latest_version}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">当前版本 v${updateInfo.current_version || ''}</div>
           </div>
-          ${updateInfo.release_notes ? `
-            <div style="background:var(--bg-secondary);border-radius:12px;padding:14px;margin-bottom:16px;">
-              <h4 style="margin:0 0 8px;font-size:13px;color:var(--text-primary);">更新内容</h4>
-              <div style="font-size:12px;color:var(--text-secondary);white-space:pre-line;line-height:1.6;">${updateInfo.release_notes}</div>
-            </div>
-          ` : ''}
-          ${updateInfo.file_size ? `<p style="font-size:12px;color:#aeaeb2;text-align:center;">文件大小：${(updateInfo.file_size / 1024 / 1024).toFixed(1)} MB</p>` : ''}
         </div>
-        <div class="modal-footer" style="display:flex;gap:10px;padding:0 20px 20px;">
-          <button class="modal-btn secondary" onclick="this.closest('.modal-overlay').remove()" style="flex:1;">稍后提醒</button>
-          ${updateInfo.download_url ? `<button class="modal-btn primary" style="flex:1;" onclick="App._downloadUpdate('${updateInfo.download_url}')">立即下载</button>` : ''}
+        <div class="update-notification-actions">
+          ${updateInfo.download_url ? `<button class="update-btn-download" onclick="event.stopPropagation();App._downloadUpdate('${updateInfo.download_url}')">立即下载</button>` : ''}
+          <button class="update-btn-dismiss" onclick="event.stopPropagation();document.getElementById('updateNotification').remove()">✕</button>
+        </div>
+      </div>
+      <div class="update-notification-detail" id="updateDetailPanel">
+        ${updateInfo.release_notes ? `
+          <div class="update-release-notes">
+            <div style="font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:6px;">更新内容</div>
+            <div style="font-size:12px;color:var(--text-secondary);white-space:pre-line;line-height:1.6;">${updateInfo.release_notes}</div>
+          </div>
+        ` : ''}
+        ${updateInfo.file_size ? `<div style="font-size:11px;color:#aeaeb2;margin-top:8px;">文件大小：${(updateInfo.file_size / 1024 / 1024).toFixed(1)} MB</div>` : ''}
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="update-btn-later" onclick="document.getElementById('updateNotification').remove()">稍后提醒</button>
+          ${updateInfo.download_url ? `<button class="update-btn-go" onclick="App._downloadUpdate('${updateInfo.download_url}')">前往下载</button>` : ''}
         </div>
       </div>
     `;
-    document.body.appendChild(modal);
+    document.body.appendChild(notification);
+
+    // 触发入场动画
+    requestAnimationFrame(() => {
+      notification.classList.add('show');
+    });
+
+    // 15 秒后自动关闭
+    setTimeout(() => {
+      const el = document.getElementById('updateNotification');
+      if (el) {
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 400);
+      }
+    }, 15000);
+  },
+
+  _toggleUpdateDetail() {
+    const panel = document.getElementById('updateDetailPanel');
+    if (panel) {
+      panel.classList.toggle('collapsed');
+    }
   },
 
   async _checkForUpdate() {
@@ -1203,8 +1259,9 @@ const App = {
     if (window.electronAPI?.openExternal) {
       window.electronAPI.openExternal(fullUrl);
     }
-    // 关闭弹窗
-    document.getElementById('updateModal')?.remove();
+    // 关闭通知
+    const el = document.getElementById('updateNotification');
+    if (el) { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }
     this.showToast('正在浏览器中下载...');
   },
 
@@ -3042,6 +3099,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       const adpAppKey = document.getElementById('adpAppKey').value;
       const adpKnowledgeAppKey = document.getElementById('adpKnowledgeAppKey').value;
       const adpSearchAppKey = document.getElementById('adpSearchAppKey').value;
+      const adpClusteringAppKey = document.getElementById('adpClusteringAppKey').value;
+      const adpGraphAppKey = document.getElementById('adpGraphAppKey').value;
       const adpUrl = document.getElementById('adpUrl').value;
       const adpAgentName = document.getElementById('adpAgentName').value;
       
@@ -3049,6 +3108,8 @@ ${JSON.stringify(reportData, null, 2)}`;
         appKey: adpAppKey || null,
         knowledgeAppKey: adpKnowledgeAppKey || '',
         searchAppKey: adpSearchAppKey || '',
+        clusteringAppKey: adpClusteringAppKey || '',
+        graphAppKey: adpGraphAppKey || '',
         url: adpUrl || null,
         agentName: adpAgentName || null
       });

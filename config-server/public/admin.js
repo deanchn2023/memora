@@ -428,6 +428,8 @@ function renderConfigSections() {
       <div class="config-field"><label>App Key</label><input data-path="adp.app_key" value="${esc(c.adp?.app_key || '')}"></div>
       <div class="config-field"><label>知识库 App Key</label><input data-path="adp.knowledge_app_key" value="${esc(c.adp?.knowledge_app_key || '')}"></div>
       <div class="config-field"><label>搜索 App Key</label><input data-path="adp.search_app_key" value="${esc(c.adp?.search_app_key || '')}"></div>
+      <div class="config-field"><label>聚类 App Key</label><input data-path="adp.clustering_app_key" value="${esc(c.adp?.clustering_app_key || '')}"></div>
+      <div class="config-field"><label>图谱构建 App Key</label><input data-path="adp.graph_app_key" value="${esc(c.adp?.graph_app_key || '')}"></div>
       <div class="config-field"><label>ADP URL</label><input data-path="adp.url" value="${esc(c.adp?.url || '')}"></div>
       <div class="config-field"><label>助手名称</label><input data-path="adp.agent_name" value="${esc(c.adp?.agent_name || '')}"></div>
     </div>

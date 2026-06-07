@@ -308,6 +308,10 @@
                 <div class="gg-spacer"></div>
                 <input type="text" id="graphSearchInput" class="gg-search" placeholder="搜索节点..." autocomplete="off">
                 <span class="gg-built-at" id="graphBuiltAt"></span>
+                <button class="gg-btn ghost" id="graphRelayoutBtn">📐 一键布局</button>
+                <button class="gg-btn ghost" id="graphGatherBtn">🎯 聚拢</button>
+                <button class="gg-btn ghost" id="graphScatterBtn">💫 扩散</button>
+                <button class="gg-btn ghost" id="graphRoamingBtn">🧭 知识漫游</button>
                 <button class="gg-btn ghost" id="graphRefreshBtn">🔄 重建</button>
               </div>
               <!-- 筛选栏 -->
@@ -322,6 +326,13 @@
               <!-- Canvas -->
               <div class="gg-canvas-container">
                 <canvas id="graphCanvas"></canvas>
+                <!-- 缩放控件 -->
+                <div class="gg-zoom-control" id="graphZoomControl">
+                  <button class="gg-zoom-btn" id="graphZoomOut" title="缩小">−</button>
+                  <input type="range" class="gg-zoom-slider" id="graphZoomSlider" min="20" max="500" value="100" step="5">
+                  <button class="gg-zoom-btn" id="graphZoomIn" title="放大">+</button>
+                  <span class="gg-zoom-label" id="graphZoomLabel">100%</span>
+                </div>
                 <!-- 空状态 -->
                 <div class="gg-empty" id="graphEmptyState">
                   <div class="ge-inner">
@@ -336,8 +347,9 @@
                 <div class="gg-loading hidden" id="graphLoading">
                   <div class="gl-inner">
                     <div class="gl-spinner"></div>
-                    <h4 class="gl-title">🗺 正在构建知识图谱</h4>
-                    <p class="gl-desc">AI 正在分析知识体系、检测缺口、识别冲突</p>
+                    <h4 class="gl-title">🗺 正在分析知识体系</h4>
+                    <p class="gl-desc">AI 正在读取你的知识库，分析知识结构...</p>
+                    <div class="gl-progress-bar"><div class="gl-progress-fill"></div></div>
                   </div>
                 </div>
                 <!-- 详情面板 -->
@@ -957,6 +969,20 @@
             </small>
           </div>
           <div class="form-group">
+            <label for="adpClusteringAppKey">聚类分析 AppKey</label>
+            <input type="password" id="adpClusteringAppKey" placeholder="留空则使用智能推荐AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              知识聚类分析专用 AppKey。留空时使用知识推荐 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpGraphAppKey">图谱构建 AppKey</label>
+            <input type="password" id="adpGraphAppKey" placeholder="留空则使用智能推荐AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              全局知识图谱构建专用 AppKey。留空时使用知识推荐 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
             <label for="adpUrl">ADP API地址</label>
             <input type="text" id="adpUrl" placeholder="https://wss.lke.cloud.tencent.com/adp/v2/chat">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
@@ -1405,11 +1431,11 @@
             <div class="about-logo-area">
               <div class="about-logo">M</div>
               <h2 class="about-app-name">忆境 Memora</h2>
-              <span class="about-version">v2.1.0</span>
+              <span class="about-version">v2.2.0</span>
             </div>
 
             <div class="about-description">
-              <p data-i18n="about.description">AI 驱动的个人记忆与事项管理助手，让每一天的想法、任务和知识都有迹可循。</p>
+              <p data-i18n="about.description">AI 驱动的个人记忆与知识管理助手 — 感知、沉淀、理解、反馈、进化，让每一天的想法与知识都有迹可循。</p>
             </div>
 
             <div class="about-features">
@@ -1419,42 +1445,42 @@
                   <span class="about-feature-icon">🧠</span>
                   <div>
                     <strong data-i18n="about.feature.memory">智能记忆</strong>
-                    <span data-i18n="about.feature.memory.desc">自动沉淀对话、笔记与知识，构建专属记忆图谱</span>
+                    <span data-i18n="about.feature.memory.desc">五层架构自动沉淀，瞬时/短期/长期记忆智能分级</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
-                  <span class="about-feature-icon">📅</span>
+                  <span class="about-feature-icon">🔗</span>
                   <div>
-                    <strong data-i18n="about.feature.schedule">日程管理</strong>
-                    <span data-i18n="about.feature.schedule.desc">日历视图整合待办与番茄钟，高效掌控时间</span>
+                    <strong data-i18n="about.feature.graph">知识图谱</strong>
+                    <span data-i18n="about.feature.graph.desc">力导向可视化 + Graph RAG，实体关系一目了然</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🔍</span>
                   <div>
                     <strong data-i18n="about.feature.knowledge">知识跟随</strong>
-                    <span data-i18n="about.feature.knowledge.desc">智能搜索与推荐，知识图谱实时追踪关联</span>
+                    <span data-i18n="about.feature.knowledge.desc">智能搜索、聚类分析、知识萃取，多维知识发现</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🤖</span>
                   <div>
                     <strong data-i18n="about.feature.ai">AI 助手</strong>
-                    <span data-i18n="about.feature.ai.desc">基于 ADP 智能体，对话即服务，任务识别自动化</span>
+                    <span data-i18n="about.feature.ai.desc">ADP 智能体驱动，五大 AppKey 专业分工，对话即服务</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
-                  <span class="about-feature-icon">👤</span>
+                  <span class="about-feature-icon">📋</span>
                   <div>
-                    <strong data-i18n="about.feature.profile">用户画像</strong>
-                    <span data-i18n="about.feature.profile.desc">个性化偏好与人物关系，AI 越用越懂你</span>
+                    <strong data-i18n="about.feature.clipboard">剪贴板监控</strong>
+                    <span data-i18n="about.feature.clipboard.desc">智能检测 + 暂存聚合 + 动态频率，内容自动入库</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🏢</span>
                   <div>
                     <strong data-i18n="about.feature.org">组织协作</strong>
-                    <span data-i18n="about.feature.org.desc">云端配置同步，团队知识共享与权限管理</span>
+                    <span data-i18n="about.feature.org.desc">云端配置同步 + 五大 AppKey 独立管控 + 权限管理</span>
                   </div>
                 </div>
               </div>
@@ -1462,6 +1488,19 @@
 
             <div class="about-changelog">
               <h4 data-i18n="about.changelog">📋 版本说明</h4>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.2.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li data-i18n="about.v220.f1">统一知识图谱 — sql.js 存储 + Canvas 力导向图 + 知识体检 + Graph RAG</li>
+                  <li data-i18n="about.v220.f2">知识聚类分析 — 自动分组相似内容，主题发现与智能归类</li>
+                  <li data-i18n="about.v220.f3">知识蒸馏系统 — 从文档中萃取核心知识点，结构化沉淀</li>
+                  <li data-i18n="about.v220.f4">剪贴板智能监控 v2 — 暂存聚合 + 动态频率 + 状态检测</li>
+                  <li data-i18n="about.v220.f5">AI 审计日志 — 完整记录所有 AI 调用，可追溯可审查</li>
+                  <li data-i18n="about.v220.f6">五大 AppKey 分工 — 通用/知识/搜索/聚类/图谱独立管控</li>
+                  <li data-i18n="about.v220.f7">版本更新通知优化 — 右上角卡片式提醒，内容展开查看</li>
+                </ul>
+              </div>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.1.0</span>
                 <span class="changelog-date">2026-06</span>
@@ -1490,7 +1529,7 @@
             </div>
 
             <div class="about-footer">
-              <p>Designed & Built by <strong>Dean Chen</strong></p>
+              <p>Designed & Built by <strong>Dean Zhu</strong></p>
               <p class="about-copyright">© 2026 Memora. All rights reserved.</p>
             </div>
           </div>

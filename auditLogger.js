@@ -26,9 +26,11 @@ class AIAuditLogger {
   /**
    * 记录一次 API 调用
    * @param {object} entry
-   * @param {string} entry.module - 调用模块 (clipboard_analysis, agent, memory, knowledge, estimate, profile, search_keyword, optimize_prompt)
+   * @param {string} entry.module - 调用模块 (clipboard_analysis, agent, memory, knowledge, estimate, profile, search_keyword, optimize_prompt, adp_chat, graph_build, knowledge_clustering, knowledge_recommend, knowledge_search)
    * @param {string} entry.model - 模型名
    * @param {string} entry.baseUrl - API 基础 URL
+   * @param {string} entry.apiKey - API Key（可选，自动脱敏）
+   * @param {string} entry.adpAppKey - ADP AppKey（可选，自动脱敏）
    * @param {object} entry.input - 输入 { systemPrompt, userPrompt, systemLen, userLen }
    * @param {object} entry.output - 输出 { status, content, contentLen, finishReason }
    * @param {object} entry.tokens - Token 统计 { prompt_tokens, completion_tokens, total_tokens }
@@ -44,6 +46,8 @@ class AIAuditLogger {
       module: entry.module || 'unknown',
       model: entry.model || '',
       baseUrl: (entry.baseUrl || '').replace(/\/chat\/completions$/, ''),
+      apiKey: entry.apiKey ? this._maskSecret(entry.apiKey) : null,
+      adpAppKey: entry.adpAppKey ? this._maskSecret(entry.adpAppKey) : null,
       input: {
         systemPromptLen: entry.input?.systemPromptLen || 0,
         userPromptLen: entry.input?.userPromptLen || 0,
@@ -64,6 +68,17 @@ class AIAuditLogger {
     // 异步写入
     this._writeQueue.push(record);
     this._flush();
+  }
+
+  /**
+   * 脱敏处理：保留前4位和后4位，中间用 **** 替代
+   * 短于8位的 key 只保留前2位+****
+   */
+  _maskSecret(secret) {
+    if (!secret || typeof secret !== 'string') return null;
+    const s = secret.trim();
+    if (s.length <= 8) return s.substring(0, 2) + '****';
+    return s.substring(0, 4) + '****' + s.substring(s.length - 4);
   }
 
   /**

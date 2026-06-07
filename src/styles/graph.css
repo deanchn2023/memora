@@ -148,13 +148,225 @@
   overflow: hidden;
 }
 
+/* 缩放控件 */
+.gg-zoom-control {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-glass, rgba(255,255,255,0.85));
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid var(--border-light, rgba(0,0,0,0.08));
+  border-radius: 100px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+  z-index: 50;
+  transition: opacity 0.3s ease;
+}
+
+.gg-zoom-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary, #86868b);
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.gg-zoom-btn:hover {
+  background: var(--bg-secondary, #f5f5f7);
+  color: var(--text-primary);
+}
+
+.gg-zoom-btn:active {
+  transform: scale(0.92);
+}
+
+.gg-zoom-slider {
+  width: 120px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-light, #d1d1d6);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.gg-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary-color, #007AFF);
+  box-shadow: 0 1px 4px rgba(0,122,255,0.3);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.gg-zoom-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.gg-zoom-slider::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+.gg-zoom-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary, #86868b);
+  min-width: 36px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 知识漫游控件 */
+.gg-roaming-control {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.gg-roaming-control.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(-10px);
+}
+
+.gg-roaming-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: var(--bg-glass, rgba(255,255,255,0.88));
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 0.5px solid var(--border-light, rgba(0,0,0,0.08));
+  border-radius: 100px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
+}
+
+.gg-roaming-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gg-roaming-icon {
+  font-size: 16px;
+  animation: roamingPulse 2s ease-in-out infinite;
+}
+
+@keyframes roamingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+.gg-roaming-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary-color, #007AFF);
+  letter-spacing: -0.2px;
+}
+
+.gg-roaming-progress {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary, #86868b);
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-secondary, #f5f5f7);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.gg-roaming-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gg-roaming-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary, #86868b);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.gg-roaming-btn:hover {
+  background: var(--bg-secondary, #f5f5f7);
+  color: var(--text-primary);
+}
+
+.gg-roaming-btn:active {
+  transform: scale(0.9);
+}
+
+.gg-roaming-btn-primary {
+  background: var(--primary-color, #007AFF);
+  color: #fff;
+  font-size: 12px;
+}
+
+.gg-roaming-btn-primary:hover {
+  background: var(--primary-hover, #0066d6);
+  color: #fff;
+}
+
+/* 漫游按钮 active 状态 */
+.gg-btn.active {
+  background: var(--primary-color, #007AFF);
+  color: #fff;
+  border-color: var(--primary-color, #007AFF);
+}
+
 .gg-canvas-container canvas {
   display: block;
   cursor: grab;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .gg-canvas-container canvas:active {
   cursor: grabbing;
+}
+
+/* 空状态 — 绝对定位覆盖 canvas */
+.gg-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  background: var(--bg-primary, #f5f5f7);
 }
 
 /* 底部信息栏 */
@@ -245,13 +457,15 @@
   font-weight: 500;
 }
 
-/* 空状态 */
-.gg-empty {
+/* 加载状态 — 绝对定位覆盖 canvas */
+.gg-loading {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 1;
-  min-height: 0;
+  z-index: 15;
+  background: var(--bg-primary, #f5f5f7);
 }
 
 .ge-inner {
@@ -304,39 +518,65 @@
   margin: 16px 0 0;
 }
 
-/* 加载状态 */
-.gg-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
+.ge-cost-hint {
+  font-size: 11px;
+  color: var(--warning-color, #FF9500);
+  margin: 8px 0 0;
+  opacity: 0.8;
 }
 
+/* 加载状态内部 */
 .gl-inner {
   text-align: center;
 }
 
 .gl-spinner {
-  width: 36px;
-  height: 36px;
+  width: 48px;
+  height: 48px;
   border: 3px solid var(--border-light, #e5e5ea);
   border-top-color: var(--primary-color, #007AFF);
   border-radius: 50%;
   animation: kdSpin 0.8s linear infinite;
-  margin: 0 auto 16px;
+  margin: 0 auto 20px;
 }
 
 .gl-title {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 8px;
+  letter-spacing: -0.3px;
 }
 
 .gl-desc {
   font-size: 13px;
   color: var(--text-tertiary, #86868b);
-  margin: 0;
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+/* 进度条 */
+.gl-progress-bar {
+  width: 200px;
+  height: 3px;
+  background: var(--border-light, #e5e5ea);
+  border-radius: 2px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.gl-progress-fill {
+  height: 100%;
+  width: 30%;
+  background: var(--primary-color, #007AFF);
+  border-radius: 2px;
+  animation: glProgress 2.5s ease-in-out infinite;
+}
+
+@keyframes glProgress {
+  0% { width: 10%; margin-left: 0; }
+  50% { width: 50%; margin-left: 25%; }
+  100% { width: 10%; margin-left: 90%; }
 }
 
 /* 详情面板 */
@@ -654,6 +894,74 @@
 @keyframes gpSlideIn {
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
+}
+
+/* 一键布局按钮样式 */
+#graphRelayoutBtn {
+  background: var(--bg-secondary, #f5f5f7);
+  color: var(--text-secondary, #86868b);
+}
+
+#graphRelayoutBtn:hover {
+  color: var(--primary-color, #007AFF);
+  border-color: var(--primary-color, #007AFF);
+}
+
+/* 重建确认弹窗 */
+.graph-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: kdFadeIn 0.2s ease;
+}
+
+.graph-confirm-dialog {
+  background: var(--bg-elevated, #fff);
+  border: 0.5px solid var(--border-light, rgba(0,0,0,0.08));
+  border-radius: 20px;
+  padding: 28px 24px 20px;
+  max-width: 380px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  animation: gpSlideUp 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.graph-confirm-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+  letter-spacing: -0.3px;
+}
+
+.graph-confirm-msg {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 20px;
+}
+
+.graph-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.graph-confirm-actions .gg-btn {
+  padding: 8px 20px;
+  font-size: 13px;
+  border-radius: var(--radius-lg, 10px);
+}
+
+@keyframes gpSlideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* 响应式 */
