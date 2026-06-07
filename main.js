@@ -791,9 +791,10 @@ function preClassify(text) {
     return { shouldAnalyze: false, reason: '空内容' };
   }
   
-  // 2. 长度检查
-  if (text.length > FILTER_CONFIG.maxLength) {
-    return { shouldAnalyze: false, reason: `内容过长（${text.length}字 > ${FILTER_CONFIG.maxLength}字）` };
+  // 2. 长度检查（合并后的文本允许更长，由缓冲器的 maxTotalLength 控制）
+  const effectiveMaxLength = text.startsWith('[以下是从剪贴板分') ? 3000 : FILTER_CONFIG.maxLength;
+  if (text.length > effectiveMaxLength) {
+    return { shouldAnalyze: false, reason: `内容过长（${text.length}字 > ${effectiveMaxLength}字）` };
   }
   
   // 3. 黑名单过滤
