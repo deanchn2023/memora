@@ -19,6 +19,10 @@ class KnowledgeDistillation {
   }
 
   init() {
+    // 幂等：避免重复绑定 IPC 监听导致 MaxListenersExceededWarning
+    if (this.initialized) {
+      return;
+    }
     this.bindEvents();
     this.setupIPCListeners();
     this.loadStats();

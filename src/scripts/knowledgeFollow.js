@@ -4,7 +4,7 @@
  */
 
 // 文档资源服务器地址：动态从登录配置获取 toolkitUrl，未登录时用默认值
-const DEFAULT_TOOLKIT_URL = 'http://21.91.29.59:3000';
+const DEFAULT_TOOLKIT_URL = 'http://121.5.164.126:3010';
 let TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
 
 // 从登录配置同步服务器地址（优先使用 toolkitUrl，而非 authUrl）

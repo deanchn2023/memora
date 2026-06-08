@@ -2222,6 +2222,202 @@ const DEFAULT_ADP_APP_KEY = 'EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEV
 const DEFAULT_ADP_KNOWLEDGE_APP_KEY = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
 // 知识聚类使用的 AppKey（默认与智能推荐相同）
 const DEFAULT_ADP_CLUSTERING_APP_KEY = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
+// v2.3: 洞察模块 AppKey（活化/演化/冲突 — 暂复用知识 Key，后续可独立配置）
+const DEFAULT_ADP_ACTIVATION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+const DEFAULT_ADP_EVOLUTION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+const DEFAULT_ADP_CONFLICT_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+// File Share 服务默认 API Key
+const DEFAULT_FILE_SHARE_API_KEY = 'adp_976dc93397e49e036c8559dc36f3ac71c4aa3765838189db939ba63577dfe544';
+
+// ===== ADP 文件上传到 COS（官方规范流程）=====
+// 参考文档：https://cloud.tencent.com/document/product/1759/108903
+// 流程：DescribeStorageCredential → PUT 文件到 COS → (可选) docParse 获取 DocId → 传入 FileInfo
+
+/**
+ * TC3-HMAC-SHA256 签名算法（腾讯云 API 3.0 鉴权）
+ */
+function signTC3(secretId, secretKey, payload, action, region = 'ap-guangzhou') {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const date = new Date(timestamp * 1000).toISOString().split('T')[0];
+
+  const httpRequestMethod = 'POST';
+  const canonicalUri = '/';
+  const canonicalQueryString = '';
+  const contentType = 'application/json; charset=utf-8';
+  const canonicalHeaders = `content-type:${contentType}\nhost:lke.tencentcloudapi.com\n`;
+  const signedHeaders = 'content-type;host';
+  const hashedRequestPayload = crypto.createHash('sha256').update(payload).digest('hex');
+  const canonicalRequest = [
+    httpRequestMethod, canonicalUri, canonicalQueryString,
+    canonicalHeaders, signedHeaders, hashedRequestPayload
+  ].join('\n');
+
+  const algorithm = 'TC3-HMAC-SHA256';
+  const service = 'lke';
+  const credentialScope = `${date}/${service}/tc3_request`;
+  const hashedCanonicalRequest = crypto.createHash('sha256').update(canonicalRequest).digest('hex');
+  const stringToSign = [algorithm, timestamp, credentialScope, hashedCanonicalRequest].join('\n');
+
+  const secretDate = crypto.createHmac('sha256', `TC3${secretKey}`).update(date).digest();
+  const secretService = crypto.createHmac('sha256', secretDate).update(service).digest();
+  const secretSigning = crypto.createHmac('sha256', secretService).update('tc3_request').digest();
+  const signature = crypto.createHmac('sha256', secretSigning).update(stringToSign).digest('hex');
+
+  const authorization = `${algorithm} Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return { authorization, timestamp, contentType };
+}
+
+/**
+ * 获取 ADP 文件上传凭证（DescribeStorageCredential）
+ * 返回 { UploadUrl, FileUrl, Bucket, Region, UploadPath } 等
+ */
+async function getADPUploadCredential(fileType, botBizId, secretId, secretKey, isPublic = false, typeKey = 'realtime') {
+  const body = JSON.stringify({
+    BotBizId: botBizId,
+    FileType: fileType,
+    IsPublic: isPublic,
+    TypeKey: typeKey,
+  });
+
+  const { authorization, timestamp, contentType } = signTC3(secretId, secretKey, body, 'DescribeStorageCredential');
+
+  console.log('[ADP Upload] Getting upload credential for:', fileType, 'typeKey:', typeKey);
+
+  const res = await fetch('https://lke.tencentcloudapi.com', {
+    method: 'POST',
+    headers: {
+      'Host': 'lke.tencentcloudapi.com',
+      'Content-Type': contentType,
+      'X-TC-Action': 'DescribeStorageCredential',
+      'X-TC-Version': '2023-11-30',
+      'X-TC-Timestamp': String(timestamp),
+      'X-TC-Region': 'ap-guangzhou',
+      'Authorization': authorization,
+    },
+    body,
+    signal: AbortSignal.timeout(15000),
+  });
+
+  const data = await res.json();
+  if (data.Response?.Error) {
+    throw new Error(`DescribeStorageCredential failed: ${data.Response.Error.Message} (${data.Response.Error.Code})`);
+  }
+
+  const resp = data.Response;
+  if (!resp.UploadUrl || !resp.FileUrl) {
+    throw new Error('DescribeStorageCredential: missing UploadUrl or FileUrl in response');
+  }
+
+  console.log('[ADP Upload] Got credential - Bucket:', resp.Bucket, 'Region:', resp.Region,
+    'UploadPath:', resp.UploadPath?.substring(0, 40) + '...');
+  return resp;
+}
+
+/**
+ * 上传文件到 ADP COS（使用 DescribeStorageCredential 返回的 UploadUrl）
+ * 返回 { fileUrl, cosHash, eTag }
+ */
+async function uploadFileToADPCOS(fileBuffer, fileName, fileType, fileSize, botBizId, secretId, secretKey) {
+  // Step 1: 获取上传凭证
+  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'heic', 'heif'].includes(fileType);
+  const cred = await getADPUploadCredential(fileType, botBizId, secretId, secretKey, isImage, 'realtime');
+
+  // Step 2: PUT 文件到 COS
+  console.log('[ADP Upload] Uploading file to COS:', fileName, 'size:', fileSize);
+  const uploadRes = await fetch(cred.UploadUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+    },
+    body: fileBuffer,
+    signal: AbortSignal.timeout(60000),
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => '');
+    throw new Error(`COS PUT failed: HTTP ${uploadRes.status} ${errText}`);
+  }
+
+  const cosHash = uploadRes.headers.get('x-cos-hash-crc64ecma') || '';
+  const eTag = uploadRes.headers.get('etag') || '';
+
+  console.log('[ADP Upload] COS upload OK - FileUrl:', cred.FileUrl.substring(0, 60) + '...',
+    'cosHash:', cosHash ? 'yes' : 'no', 'eTag:', eTag ? 'yes' : 'no');
+
+  return {
+    fileUrl: cred.FileUrl,
+    bucket: cred.Bucket,
+    region: cred.Region,
+    uploadPath: cred.UploadPath,
+    cosHash,
+    eTag,
+  };
+}
+
+/**
+ * 调用 ADP 实时文档解析接口获取 DocId
+ * 返回 docId（标准模式文件对话必填）
+ */
+async function parseADPDocument(appKey, _botBizId, fileName, fileType, fileSize, cosResult) {
+  const sessionId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+  // 文件名不含后缀（API 要求）
+  const fileNameNoExt = fileName.replace(/\.[^.]+$/, '');
+
+  const body = JSON.stringify({
+    session_id: sessionId,
+    bot_app_key: appKey,
+    request_id: requestId,
+    cos_bucket: cosResult.bucket,
+    file_type: fileType,
+    file_name: fileNameNoExt,
+    cos_url: cosResult.uploadPath,
+    cos_hash: cosResult.cosHash,
+    e_tag: cosResult.eTag,
+    size: String(fileSize),
+  });
+
+  console.log('[ADP Upload] Parsing document:', fileNameNoExt, 'fileType:', fileType);
+
+  const res = await fetch('https://wss.lke.cloud.tencent.com/v1/qbot/chat/docParse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    signal: AbortSignal.timeout(120000), // 文档解析可能较慢
+  });
+
+  if (!res.ok) {
+    throw new Error(`docParse HTTP error: ${res.status}`);
+  }
+
+  // docParse 使用 SSE 流式返回
+  const text = await res.text();
+  let docId = null;
+
+  // 解析 SSE 事件，查找 doc_id
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (line.startsWith('data:')) {
+      try {
+        const data = JSON.parse(line.substring(5).trim());
+        if (data.doc_id && data.status === 'SUCCESS') {
+          docId = data.doc_id;
+          break;
+        }
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  if (!docId) {
+    console.warn('[ADP Upload] docParse completed but no doc_id found (may not be standard mode)');
+  } else {
+    console.log('[ADP Upload] Got DocId:', docId);
+  }
+
+  return { docId, sessionId };
+}
 
 ipcMain.handle('get-adp-config', async () => {
   // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
@@ -2231,6 +2427,9 @@ ipcMain.handle('get-adp-config', async () => {
     const serverSearchAppKey = remoteConfig.adp.search_app_key || '';
     const serverClusteringAppKey = remoteConfig.adp.clustering_app_key || '';
     const serverGraphAppKey = remoteConfig.adp.graph_app_key || '';
+    const serverActivationAppKey = remoteConfig.adp.activation_app_key || '';
+    const serverEvolutionAppKey = remoteConfig.adp.evolution_app_key || '';
+    const serverConflictAppKey = remoteConfig.adp.conflict_app_key || '';
     return {
       appKey: serverAppKey || DEFAULT_ADP_APP_KEY,
       url: remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
@@ -2239,14 +2438,24 @@ ipcMain.handle('get-adp-config', async () => {
       searchAppKey: serverSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
       clusteringAppKey: serverClusteringAppKey || DEFAULT_ADP_CLUSTERING_APP_KEY,
       graphAppKey: serverGraphAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+      activationAppKey: serverActivationAppKey || DEFAULT_ADP_ACTIVATION_APP_KEY,
+      evolutionAppKey: serverEvolutionAppKey || DEFAULT_ADP_EVOLUTION_APP_KEY,
+      conflictAppKey: serverConflictAppKey || DEFAULT_ADP_CONFLICT_APP_KEY,
+      fileShareApiKey: remoteConfig?.file_share?.api_key || DEFAULT_FILE_SHARE_API_KEY,
+      tcSecretId: getSetting('adp_tc_secret_id') || '',
+      tcSecretKey: '',
+      botBizId: getSetting('adp_bot_biz_id') || '',
       fromServer: true,
-      // 详细标注每个 Key 的真实来源：server=服务器配置, default=本地默认值, custom=用户自定义
       configSource: {
         appKey: serverAppKey ? 'server' : 'default',
         knowledgeAppKey: serverKnowledgeAppKey ? 'server' : 'default',
         searchAppKey: serverSearchAppKey ? 'server' : 'default',
         clusteringAppKey: serverClusteringAppKey ? 'server' : 'default',
         graphAppKey: serverGraphAppKey ? 'server' : 'default',
+        activationAppKey: serverActivationAppKey ? 'server' : 'default',
+        evolutionAppKey: serverEvolutionAppKey ? 'server' : 'default',
+        conflictAppKey: serverConflictAppKey ? 'server' : 'default',
+        fileShareApiKey: remoteConfig?.file_share?.api_key ? 'server' : 'default',
       }
     };
   }
@@ -2256,6 +2465,9 @@ ipcMain.handle('get-adp-config', async () => {
   const localSearchAppKey = getSetting('adp_search_app_key') || '';
   const localClusteringAppKey = getSetting('adp_clustering_app_key') || '';
   const localGraphAppKey = getSetting('adp_graph_app_key') || '';
+  const localActivationAppKey = getSetting('adp_activation_app_key') || '';
+  const localEvolutionAppKey = getSetting('adp_evolution_app_key') || '';
+  const localConflictAppKey = getSetting('adp_conflict_app_key') || '';
   return {
     appKey: localAppKey || DEFAULT_ADP_APP_KEY,
     url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
@@ -2264,6 +2476,13 @@ ipcMain.handle('get-adp-config', async () => {
     searchAppKey: localSearchAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
     clusteringAppKey: localClusteringAppKey || DEFAULT_ADP_CLUSTERING_APP_KEY,
     graphAppKey: localGraphAppKey || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+    activationAppKey: localActivationAppKey || DEFAULT_ADP_ACTIVATION_APP_KEY,
+    evolutionAppKey: localEvolutionAppKey || DEFAULT_ADP_EVOLUTION_APP_KEY,
+    conflictAppKey: localConflictAppKey || DEFAULT_ADP_CONFLICT_APP_KEY,
+    fileShareApiKey: getSetting('file_share_api_key') || DEFAULT_FILE_SHARE_API_KEY,
+    tcSecretId: getSetting('adp_tc_secret_id') || '',
+    tcSecretKey: '',
+    botBizId: getSetting('adp_bot_biz_id') || '',
     fromServer: false,
     configSource: {
       appKey: localAppKey ? 'custom' : 'default',
@@ -2271,6 +2490,10 @@ ipcMain.handle('get-adp-config', async () => {
       searchAppKey: localSearchAppKey ? 'custom' : 'default',
       clusteringAppKey: localClusteringAppKey ? 'custom' : 'default',
       graphAppKey: localGraphAppKey ? 'custom' : 'default',
+      activationAppKey: localActivationAppKey ? 'custom' : 'default',
+      evolutionAppKey: localEvolutionAppKey ? 'custom' : 'default',
+      conflictAppKey: localConflictAppKey ? 'custom' : 'default',
+      fileShareApiKey: getSetting('file_share_api_key') ? 'custom' : 'default',
     }
   };
 });
@@ -2297,6 +2520,27 @@ ipcMain.handle('set-adp-config', async (event, config) => {
   if (config.graphAppKey !== undefined) {
     setSetting('adp_graph_app_key', config.graphAppKey);
   }
+  if (config.activationAppKey !== undefined) {
+    setSetting('adp_activation_app_key', config.activationAppKey);
+  }
+  if (config.evolutionAppKey !== undefined) {
+    setSetting('adp_evolution_app_key', config.evolutionAppKey);
+  }
+  if (config.conflictAppKey !== undefined) {
+    setSetting('adp_conflict_app_key', config.conflictAppKey);
+  }
+  if (config.fileShareApiKey !== undefined) {
+    setSetting('file_share_api_key', config.fileShareApiKey);
+  }
+  if (config.tcSecretId !== undefined) {
+    setSetting('adp_tc_secret_id', config.tcSecretId);
+  }
+  if (config.tcSecretKey !== undefined) {
+    setSetting('adp_tc_secret_key', config.tcSecretKey);
+  }
+  if (config.botBizId !== undefined) {
+    setSetting('adp_bot_biz_id', config.botBizId);
+  }
   return { success: true };
 });
 
@@ -2308,6 +2552,13 @@ ipcMain.handle('clear-adp-config', async () => {
   setSetting('adp_search_app_key', '');
   setSetting('adp_clustering_app_key', '');
   setSetting('adp_graph_app_key', '');
+  setSetting('adp_activation_app_key', '');
+  setSetting('adp_evolution_app_key', '');
+  setSetting('adp_conflict_app_key', '');
+  setSetting('file_share_api_key', '');
+  setSetting('adp_tc_secret_id', '');
+  setSetting('adp_tc_secret_key', '');
+  setSetting('adp_bot_biz_id', '');
   return { success: true };
 });
 
@@ -2602,6 +2853,7 @@ ipcMain.handle('auth:get-state', async () => {
   const server = getAuthServer();
   return {
     isLoggedIn: authState.isLoggedIn,
+    token: authState.token || null,
     user: authState.user,
     env: authState.env || 'beta',
     forceLocalConfig: authState.forceLocalConfig || false,
@@ -2913,7 +3165,19 @@ ipcMain.handle('config:sync', async () => {
 // ADP消息发送（流式SSE推送，参考 knowledge:search-adp 架构）
 let activeChatADPController = null;
 
-ipcMain.handle('send-adp-message', async (event, message) => {
+ipcMain.handle('send-adp-message', async (event, data) => {
+  // 支持两种调用方式：
+  // 1. 旧方式：data 是纯文本字符串
+  // 2. 新方式：data = { message, attachments } — 附件信息结构化传递给 ADP V2 Contents 数组
+  let message, attachments;
+  if (typeof data === 'string') {
+    message = data;
+    attachments = [];
+  } else {
+    message = data.message || '';
+    attachments = data.attachments || [];
+  }
+
   // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
   let appKey, url, configSource = 'default';
   if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
@@ -2932,7 +3196,7 @@ ipcMain.handle('send-adp-message', async (event, message) => {
     configSource = 'default';
   }
   
-  console.log('[ADP Chat] send-adp-message called, configSource:', configSource);
+  console.log('[ADP Chat] send-adp-message called, configSource:', configSource, 'attachments:', attachments.length);
   
   // 记录当前使用的 appKey 用于审计（脱敏）
   const _adpChatAppKey = appKey;
@@ -2941,12 +3205,220 @@ ipcMain.handle('send-adp-message', async (event, message) => {
   const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
   const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
 
+  // 构建 Contents 数组（ADP V2 格式）
+  const contents = [];
+
+  // 文件上传配置：ADP COS 上传（官方规范）或 File Share 上传（降级方案）
+  const tcSecretId = getSetting('adp_tc_secret_id') || '';
+  const tcSecretKey = getSetting('adp_tc_secret_key') || '';
+  const botBizId = getSetting('adp_bot_biz_id') || '';
+  const hasADPCOSCreds = !!(tcSecretId && tcSecretKey && botBizId);
+
+  if (attachments.length > 0) {
+    console.log('[ADP Chat] Processing', attachments.length, 'attachments, ADP COS upload:', hasADPCOSCreds ? 'available' : 'unavailable (no TC credentials)');
+  }
+
+  // 1. 处理所有附件
+  for (const att of attachments) {
+    // 调试日志：追踪 IPC 传输后 buffer 的实际类型和长度
+    console.log('[ADP Chat] Attachment:', att.name, 'type:', att.type, 'size:', att.size,
+      'buffer type:', typeof att.buffer, Array.isArray(att.buffer) ? `Array[${att.buffer.length}]` :
+        att.buffer instanceof ArrayBuffer ? `ArrayBuffer[${att.buffer.byteLength}]` :
+        att.buffer ? `other(${Object.keys(att.buffer).length} keys)` : 'null/undefined',
+      'has textContent:', !!att.textContent, 'has base64:', !!att.base64);
+
+    const ext = att.name.split('.').pop().toLowerCase();
+    const isImage = att.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'heic', 'heif'].includes(ext);
+    const fileTypeMap = {
+      pdf: 'pdf', doc: 'doc', docx: 'docx', ppt: 'ppt', pptx: 'pptx',
+      xls: 'xls', xlsx: 'xlsx', txt: 'txt', md: 'md', csv: 'csv',
+      png: 'png', jpg: 'jpg', jpeg: 'jpeg', gif: 'gif', bmp: 'bmp', webp: 'webp', heic: 'heic', heif: 'heif',
+    };
+    const adpFileType = fileTypeMap[ext] || ext;
+
+    // ===== 方案 A：ADP COS 上传（官方规范流程）=====
+    if (hasADPCOSCreds && att.buffer) {
+      try {
+        let fileBuffer;
+        // 优先处理普通数组（渲染进程通过 IPC 传来的 buffer 现在是 Array 而非 ArrayBuffer）
+        if (Array.isArray(att.buffer)) {
+          fileBuffer = Buffer.from(att.buffer);
+        } else if (att.buffer instanceof ArrayBuffer || (att.buffer?.buffer instanceof ArrayBuffer)) {
+          fileBuffer = Buffer.from(att.buffer instanceof ArrayBuffer ? att.buffer : att.buffer.buffer);
+        } else if (att.buffer?.length > 0) {
+          // 兜底：可能是被序列化后的类数组对象
+          fileBuffer = Buffer.from(att.buffer);
+        } else {
+          console.warn('[ADP Chat] Attachment buffer is empty or invalid:', att.name, 'typeof:', typeof att.buffer);
+          throw new Error(`Empty buffer for ${att.name}`);
+        }
+
+        if (fileBuffer.length === 0) {
+          throw new Error(`Zero-length buffer for ${att.name}`);
+        }
+
+        // Step 1+2: 获取凭证 + 上传到 COS
+        const cosResult = await uploadFileToADPCOS(fileBuffer, att.name, adpFileType, att.size, botBizId, tcSecretId, tcSecretKey);
+
+        if (isImage) {
+          // 图片：用 Type: 'image'，URL 指向 ADP COS
+          contents.push({
+            Type: 'image',
+            Image: { Url: cosResult.fileUrl }
+          });
+          console.log('[ADP Chat] Added image from ADP COS:', att.name);
+        } else {
+          // 文件：用 Type: 'file'，需要 FileUrl + (可选) DocId
+          let docId = null;
+
+          // 尝试调用 docParse 获取 DocId（标准模式必填）
+          try {
+            const parseResult = await parseADPDocument(appKey, botBizId, att.name, adpFileType, att.size, cosResult);
+            docId = parseResult.docId;
+          } catch (parseErr) {
+            console.warn('[ADP Chat] docParse failed (non-standard mode may not need it):', parseErr.message);
+          }
+
+          const fileInfo = {
+            FileName: att.name,
+            FileSize: String(att.size),
+            FileUrl: cosResult.fileUrl,
+            FileType: adpFileType,
+          };
+          if (docId) {
+            fileInfo.DocId = docId;
+          }
+          contents.push({
+            Type: 'file',
+            File: fileInfo
+          });
+          console.log('[ADP Chat] Added file from ADP COS:', att.name, 'DocId:', docId || 'none');
+        }
+        continue; // COS 上传成功，跳过降级方案
+      } catch (cosErr) {
+        console.warn('[ADP Chat] ADP COS upload failed, falling back:', cosErr.message);
+        // 继续执行降级方案
+      }
+    }
+
+    // ===== 方案 B：File Share 服务上传（COS 未配置时的降级方案）=====
+    const fileShareBaseUrl = getAuthServer()?.toolkitUrl;
+    const fileShareApiKey = remoteConfig?.file_share?.api_key
+      || getSetting('file_share_api_key')
+      || DEFAULT_FILE_SHARE_API_KEY;
+
+    let fileUrl = null;
+    if (fileShareBaseUrl && fileShareApiKey && att.buffer) {
+      try {
+        console.log('[ADP Chat] Uploading file to File Share (fallback):', att.name, 'size:', att.size);
+        const FormData = require('form-data');
+        const form = new FormData();
+        let fileBuffer;
+        // 优先处理普通数组（IPC 传输后的格式）
+        if (Array.isArray(att.buffer)) {
+          fileBuffer = Buffer.from(att.buffer);
+        } else if (att.buffer instanceof ArrayBuffer || (att.buffer?.buffer instanceof ArrayBuffer)) {
+          fileBuffer = Buffer.from(att.buffer instanceof ArrayBuffer ? att.buffer : att.buffer.buffer);
+        } else if (att.buffer?.length > 0) {
+          fileBuffer = Buffer.from(att.buffer);
+        } else {
+          console.warn('[ADP Chat] File Share: buffer empty for', att.name);
+          throw new Error(`Empty buffer for ${att.name}`);
+        }
+
+        if (fileBuffer.length === 0) {
+          throw new Error(`Zero-length buffer for ${att.name}`);
+        }
+        form.append('file', fileBuffer, {
+          filename: att.name,
+          contentType: att.mimeType || 'application/octet-stream'
+        });
+        form.append('description', `Memora 客户端上传 - ${att.name}`);
+        form.append('expire_days', '1');
+
+        const uploadRes = await fetch(`${fileShareBaseUrl}/api/file-share/upload`, {
+          method: 'POST',
+          headers: {
+            'X-API-Key': fileShareApiKey,
+            ...form.getHeaders()
+          },
+          body: form,
+          signal: AbortSignal.timeout(30000)
+        });
+
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          if (uploadData.success && uploadData.data?.download_url) {
+            fileUrl = uploadData.data.download_url;
+            console.log('[ADP Chat] File Share upload OK:', att.name, '->', fileUrl);
+          } else {
+            console.warn('[ADP Chat] File Share upload response not successful:', uploadData.error || 'unknown');
+          }
+        } else {
+          console.warn('[ADP Chat] File Share upload HTTP error:', uploadRes.status);
+        }
+      } catch (uploadErr) {
+        console.warn('[ADP Chat] File Share upload failed:', att.name, uploadErr.message);
+      }
+    }
+
+    if (fileUrl) {
+      // File Share 上传成功
+      if (isImage) {
+        contents.push({
+          Type: 'image',
+          Image: { Url: fileUrl }
+        });
+        console.log('[ADP Chat] Added image from File Share:', att.name);
+      } else {
+        contents.push({
+          Type: 'file',
+          File: {
+            FileName: att.name,
+            FileSize: String(att.size),
+            FileUrl: fileUrl,
+            FileType: adpFileType
+          }
+        });
+        console.log('[ADP Chat] Added file from File Share:', att.name);
+      }
+      continue;
+    }
+
+    // ===== 方案 C：图片 base64 内联（File Share 也不可用时的最后降级）=====
+    if (isImage && att.base64) {
+      contents.push({
+        Type: 'image',
+        Image: { Url: `data:${att.mimeType};base64,${att.base64}` }
+      });
+      console.log('[ADP Chat] Added image (base64 inline):', att.name, att.mimeType);
+      continue;
+    }
+    if (isImage) continue; // 图片无 base64 也无任何上传方式，跳过
+
+    // 所有上传方式都失败：将可用文本内容嵌入消息
+    if (att.textContent) {
+      contents.push({
+        Type: 'text',
+        Text: `[文件: ${att.name}]\n${att.textContent}`
+      });
+    } else {
+      contents.push({
+        Type: 'text',
+        Text: `[文件: ${att.name}, 类型: ${att.mimeType}, 大小: ${att.size}]（文件上传失败，无法提供内容）`
+      });
+    }
+  }
+
+  // 3. 添加用户消息文本
+  contents.push({ Type: 'text', Text: message });
+
   const requestBody = {
     RequestId: requestId,
     ConversationId: convId,
     AppKey: appKey.trim(),
     VisitorId: getDeviceFingerprint(),
-    Contents: [{ Type: 'text', Text: message }],
+    Contents: contents,
     Incremental: true,
     Stream: 'enable',
     StreamingThrottle: 5
@@ -8014,6 +8486,1105 @@ ipcMain.handle('local-files:reveal', async (event, filePath) => {
   }
 });
 
+// === v2.3 洞察模块 IPC ===
+
+// 洞察异步任务管理器
+const insightTaskManager = {
+  tasks: new Map(),       // taskType -> { status, taskId, startedAt, result, error }
+  cache: new Map(),       // taskType -> { result, completedAt }
+
+  start(taskType) {
+    const taskId = `insight_${taskType}_${Date.now()}`;
+    const task = { status: 'running', taskId, startedAt: Date.now(), result: null, error: null };
+    this.tasks.set(taskType, task);
+    return taskId;
+  },
+
+  complete(taskType, result) {
+    const task = this.tasks.get(taskType);
+    if (task) {
+      task.status = 'completed';
+      task.result = result;
+    }
+    this.cache.set(taskType, { result, completedAt: Date.now() });
+  },
+
+  fail(taskType, error) {
+    const task = this.tasks.get(taskType);
+    if (task) {
+      task.status = 'failed';
+      task.error = error;
+    }
+  },
+
+  getStatus(taskType) {
+    const task = this.tasks.get(taskType);
+    return task ? { status: task.status, taskId: task.taskId, startedAt: task.startedAt } : { status: 'none' };
+  },
+
+  getCachedResult(taskType) {
+    return this.cache.get(taskType) || null;
+  },
+
+  isRunning(taskType) {
+    const task = this.tasks.get(taskType);
+    return task && task.status === 'running';
+  }
+};
+
+// 获取知识活化推荐（同步接口 — 读取缓存）
+ipcMain.handle('insight:get-activations', async () => {
+  try {
+    if (!authState.isLoggedIn) {
+      return { items: [], error: '需要登录后使用' };
+    }
+    // 优先返回缓存
+    const cached = insightTaskManager.getCachedResult('activations');
+    if (cached) return cached.result;
+    return { items: [] };
+  } catch (err) {
+    return { items: [], error: err.message };
+  }
+});
+
+// 知识活化后台执行逻辑
+async function _runActivationTask() {
+  const userDataPath = app.getPath('userData');
+
+  // 收集最近7天的记忆作为上下文
+  const memoryDataPath = path.join(userDataPath, 'memory', 'memories.json');
+  let recentMemories = [];
+  if (fs.existsSync(memoryDataPath)) {
+    try {
+      const all = JSON.parse(fs.readFileSync(memoryDataPath, 'utf8'));
+      const sevenDaysAgo = Date.now() - 7 * 86400000;
+      recentMemories = (all.memories || all || []).filter(m => {
+        const ts = new Date(m.created_at || m.createdAt || 0).getTime();
+        return ts > sevenDaysAgo;
+      }).slice(0, 20);
+    } catch (_) {}
+  }
+
+  // 收集知识原子摘要
+  const atomsPath = path.join(userDataPath, 'knowledge', 'atoms.json');
+  let atomsSummary = [];
+  if (fs.existsSync(atomsPath)) {
+    try {
+      const all = JSON.parse(fs.readFileSync(atomsPath, 'utf8'));
+      atomsSummary = (all.atoms || all || []).slice(0, 30).map(a => ({
+        id: a.id, content: (a.content || '').substring(0, 100), domain: a.domain
+      }));
+    } catch (_) {}
+  }
+
+  // 收集实体图谱
+  const entityPath = path.join(userDataPath, 'memory', 'entity-graph.json');
+  let topEntities = [];
+  if (fs.existsSync(entityPath)) {
+    try {
+      const graph = JSON.parse(fs.readFileSync(entityPath, 'utf8'));
+      const entities = graph.entities || {};
+      topEntities = Object.entries(entities)
+        .sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
+        .slice(0, 15)
+        .map(([name, info]) => ({ name, type: info.type, count: info.count }));
+    } catch (_) {}
+  }
+
+  // 调用 ADP
+  const config = getInsightADPConfig('activation');
+  const promptTemplate = loadPromptTemplate('knowledge_activation');
+  const contextStr = JSON.stringify({
+    recentMemories: recentMemories.map(m => ({ content: (m.content || '').substring(0, 200), category: m.category, layer: m.layer })),
+    atoms: atomsSummary,
+    topEntities,
+    userRole: authState.user?.role || '未知'
+  });
+  const result = await callADPForInsight(config, promptTemplate, contextStr, 'knowledge_activation');
+  return { items: result.activations || [], summary: result.summary || '' };
+}
+
+// 知识缺口分析后台执行逻辑
+async function _runGapAnalysisTask() {
+  const userDataPath = app.getPath('userData');
+
+  const entityPath = path.join(userDataPath, 'memory', 'entity-graph.json');
+  let topEntities = [];
+  if (fs.existsSync(entityPath)) {
+    try {
+      const graph = JSON.parse(fs.readFileSync(entityPath, 'utf8'));
+      const entities = graph.entities || {};
+      topEntities = Object.entries(entities)
+        .sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
+        .slice(0, 20)
+        .map(([name, info]) => ({ name, type: info.type, count: info.count }));
+    } catch (_) {}
+  }
+
+  const atomsPath = path.join(userDataPath, 'knowledge', 'atoms.json');
+  let atomContents = [];
+  if (fs.existsSync(atomsPath)) {
+    try {
+      const all = JSON.parse(fs.readFileSync(atomsPath, 'utf8'));
+      atomContents = (all.atoms || all || []).map(a => (a.content || '').substring(0, 100));
+    } catch (_) {}
+  }
+
+  const gaps = topEntities.filter(e => e.count >= 3 && !atomContents.some(c => c.includes(e.name))).map(e => ({
+    entity: e.name,
+    type: e.type,
+    mentionCount: e.count,
+    reason: `"${e.name}" 最近被提及 ${e.count} 次，但知识库中无相关记录`,
+    suggestedActions: [`搜索关于"${e.name}"的资料`, `记录你对"${e.name}"的理解`]
+  }));
+
+  if (gaps.length > 0) {
+    try {
+      const config = getInsightADPConfig('activation');
+      const promptTemplate = loadPromptTemplate('knowledge_activation');
+      const contextStr = JSON.stringify({ gaps: gaps.slice(0, 10), atomCount: atomContents.length, entityCount: topEntities.length });
+      const result = await callADPForInsight(config, promptTemplate, contextStr, 'gap_analysis');
+      return { gaps, suggestions: result.summary || '' };
+    } catch (_) {
+      return { gaps, suggestions: '' };
+    }
+  }
+
+  return { gaps: [], suggestions: '知识库状态良好，未发现明显缺口。' };
+}
+
+// 知识演化后台执行逻辑
+async function _runEvolutionTask() {
+  const userDataPath = app.getPath('userData');
+
+  const articlesPath = path.join(userDataPath, 'knowledge', 'articles');
+  let articles = [];
+  if (fs.existsSync(articlesPath)) {
+    try {
+      const files = fs.readdirSync(articlesPath).filter(f => f.endsWith('.json'));
+      articles = files.slice(0, 10).map(f => {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(articlesPath, f), 'utf8'));
+          return { title: data.title || '', created_at: data.created_at || '', cluster_id: data.cluster_id || '' };
+        } catch (_) { return null; }
+      }).filter(Boolean);
+    } catch (_) {}
+  }
+
+  const clustersPath = path.join(userDataPath, 'knowledge', 'clusters.json');
+  let clusters = [];
+  if (fs.existsSync(clustersPath)) {
+    try {
+      const all = JSON.parse(fs.readFileSync(clustersPath, 'utf8'));
+      clusters = (all.clusters || all || []).slice(0, 15).map(c => ({
+        id: c.id, name: c.name, atomCount: (c.atom_ids || []).length, status: c.status, updated_at: c.updated_at || c.created_at
+      }));
+    } catch (_) {}
+  }
+
+  // 记忆增长趋势
+  const memoryDataPath = path.join(userDataPath, 'memory', 'memories.json');
+  let memoryGrowth = [];
+  if (fs.existsSync(memoryDataPath)) {
+    try {
+      const all = JSON.parse(fs.readFileSync(memoryDataPath, 'utf8'));
+      const mems = all.memories || all || [];
+      const byDate = {};
+      mems.forEach(m => {
+        const d = (m.created_at || m.createdAt || '').substring(0, 10);
+        byDate[d] = (byDate[d] || 0) + 1;
+      });
+      memoryGrowth = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0])).slice(-7).map(([d, c]) => ({ date: d, count: c }));
+    } catch (_) {}
+  }
+
+  const config = getInsightADPConfig('evolution');
+  const promptTemplate = loadPromptTemplate('knowledge_evolution');
+  const contextStr = JSON.stringify({ articles, clusters, memoryGrowth, totalArticles: articles.length, totalClusters: clusters.length });
+  const result = await callADPForInsight(config, promptTemplate, contextStr, 'knowledge_evolution');
+
+  const localEvolutions = [];
+  clusters.filter(c => c.status === 'distilled').forEach(c => {
+    localEvolutions.push({
+      type: 'merge',
+      content: `知识簇"${c.name}"已完成蒸馏，包含 ${c.atomCount} 个知识原子`,
+      detail: `自动合并为知识文章`,
+      timeAgo: formatTimeAgo(c.updated_at),
+      impact: 'medium'
+    });
+  });
+
+  return { items: [...localEvolutions, ...(result.evolutions || [])], trends: result.trends || {} };
+}
+
+// 冲突检测后台执行逻辑
+async function _runConflictDetectionTask() {
+  const userDataPath = app.getPath('userData');
+
+  const memoryDataPath = path.join(userDataPath, 'memory', 'memories.json');
+  const entityPath = path.join(userDataPath, 'memory', 'entity-graph.json');
+
+  let entities = {};
+  let memoriesByEntity = {};
+
+  if (fs.existsSync(entityPath)) {
+    try { entities = JSON.parse(fs.readFileSync(entityPath, 'utf8')).entities || {}; } catch (_) {}
+  }
+
+  if (fs.existsSync(memoryDataPath)) {
+    try {
+      const all = JSON.parse(fs.readFileSync(memoryDataPath, 'utf8'));
+      const mems = all.memories || all || [];
+      Object.keys(entities).forEach(entityName => {
+        memoriesByEntity[entityName] = mems.filter(m =>
+          (m.content || '').includes(entityName)
+        ).slice(0, 10).map(m => ({
+          content: (m.content || '').substring(0, 200),
+          category: m.category,
+          created_at: m.created_at || m.createdAt
+        }));
+      });
+    } catch (_) {}
+  }
+
+  const candidateEntities = Object.entries(entities)
+    .filter(([_, info]) => (info.count || 0) >= 3)
+    .filter(([name]) => (memoriesByEntity[name] || []).length >= 2)
+    .slice(0, 5);
+
+  const allConflicts = [];
+  const config = getInsightADPConfig('conflict');
+
+  for (const [entityName] of candidateEntities) {
+    try {
+      const promptTemplate = loadPromptTemplate('knowledge_conflict_detection');
+      const contextStr = JSON.stringify({
+        entity: entityName,
+        memories: memoriesByEntity[entityName] || []
+      });
+      const result = await callADPForInsight(config, promptTemplate, contextStr, 'conflict_detection');
+      if (result.hasConflict && result.conflicts) {
+        allConflicts.push(...result.conflicts.map(c => ({ ...c, entity: c.entity || entityName })));
+      }
+    } catch (_) { continue; }
+  }
+
+  // 保存到本地
+  const insightDir = path.join(userDataPath, 'insight');
+  if (!fs.existsSync(insightDir)) fs.mkdirSync(insightDir, { recursive: true });
+  fs.writeFileSync(path.join(insightDir, 'conflicts.json'), JSON.stringify({ conflicts: allConflicts, updatedAt: new Date().toISOString() }, null, 2));
+
+  return { items: allConflicts };
+}
+
+// 发起异步任务
+ipcMain.handle('insight:start-task', async (event, { taskType }) => {
+  try {
+    if (!authState.isLoggedIn) {
+      return { success: false, error: '需要登录后使用' };
+    }
+
+    // 如果同类型任务正在运行，返回当前状态
+    if (insightTaskManager.isRunning(taskType)) {
+      return { success: true, taskId: insightTaskManager.getStatus(taskType).taskId, status: 'already_running' };
+    }
+
+    const taskId = insightTaskManager.start(taskType);
+    console.log(`[Insight] Task started: ${taskType} (${taskId})`);
+
+    // 异步执行，不阻塞 IPC 返回
+    setImmediate(async () => {
+      try {
+        let result;
+        switch (taskType) {
+          case 'activations': result = await _runActivationTask(); break;
+          case 'gap_analysis': result = await _runGapAnalysisTask(); break;
+          case 'evolutions': result = await _runEvolutionTask(); break;
+          case 'conflict_detection': result = await _runConflictDetectionTask(); break;
+          default: throw new Error(`Unknown task type: ${taskType}`);
+        }
+
+        insightTaskManager.complete(taskType, result);
+        console.log(`[Insight] Task completed: ${taskType}`);
+
+        // 推送结果到渲染进程
+        try {
+          event.sender.send('insight:task-complete', { taskType, taskId, result, completedAt: Date.now() });
+        } catch (sendErr) {
+          console.warn('[Insight] Failed to send task result:', sendErr.message);
+        }
+      } catch (err) {
+        insightTaskManager.fail(taskType, err.message);
+        console.error(`[Insight] Task failed: ${taskType}`, err.message);
+        try {
+          event.sender.send('insight:task-complete', { taskType, taskId, error: err.message, completedAt: Date.now() });
+        } catch (_) {}
+      }
+    });
+
+    return { success: true, taskId, status: 'started' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 获取缓存结果
+ipcMain.handle('insight:get-cached-result', async (event, { taskType }) => {
+  const cached = insightTaskManager.getCachedResult(taskType);
+  return cached;
+});
+
+// 获取任务状态
+ipcMain.handle('insight:get-task-status', async (event, { taskType }) => {
+  return insightTaskManager.getStatus(taskType);
+});
+
+// 旧接口兼容：读取缓存结果
+ipcMain.handle('insight:analyze-gaps', async () => {
+  const cached = insightTaskManager.getCachedResult('gap_analysis');
+  if (cached) return cached.result;
+  return { gaps: [], suggestions: '' };
+});
+
+ipcMain.handle('insight:get-evolutions', async () => {
+  const cached = insightTaskManager.getCachedResult('evolutions');
+  if (cached) return cached.result;
+  return { items: [] };
+});
+
+ipcMain.handle('insight:get-conflicts', async () => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const conflictsPath = path.join(userDataPath, 'insight', 'conflicts.json');
+    if (fs.existsSync(conflictsPath)) {
+      const data = JSON.parse(fs.readFileSync(conflictsPath, 'utf8'));
+      return { items: data.conflicts || [] };
+    }
+    return { items: [] };
+  } catch (err) {
+    return { items: [], error: err.message };
+  }
+});
+
+ipcMain.handle('insight:detect-conflicts', async () => {
+  const cached = insightTaskManager.getCachedResult('conflict_detection');
+  if (cached) return cached.result;
+  return { items: [] };
+});
+
+// 解决冲突
+ipcMain.handle('insight:resolve-conflict', async (event, data) => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const conflictsPath = path.join(userDataPath, 'insight', 'conflicts.json');
+    if (fs.existsSync(conflictsPath)) {
+      const file = JSON.parse(fs.readFileSync(conflictsPath, 'utf8'));
+      file.conflicts = (file.conflicts || []).filter(c => c.entity !== data.entity);
+      fs.writeFileSync(conflictsPath, JSON.stringify(file, null, 2));
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// === v2.3 多模态知识库 IPC ===
+
+// 多模态存储路径
+function getMultimodalPath() {
+  const userDataPath = app.getPath('userData');
+  const mmPath = path.join(userDataPath, 'multimodal');
+  if (!fs.existsSync(mmPath)) fs.mkdirSync(mmPath, { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'assets'))) fs.mkdirSync(path.join(mmPath, 'assets'), { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'assets', 'images'))) fs.mkdirSync(path.join(mmPath, 'assets', 'images'), { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'assets', 'audio'))) fs.mkdirSync(path.join(mmPath, 'assets', 'audio'), { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'assets', 'video'))) fs.mkdirSync(path.join(mmPath, 'assets', 'video'), { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'assets', 'documents'))) fs.mkdirSync(path.join(mmPath, 'assets', 'documents'), { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'transcripts'))) fs.mkdirSync(path.join(mmPath, 'transcripts'), { recursive: true });
+  if (!fs.existsSync(path.join(mmPath, 'books'))) fs.mkdirSync(path.join(mmPath, 'books'), { recursive: true });
+  return mmPath;
+}
+
+function loadMultimodalIndex() {
+  const mmPath = getMultimodalPath();
+  const indexPath = path.join(mmPath, 'index.json');
+  if (fs.existsSync(indexPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    } catch (_) {}
+  }
+  return { version: 1, assets: [], books: [] };
+}
+
+function saveMultimodalIndex(data) {
+  const mmPath = getMultimodalPath();
+  fs.writeFileSync(path.join(mmPath, 'index.json'), JSON.stringify(data, null, 2));
+}
+
+// 导入多模态文件
+ipcMain.handle('multimodal:import', async (event, options) => {
+  try {
+    const mmPath = getMultimodalPath();
+    const srcPath = options.filePath;
+    if (!fs.existsSync(srcPath)) return { success: false, error: '文件不存在' };
+
+    const ext = path.extname(srcPath).toLowerCase();
+    const typeMap = {
+      '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.gif': 'image', '.webp': 'image', '.bmp': 'image', '.svg': 'image',
+      '.mp3': 'audio', '.wav': 'audio', '.m4a': 'audio', '.aac': 'audio', '.ogg': 'audio', '.flac': 'audio',
+      '.mp4': 'video', '.mov': 'video', '.avi': 'video', '.mkv': 'video', '.webm': 'video',
+      '.pdf': 'document', '.doc': 'document', '.docx': 'document', '.ppt': 'document', '.pptx': 'document', '.xls': 'document', '.xlsx': 'document', '.txt': 'document', '.md': 'document', '.csv': 'document'
+    };
+    const assetType = options.type || typeMap[ext] || 'document';
+    const subDir = assetType === 'image' ? 'images' : assetType === 'audio' ? 'audio' : assetType === 'video' ? 'video' : 'documents';
+
+    const fileName = `mm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}${ext}`;
+    const destDir = path.join(mmPath, 'assets', subDir);
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+    const destPath = path.join(destDir, fileName);
+
+    fs.copyFileSync(srcPath, destPath);
+    const stats = fs.statSync(destPath);
+
+    const index = loadMultimodalIndex();
+    const asset = {
+      id: `mm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      type: assetType,
+      title: options.title || path.basename(srcPath, ext),
+      description: '',
+      filePath: `assets/${subDir}/${fileName}`,
+      fileName: path.basename(srcPath),
+      fileSize: stats.size,
+      mimeType: options.mimeType || `application/octet-stream`,
+      thumbnailPath: null,
+      ocrText: null,
+      transcript: null,
+      transcriptPath: null,
+      duration: null,
+      pageCount: null,
+      atomIds: [],
+      clusterIds: [],
+      entityNames: [],
+      tags: options.tags || [],
+      source: options.source || 'import',
+      sourceDetail: options.sourceDetail || '',
+      url: options.url || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      processingStatus: 'pending'
+    };
+
+    index.assets.unshift(asset);
+    saveMultimodalIndex(index);
+    return { success: true, asset };
+  } catch (err) {
+    console.error('[Multimodal] Import error:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// 保存 URL
+ipcMain.handle('multimodal:save-url', async (event, options) => {
+  try {
+    const index = loadMultimodalIndex();
+    const asset = {
+      id: `mm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      type: 'url',
+      title: options.title || options.url,
+      description: options.description || '',
+      filePath: '',
+      fileName: '',
+      fileSize: 0,
+      mimeType: 'text/html',
+      thumbnailPath: null,
+      ocrText: null,
+      transcript: null,
+      transcriptPath: null,
+      url: options.url,
+      atomIds: [],
+      clusterIds: [],
+      entityNames: [],
+      tags: options.tags || [],
+      source: 'url',
+      sourceDetail: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      processingStatus: 'completed'
+    };
+
+    index.assets.unshift(asset);
+    saveMultimodalIndex(index);
+    return { success: true, asset };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 保存腾讯会议转译
+ipcMain.handle('multimodal:save-meeting', async (event, options) => {
+  try {
+    const mmPath = getMultimodalPath();
+    const index = loadMultimodalIndex();
+
+    // 保存转写文本
+    const transcriptFileName = `meeting_${Date.now()}.txt`;
+    const transcriptPath = path.join(mmPath, 'transcripts', transcriptFileName);
+    fs.writeFileSync(transcriptPath, options.transcript || '', 'utf8');
+
+    const asset = {
+      id: `mm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      type: 'meeting',
+      title: options.title || `腾讯会议 ${new Date().toLocaleDateString('zh-CN')}`,
+      description: options.description || '腾讯会议录屏及转译文本',
+      filePath: '',
+      fileName: '',
+      fileSize: (options.transcript || '').length,
+      mimeType: 'text/plain',
+      thumbnailPath: null,
+      ocrText: null,
+      transcript: (options.transcript || '').substring(0, 5000),
+      transcriptPath: `transcripts/${transcriptFileName}`,
+      duration: options.duration || null,
+      meetingUrl: options.meetingUrl || '',
+      atomIds: [],
+      clusterIds: [],
+      entityNames: [],
+      tags: options.tags || ['腾讯会议'],
+      source: 'meeting',
+      sourceDetail: options.meetingId || '',
+      url: options.meetingUrl || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      processingStatus: 'completed'
+    };
+
+    index.assets.unshift(asset);
+    saveMultimodalIndex(index);
+    return { success: true, asset };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 列表查询
+ipcMain.handle('multimodal:list', async (event, options) => {
+  try {
+    const index = loadMultimodalIndex();
+    let assets = [...index.assets];
+
+    if (options?.type && options.type !== 'all') {
+      assets = assets.filter(a => a.type === options.type);
+    }
+    if (options?.keyword) {
+      const q = options.keyword.toLowerCase();
+      assets = assets.filter(a =>
+        (a.title || '').toLowerCase().includes(q) ||
+        (a.description || '').toLowerCase().includes(q) ||
+        (a.ocrText || '').toLowerCase().includes(q) ||
+        (a.transcript || '').toLowerCase().includes(q) ||
+        (a.tags || []).some(t => t.toLowerCase().includes(q))
+      );
+    }
+
+    const page = options?.page || 1;
+    const pageSize = options?.pageSize || 20;
+    const start = (page - 1) * pageSize;
+    const paginated = assets.slice(start, start + pageSize);
+
+    return { assets: paginated, total: assets.length, page, pageSize };
+  } catch (err) {
+    return { assets: [], total: 0, error: err.message };
+  }
+});
+
+// 获取详情
+ipcMain.handle('multimodal:get', async (event, id) => {
+  try {
+    const index = loadMultimodalIndex();
+    const asset = index.assets.find(a => a.id === id);
+    if (!asset) return { asset: null, error: '未找到' };
+
+    // 读取完整转写文本
+    if (asset.transcriptPath) {
+      const mmPath = getMultimodalPath();
+      const fullPath = path.join(mmPath, asset.transcriptPath);
+      if (fs.existsSync(fullPath)) {
+        asset.transcript = fs.readFileSync(fullPath, 'utf8');
+      }
+    }
+
+    return { asset };
+  } catch (err) {
+    return { asset: null, error: err.message };
+  }
+});
+
+// 删除资产
+ipcMain.handle('multimodal:delete', async (event, id) => {
+  try {
+    const mmPath = getMultimodalPath();
+    const index = loadMultimodalIndex();
+    const asset = index.assets.find(a => a.id === id);
+    if (!asset) return { success: false, error: '未找到' };
+
+    // 删除文件
+    if (asset.filePath) {
+      const fullPath = path.join(mmPath, asset.filePath);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+    if (asset.transcriptPath) {
+      const fullPath = path.join(mmPath, asset.transcriptPath);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+
+    index.assets = index.assets.filter(a => a.id !== id);
+    saveMultimodalIndex(index);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 更新元数据
+ipcMain.handle('multimodal:update', async (event, id, updates) => {
+  try {
+    const index = loadMultimodalIndex();
+    const asset = index.assets.find(a => a.id === id);
+    if (!asset) return { success: false, error: '未找到' };
+
+    if (updates.title !== undefined) asset.title = updates.title;
+    if (updates.tags !== undefined) asset.tags = updates.tags;
+    if (updates.description !== undefined) asset.description = updates.description;
+    asset.updatedAt = new Date().toISOString();
+
+    saveMultimodalIndex(index);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 统计
+ipcMain.handle('multimodal:stats', async () => {
+  try {
+    const index = loadMultimodalIndex();
+    const assets = index.assets;
+    return {
+      total: assets.length,
+      byType: {
+        image: assets.filter(a => a.type === 'image').length,
+        audio: assets.filter(a => a.type === 'audio').length,
+        video: assets.filter(a => a.type === 'video').length,
+        document: assets.filter(a => a.type === 'document').length,
+        url: assets.filter(a => a.type === 'url').length,
+        meeting: assets.filter(a => a.type === 'meeting').length
+      },
+      totalSize: assets.reduce((sum, a) => sum + (a.fileSize || 0), 0),
+      bookCount: (index.books || []).length
+    };
+  } catch (err) {
+    return { total: 0, byType: {}, totalSize: 0, bookCount: 0 };
+  }
+});
+
+// AI 处理资产（OCR/转写/摘要）
+ipcMain.handle('multimodal:process', async (event, id) => {
+  try {
+    if (!authState.isLoggedIn) return { success: false, error: '需要登录后使用 AI 处理' };
+
+    const mmPath = getMultimodalPath();
+    const index = loadMultimodalIndex();
+    const asset = index.assets.find(a => a.id === id);
+    if (!asset) return { success: false, error: '未找到' };
+
+    asset.processingStatus = 'processing';
+    saveMultimodalIndex(index);
+
+    // 准备上下文
+    let contextStr = '';
+    if (asset.type === 'document' || asset.type === 'url' || asset.type === 'meeting') {
+      const textContent = asset.transcript || asset.ocrText || asset.description || asset.url || '';
+      contextStr = JSON.stringify({ type: asset.type, title: asset.title, content: textContent.substring(0, 3000) });
+    } else if (asset.type === 'image') {
+      contextStr = JSON.stringify({ type: 'image', title: asset.title, ocrText: asset.ocrText || '' });
+    } else {
+      contextStr = JSON.stringify({ type: asset.type, title: asset.title, transcript: (asset.transcript || '').substring(0, 3000) });
+    }
+
+    // 调用 ADP 处理
+    const config = await getInsightADPConfig('activation');
+    const processPrompt = `你是一个多模态知识处理助手。对以下资产进行分析，返回 JSON：
+{
+  "title": "更精确的标题",
+  "description": "200字以内的摘要描述",
+  "tags": ["标签1", "标签2"],
+  "entities": ["实体1", "实体2"],
+  "keyPoints": ["要点1", "要点2"]
+}
+
+资产信息：
+${contextStr}`;
+
+    const result = await callADPForInsight(config, processPrompt, contextStr, 'multimodal_process');
+
+    if (result.title) asset.title = result.title;
+    if (result.description) asset.description = result.description;
+    if (result.tags) asset.tags = result.tags;
+    if (result.entities) asset.entityNames = result.entities;
+    asset.processingStatus = 'completed';
+    asset.updatedAt = new Date().toISOString();
+    saveMultimodalIndex(index);
+
+    return { success: true, asset };
+  } catch (err) {
+    // 标记失败
+    try {
+      const index = loadMultimodalIndex();
+      const asset = index.assets.find(a => a.id === id);
+      if (asset) {
+        asset.processingStatus = 'failed';
+        saveMultimodalIndex(index);
+      }
+    } catch (_) {}
+    return { success: false, error: err.message };
+  }
+});
+
+// 生成知识书本
+ipcMain.handle('multimodal:generate-book', async (event, options) => {
+  try {
+    if (!authState.isLoggedIn) return { success: false, error: '需要登录后使用' };
+
+    const index = loadMultimodalIndex();
+    const assets = index.assets;
+    const knowledgeAtoms = knowledgeStore ? knowledgeStore.atoms : [];
+    const clusters = knowledgeStore ? knowledgeStore.clusters : [];
+
+    // 构建知识概要
+    const summary = {
+      totalAssets: assets.length,
+      assetTypes: {},
+      totalAtoms: knowledgeAtoms.length,
+      totalClusters: clusters.length,
+      recentAssets: assets.slice(0, 10).map(a => ({ type: a.type, title: a.title, tags: a.tags })),
+      topDomains: {},
+      topEntities: []
+    };
+
+    assets.forEach(a => { summary.assetTypes[a.type] = (summary.assetTypes[a.type] || 0) + 1; });
+    knowledgeAtoms.forEach(a => { const d = a.domain || '未分类'; summary.topDomains[d] = (summary.topDomains[d] || 0) + 1; });
+
+    if (memoryStore?.entityGraph) {
+      summary.topEntities = Object.entries(memoryStore.entityGraph)
+        .sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
+        .slice(0, 20)
+        .map(([name, info]) => ({ name, type: info.type, count: info.count }));
+    }
+
+    // 调用 ADP 生成知识书本大纲
+    const config = await getInsightADPConfig('evolution');
+    const bookPrompt = `你是一个知识体系整理专家。根据用户的知识库数据，生成一本结构化的知识书本。
+
+返回 JSON：
+{
+  "title": "书本标题（如：我的AI与产品知识体系）",
+  "chapters": [
+    {
+      "title": "第一章：领域名",
+      "summary": "本章概要",
+      "sections": [
+        { "title": "1.1 小节名", "content": "该小节的核心知识点描述" }
+      ]
+    }
+  ],
+  "generatedAt": "生成时间"
+}
+
+知识库数据：
+${JSON.stringify(summary)}`;
+
+    const result = await callADPForInsight(config, bookPrompt, JSON.stringify(summary), 'book_generation');
+
+    const book = {
+      id: `book_${Date.now()}`,
+      title: result.title || '我的知识体系',
+      chapters: result.chapters || [],
+      generatedAt: new Date().toISOString(),
+      assetCount: assets.length,
+      atomCount: knowledgeAtoms.length,
+      clusterCount: clusters.length
+    };
+
+    // 保存书本
+    const mmPath = getMultimodalPath();
+    const bookFileName = `book_${Date.now()}.json`;
+    fs.writeFileSync(path.join(mmPath, 'books', bookFileName), JSON.stringify(book, null, 2));
+
+    if (!index.books) index.books = [];
+    index.books.unshift({ id: book.id, title: book.title, generatedAt: book.generatedAt, fileName: bookFileName });
+    saveMultimodalIndex(index);
+
+    return { success: true, book };
+  } catch (err) {
+    console.error('[Multimodal] Generate book error:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// 获取知识书本列表
+ipcMain.handle('multimodal:get-books', async () => {
+  try {
+    const index = loadMultimodalIndex();
+    const mmPath = getMultimodalPath();
+    const books = (index.books || []).map(b => {
+      try {
+        const fullPath = path.join(mmPath, 'books', b.fileName);
+        if (fs.existsSync(fullPath)) {
+          return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+        }
+      } catch (_) {}
+      return b;
+    });
+    return { books };
+  } catch (err) {
+    return { books: [], error: err.message };
+  }
+});
+
+// 打开文件
+ipcMain.handle('multimodal:open-file', async (event, id) => {
+  try {
+    const mmPath = getMultimodalPath();
+    const index = loadMultimodalIndex();
+    const asset = index.assets.find(a => a.id === id);
+    if (!asset || !asset.filePath) return { success: false, error: '无文件路径' };
+
+    const fullPath = path.join(mmPath, asset.filePath);
+    if (!fs.existsSync(fullPath)) return { success: false, error: '文件不存在' };
+
+    shell.openPath(fullPath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 选择文件对话框
+ipcMain.handle('multimodal:pick-files', async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '支持的文件', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'txt', 'md', 'csv'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    });
+    if (result.canceled) return { files: [] };
+    return { files: result.filePaths };
+  } catch (err) {
+    return { files: [], error: err.message };
+  }
+});
+
+// 拖拽导入：从 Buffer 导入文件
+ipcMain.handle('multimodal:import-buffer', async (event, options) => {
+  try {
+    const mmPath = getMultimodalPath();
+    const fileName = options.name || `file_${Date.now()}`;
+    const ext = path.extname(fileName).toLowerCase();
+    const baseName = path.basename(fileName, ext);
+
+    // 确定资产类型
+    let assetType = 'document';
+    if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].includes(ext)) assetType = 'image';
+    else if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'].includes(ext)) assetType = 'audio';
+    else if (['.mp4', '.mov', '.avi', '.mkv', '.webm'].includes(ext)) assetType = 'video';
+
+    // 保存文件到对应目录
+    const subDir = assetType === 'image' ? 'images' : assetType === 'audio' ? 'audio' : assetType === 'video' ? 'video' : 'documents';
+    const destDir = path.join(mmPath, 'assets', subDir);
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+
+    const destFileName = `${Date.now()}_${fileName}`;
+    const destPath = path.join(destDir, destFileName);
+
+    // 写入 buffer（支持 ArrayBuffer / Uint8Array / 普通数组）
+    let buffer;
+    if (options.buffer instanceof ArrayBuffer) {
+      buffer = Buffer.from(options.buffer);
+    } else if (ArrayBuffer.isView(options.buffer)) {
+      buffer = Buffer.from(options.buffer.buffer, options.buffer.byteOffset, options.buffer.byteLength);
+    } else if (Array.isArray(options.buffer)) {
+      buffer = Buffer.from(options.buffer);
+    } else {
+      buffer = Buffer.from(options.buffer);
+    }
+    fs.writeFileSync(destPath, buffer);
+
+    const stats = fs.statSync(destPath);
+    const relativePath = path.relative(mmPath, destPath);
+
+    // 更新索引
+    const index = loadMultimodalIndex();
+    const asset = {
+      id: `mm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      type: assetType,
+      title: baseName,
+      filePath: relativePath,
+      fileSize: stats.size,
+      mimeType: options.type || '',
+      tags: [],
+      entities: [],
+      processingStatus: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!index.assets) index.assets = [];
+    index.assets.unshift(asset);
+    saveMultimodalIndex(index);
+
+    return { success: true, asset };
+  } catch (err) {
+    console.error('[Multimodal] Import buffer error:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// === v2.3 洞察辅助函数（原有） ===
+
+function getInsightADPConfig(type) {
+  const adpUrl = getSetting('adp_url') || (remoteConfig?.adp?.url) || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+
+  let appKey;
+  switch (type) {
+    case 'activation':
+      appKey = getSetting('adp_activation_app_key') || (remoteConfig?.adp?.activation_app_key) || DEFAULT_ADP_ACTIVATION_APP_KEY;
+      break;
+    case 'evolution':
+      appKey = getSetting('adp_evolution_app_key') || (remoteConfig?.adp?.evolution_app_key) || DEFAULT_ADP_EVOLUTION_APP_KEY;
+      break;
+    case 'conflict':
+      appKey = getSetting('adp_conflict_app_key') || (remoteConfig?.adp?.conflict_app_key) || DEFAULT_ADP_CONFLICT_APP_KEY;
+      break;
+    default:
+      appKey = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+  }
+
+  return { appKey: appKey.trim(), url: adpUrl };
+}
+
+// 加载 Prompt 模板
+function loadPromptTemplate(name) {
+  const promptPath = path.join(__dirname, 'prompts', `${name}.md`);
+  if (fs.existsSync(promptPath)) {
+    return fs.readFileSync(promptPath, 'utf8');
+  }
+  return '';
+}
+
+// 调用 ADP 进行洞察分析（非流式，同步等待结果）
+async function callADPForInsight(config, promptTemplate, contextStr, module) {
+  const https = require('https');
+  const http = require('http');
+
+  const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const visitorId = `insight_${authState.user?.id || 'local'}_${Date.now()}`;
+
+  const requestBody = {
+    AppKey: config.appKey,
+    ConversationId: convId,
+    VisitorId: visitorId,
+    Contents: [{ Type: 'text', Text: `${promptTemplate}\n\n## 当前知识库数据\n\n${contextStr}` }],
+    RequestId: requestId,
+    Stream: 'disable'
+  };
+
+  const urlObj = new URL(config.url);
+  const isHttps = urlObj.protocol === 'https:';
+  const requester = isHttps ? https : http;
+
+  return new Promise((resolve, reject) => {
+    const req = requester.request({
+      hostname: urlObj.hostname,
+      port: urlObj.port || (isHttps ? 443 : 80),
+      path: urlObj.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      }
+    }, (res) => {
+      let fullText = '';
+      res.on('data', (chunk) => { fullText += chunk.toString(); });
+      res.on('end', () => {
+        try {
+          // 尝试从 SSE 事件中提取 JSON
+          let jsonStr = '';
+          const lines = fullText.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const data = line.substring(5).trim();
+              if (data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.content) jsonStr += parsed.content;
+              } catch (_) {}
+            }
+          }
+          // 如果没有从 SSE 提取到内容，尝试直接解析
+          if (!jsonStr) {
+            try {
+              const parsed = JSON.parse(fullText);
+              jsonStr = parsed.content || parsed.text || fullText;
+            } catch (_) {
+              jsonStr = fullText;
+            }
+          }
+
+          // 从文本中提取 JSON
+          const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const result = JSON.parse(jsonMatch[0]);
+            auditLogger.log({
+              module: `insight_${module}`,
+              action: 'adp_call',
+              inputTokens: contextStr.length,
+              status: 'success'
+            });
+            resolve(result);
+          } else {
+            resolve({ summary: jsonStr.substring(0, 500) });
+          }
+        } catch (e) {
+          console.error('[Insight] Parse ADP response error:', e.message);
+          resolve({ summary: '分析完成，但结果格式异常' });
+        }
+      });
+    });
+
+    req.on('error', (e) => reject(e));
+    req.setTimeout(300000, () => { req.destroy(); reject(new Error('ADP 请求超时')); });
+    req.write(JSON.stringify(requestBody));
+    req.end();
+  });
+}
+
+// 时间格式化
+function formatTimeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}天前`;
+  return `${Math.floor(days / 30)}个月前`;
+}
+
 // === 数据导出/导入（加密） ===
 
 /**
@@ -8059,7 +9630,7 @@ function collectExportData() {
   const userDataPath = app.getPath('userData');
   const exportData = {
     _meta: {
-      version: '2.2.0',
+      version: '2.4.0',
       exportedAt: new Date().toISOString(),
       app: 'Memora',
       checksum: '' // 后面填充

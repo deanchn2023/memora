@@ -165,7 +165,7 @@ const App = {
     
     setTimeout(() => this.updateInitTest(''), 2000);
     console.log('[App] init() finished');
-    
+
     // 延迟检查更新（不阻塞初始化）
     setTimeout(() => this._checkForUpdate(), 3000);
   },
@@ -285,6 +285,29 @@ const App = {
     document.getElementById('openSettingsBtn')?.addEventListener('click', () => this.showSettingsModal());
     document.getElementById('closeSettingsBtn')?.addEventListener('click', () => this.hideSettingsModal());
     document.getElementById('saveSettingsBtn')?.addEventListener('click', () => this.saveSettings());
+
+    // v2.4 拖拽导入多模态文件
+    const mainView = document.querySelector('.main-view');
+    if (mainView) {
+      mainView.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      });
+      mainView.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer.files || []);
+        if (files.length === 0) return;
+
+        // 只在洞察视图时处理
+        const insightView = document.getElementById('insightView');
+        if (insightView && !insightView.classList.contains('hidden') && window.Insight) {
+          for (const file of files) {
+            await window.electronAPI?.multimodalImport?.({ filePath: file.path, title: file.name });
+          }
+          Insight.loadMultimodal();
+        }
+      });
+    }
 
     // 语言切换按钮
     document.getElementById('langToggleBtn')?.addEventListener('click', () => {
@@ -499,6 +522,24 @@ const App = {
     document.getElementById('notebookSearchInput')?.addEventListener('input', () => this.searchNotes());
     document.getElementById('notebookSearchBtn')?.addEventListener('click', () => this.searchNotes());
     
+    // 记事本批量操作工具栏
+    document.getElementById('notebookSelectAll')?.addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      document.querySelectorAll('.note-checkbox').forEach(cb => {
+        cb.checked = checked;
+        cb.closest('.note-item')?.classList.toggle('note-selected', checked);
+      });
+      this.updateNotebookBatchBar();
+    });
+    document.getElementById('batchSendToADP')?.addEventListener('click', () => this.sendSelectedNotesToADP());
+    document.getElementById('batchCancelSelect')?.addEventListener('click', () => {
+      document.querySelectorAll('.note-checkbox').forEach(cb => {
+        cb.checked = false;
+        cb.closest('.note-item')?.classList.remove('note-selected');
+      });
+      this.hideNotebookBatchBar();
+    });
+    
     // 加载自定义分类并渲染侧边栏
     this.loadCustomCategories().then(() => {
       this.renderCategoryList();
@@ -506,6 +547,9 @@ const App = {
     
     // 记事本列表事件委托（处理动态生成的按钮）
     document.getElementById('notebookList')?.addEventListener('click', (e) => {
+      // 复选框点击不触发预览展开
+      if (e.target.classList.contains('note-checkbox')) return;
+      
       const noteItem = e.target.closest('.note-item');
       if (!noteItem) return;
       
@@ -613,6 +657,13 @@ const App = {
       document.getElementById('adpSearchAppKey').value = config.searchAppKey || '';
       document.getElementById('adpClusteringAppKey').value = config.clusteringAppKey || '';
       document.getElementById('adpGraphAppKey').value = config.graphAppKey || '';
+      document.getElementById('adpActivationAppKey').value = config.activationAppKey || '';
+      document.getElementById('adpEvolutionAppKey').value = config.evolutionAppKey || '';
+      document.getElementById('adpConflictAppKey').value = config.conflictAppKey || '';
+      document.getElementById('fileShareApiKey').value = config.fileShareApiKey || '';
+      document.getElementById('adpTcSecretId').value = config.tcSecretId || '';
+      document.getElementById('adpTcSecretKey').value = config.tcSecretKey || '';
+      document.getElementById('adpBotBizId').value = config.botBizId || '';
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
       
@@ -624,7 +675,12 @@ const App = {
       const searchSrc = sourceLabel[src.searchAppKey] || '未知';
       const clusteringSrc = sourceLabel[src.clusteringAppKey] || '未知';
       const graphSrc = sourceLabel[src.graphAppKey] || '未知';
-      document.getElementById('adpConfigStatus').textContent = `通用Key: ${appKeySrc} | 知识Key: ${knowledgeSrc} | 搜索Key: ${searchSrc} | 聚类Key: ${clusteringSrc} | 图谱Key: ${graphSrc}`;
+      const activationSrc = sourceLabel[src.activationAppKey] || '未知';
+      const evolutionSrc = sourceLabel[src.evolutionAppKey] || '未知';
+      const conflictSrc = sourceLabel[src.conflictAppKey] || '未知';
+      const fileShareSrc = sourceLabel[src.fileShareApiKey] || '未知';
+      const tcCredsConfigured = config.tcSecretId && config.botBizId;
+      document.getElementById('adpConfigStatus').textContent = `通用: ${appKeySrc} | 知识: ${knowledgeSrc} | 搜索: ${searchSrc} | 聚类: ${clusteringSrc} | 图谱: ${graphSrc} | 活化: ${activationSrc} | 演化: ${evolutionSrc} | 冲突: ${conflictSrc} | 文件共享: ${fileShareSrc} | COS上传: ${tcCredsConfigured ? '✅已配置' : '❌未配置'}`;
       
       // v2.0: 登录状态时 ADP 面板显示提示
       this._updateConfigServerHints(config.fromServer);
@@ -1295,24 +1351,35 @@ const App = {
   },
 
   showAIAssistantView() {
-    // 隐藏其他视图
-    document.getElementById('calendarView')?.classList.add('hidden');
-    document.getElementById('notebookView')?.classList.add('hidden');
-    document.getElementById('knowledgeView')?.classList.add('hidden');
-    document.getElementById('documentsView')?.classList.add('hidden');
+    // 隐藏所有主视图（与 calendar.js hideOtherViews 保持一致）
+    const allViews = ['calendarView', 'notebookView', 'knowledgeView', 'documentsView', 'insightView'];
+    allViews.forEach(id => {
+      document.getElementById(id)?.classList.add('hidden');
+    });
     
     // 更新 view-tab active 状态
     document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
     
     // 显示AI助手视图
-    document.getElementById('aiAssistantView')?.classList.remove('hidden');
-    document.getElementById('aiChatInput')?.focus();
+    const aiView = document.getElementById('aiAssistantView');
+    if (aiView) {
+      aiView.classList.remove('hidden');
+    }
+    
+    // 隐藏日期导航栏（非日历视图时不需要）
+    const dateNav = document.querySelector('.date-navigator');
+    if (dateNav) dateNav.style.display = 'none';
 
     // 更新 AI 模式切换按钮可见性
     this._updateAIModeToggle();
 
     // 功能卡片点击切换快捷问题
     this._initFeatureCards();
+    
+    // 延迟聚焦输入框，确保视图渲染完成
+    setTimeout(() => {
+      document.getElementById('aiChatInput')?.focus();
+    }, 100);
   },
 
   /** 更新 AI 助手模式切换按钮 */
@@ -1490,8 +1557,66 @@ const App = {
       // - forceMode: 'adp' 强制走 ADP，'agent' 强制走本地 Agent
       const isAgentMode = this._aiAssistantMode !== 'llm';
       
-      if (forceMode === 'adp' || (isAgentMode && !window.electronAPI?.agent?.invoke)) {
+      if (forceMode === 'adp' || isAgentMode) {
         // ADP 模式：走 ADP 智能体流式
+        // 结构化传递附件信息，由后端构建 ADP V2 Contents 数组
+        
+        // 替换占位符为进度指示器
+        const messageContent = assistantMessage.querySelector('.message-content');
+        messageContent.innerHTML = `
+          <div class="adp-progress" id="adpProgress">
+            <div class="adp-progress-header">
+              <div class="adp-progress-spinner"></div>
+              <span class="adp-progress-title">智能体处理中</span>
+              <span class="adp-progress-timer" id="adpProgressTimer">0s</span>
+            </div>
+            <div class="adp-progress-steps" id="adpProgressSteps"></div>
+          </div>`;
+
+        // 启动流式请求 — 传递结构化数据（message + attachments）
+        result = await window.electronAPI.sendADPMessage({
+          message: message,
+          attachments: attachmentData
+        });
+        
+        if (result.success && result.streaming) {
+          // 流式模式：监听 SSE 事件
+          this._adpStreaming = true;
+          this._adpCurrentText = '';
+          this._adpThinkingText = '';
+          this._adpStepMap = {};
+          this._adpToolStepCount = 0;
+          this._adpFileItems = [];
+          this._adpCurrentBubble = null;
+          this._adpRenderPending = false;
+          this._adpConfigSource = result.configSource || '';
+          this._adpTimerStart = Date.now();
+          this._adpTimerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
+            const el = document.getElementById('adpProgressTimer');
+            if (el) el.textContent = elapsed + 's';
+          }, 1000);
+
+          // 等待流式完成
+          await new Promise((resolve) => {
+            this._adpStreamResolve = resolve;
+            window.electronAPI.onADPSSEEvent((evt) => {
+              this._handleADPSSEEvent(evt, assistantMessage);
+            });
+          });
+        } else if (result.success && !result.streaming) {
+          // 兼容旧模式（非流式返回）
+          const renderedContent = this.escapeHtml(result.content).replace(/\n/g, '<br>');
+          messageContent.innerHTML = `<div class="adp-response-text">${renderedContent}</div>`;
+          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
+          messageContent.insertAdjacentHTML('beforeend', `<div class="adp-config-source">${sourceLabel}</div>`);
+          this._addCopyButton(messageContent);
+        } else {
+          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
+          throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
+        }
       } else if (window.electronAPI?.agent?.invoke) {
         // Agent 或 LLM 模式：使用本地 AI 流式输出
         const agentType = this._aiAssistantMode === 'llm' ? 'chat' : undefined;
@@ -1623,71 +1748,6 @@ const App = {
           this._agentStreamBuffer = [];
           window.electronAPI?.removeAgentListeners?.();
           throw new Error(result.error || 'Agent 调用失败');
-        }
-      } else {
-        // ADP 流式消息 — 参考 ADP Agent SDK 渲染
-        // 将附件信息加入消息
-        let fullMessage = message;
-        if (attachmentData.length > 0) {
-          const fileInfos = attachmentData.map(a => {
-            if (a.textContent) return `[文件: ${a.name}]\n${a.textContent}`;
-            return `[文件: ${a.name}, 类型: ${a.mimeType}, 大小: ${a.size}]`;
-          });
-          fullMessage = fileInfos.join('\n\n') + '\n\n' + message;
-        }
-        
-        // 替换占位符为进度指示器
-        const messageContent = assistantMessage.querySelector('.message-content');
-        messageContent.innerHTML = `
-          <div class="adp-progress" id="adpProgress">
-            <div class="adp-progress-header">
-              <div class="adp-progress-spinner"></div>
-              <span class="adp-progress-title">智能体处理中</span>
-              <span class="adp-progress-timer" id="adpProgressTimer">0s</span>
-            </div>
-            <div class="adp-progress-steps" id="adpProgressSteps"></div>
-          </div>`;
-
-        // 启动流式请求
-        result = await window.electronAPI.sendADPMessage(fullMessage);
-        
-        if (result.success && result.streaming) {
-          // 流式模式：监听 SSE 事件
-          this._adpStreaming = true;
-          this._adpCurrentText = '';
-          this._adpThinkingText = '';
-          this._adpStepMap = {};
-          this._adpToolStepCount = 0;
-          this._adpFileItems = [];
-          this._adpCurrentBubble = null;
-          this._adpRenderPending = false;
-          this._adpConfigSource = result.configSource || '';
-          this._adpTimerStart = Date.now();
-          this._adpTimerInterval = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
-            const el = document.getElementById('adpProgressTimer');
-            if (el) el.textContent = elapsed + 's';
-          }, 1000);
-
-          // 等待流式完成
-          await new Promise((resolve) => {
-            this._adpStreamResolve = resolve;
-            window.electronAPI.onADPSSEEvent((evt) => {
-              this._handleADPSSEEvent(evt, assistantMessage);
-            });
-          });
-        } else if (result.success && !result.streaming) {
-          // 兼容旧模式（非流式返回）
-          const renderedContent = this.escapeHtml(result.content).replace(/\n/g, '<br>');
-          messageContent.innerHTML = `<div class="adp-response-text">${renderedContent}</div>`;
-          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
-          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
-          messageContent.insertAdjacentHTML('beforeend', `<div class="adp-config-source">${sourceLabel}</div>`);
-          this._addCopyButton(messageContent);
-        } else {
-          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
-          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
-          throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
         }
       }
     } catch (error) {
@@ -2730,7 +2790,7 @@ const App = {
       const icon = this.getFileIcon(att.type, att.name);
       return `<div class="attachment-chip" data-idx="${idx}">
         <span class="attachment-icon">${icon}</span>
-        <span class="attachment-name" title="${this.escapeHtml(att.name)}">${this.escapeHtml(att.name)}</span>
+        <span class="attachment-name" data-idx="${idx}" title="${this.escapeHtml(att.name)}">${this.escapeHtml(att.name)}</span>
         <span class="attachment-size">${this.formatFileSize(att.size)}</span>
         <button class="attachment-remove" data-idx="${idx}" title="移除">&times;</button>
       </div>`;
@@ -2744,6 +2804,42 @@ const App = {
         this.renderChatAttachments();
       });
     });
+
+    // 绑定文件名点击下载
+    container.querySelectorAll('.attachment-name').forEach(nameEl => {
+      nameEl.style.cursor = 'pointer';
+      nameEl.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.dataset.idx);
+        const att = this._chatAttachments[idx];
+        if (!att) return;
+        this.downloadAttachment(att);
+      });
+    });
+  },
+
+  downloadAttachment(att) {
+    try {
+      let blob;
+      if (att.file) {
+        blob = att.file;
+      } else if (typeof att.content === 'string') {
+        blob = new Blob([att.content], { type: att.mimeType || 'text/plain' });
+      } else {
+        this.showToast('该附件无法下载', 'warning');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = att.name || 'download';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('[App] downloadAttachment error:', err);
+      this.showToast('下载失败', 'error');
+    }
   },
 
   clearChatAttachments() {
@@ -2771,9 +2867,32 @@ const App = {
             binary += String.fromCharCode(uint8[i]);
           }
           data.base64 = btoa(binary);
-        } else if (att.type === 'text') {
-          // 文本文件读取内容
-          data.textContent = await att.file.text();
+        } else {
+          // 非图片文件：读取 ArrayBuffer 并转为普通数组供 IPC 传输
+          // 注意：Electron contextBridge + IPC 双重序列化可能导致 ArrayBuffer 丢失
+          // 必须转为普通数组（Structured Clone 完全支持），主进程再转回 Buffer
+          const arrayBuffer = await att.file.arrayBuffer();
+          data.buffer = Array.from(new Uint8Array(arrayBuffer));
+
+          // 文本文件：同时读取文本内容作为 fallback
+          if (att.type === 'text') {
+            data.textContent = await att.file.text();
+          } else if (att.type === 'pdf' || att.type === 'binary') {
+            // PDF 和其他文档：尝试读取文本内容
+            try {
+              data.textContent = await att.file.text();
+              // 如果提取的文本几乎都是乱码（非可打印字符占比高），则丢弃
+              if (data.textContent) {
+                const printableRatio = (data.textContent.replace(/[^\x20-\x7E\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/g, '').length) / data.textContent.length;
+                if (printableRatio < 0.3) {
+                  console.log('[Chat] File text mostly non-printable, discarding:', att.name);
+                  delete data.textContent;
+                }
+              }
+            } catch (e) {
+              // 忽略读取失败
+            }
+          }
         }
       } catch (err) {
         console.error('[Chat] Failed to read file:', att.name, err);
@@ -3101,6 +3220,13 @@ ${JSON.stringify(reportData, null, 2)}`;
       const adpSearchAppKey = document.getElementById('adpSearchAppKey').value;
       const adpClusteringAppKey = document.getElementById('adpClusteringAppKey').value;
       const adpGraphAppKey = document.getElementById('adpGraphAppKey').value;
+      const adpActivationAppKey = document.getElementById('adpActivationAppKey').value;
+      const adpEvolutionAppKey = document.getElementById('adpEvolutionAppKey').value;
+      const adpConflictAppKey = document.getElementById('adpConflictAppKey').value;
+      const fileShareApiKey = document.getElementById('fileShareApiKey').value;
+      const adpTcSecretId = document.getElementById('adpTcSecretId').value;
+      const adpTcSecretKey = document.getElementById('adpTcSecretKey').value;
+      const adpBotBizId = document.getElementById('adpBotBizId').value;
       const adpUrl = document.getElementById('adpUrl').value;
       const adpAgentName = document.getElementById('adpAgentName').value;
       
@@ -3110,6 +3236,13 @@ ${JSON.stringify(reportData, null, 2)}`;
         searchAppKey: adpSearchAppKey || '',
         clusteringAppKey: adpClusteringAppKey || '',
         graphAppKey: adpGraphAppKey || '',
+        activationAppKey: adpActivationAppKey || '',
+        evolutionAppKey: adpEvolutionAppKey || '',
+        conflictAppKey: adpConflictAppKey || '',
+        fileShareApiKey: fileShareApiKey || '',
+        tcSecretId: adpTcSecretId || '',
+        tcSecretKey: adpTcSecretKey || '',
+        botBizId: adpBotBizId || '',
         url: adpUrl || null,
         agentName: adpAgentName || null
       });
@@ -3874,7 +4007,8 @@ ${JSON.stringify(reportData, null, 2)}`;
     
     if (result.notes && result.notes.length > 0) {
       noteList.innerHTML = result.notes.map(note => `
-        <div class="note-item" data-id="${note.id}" data-category="${note.category}" draggable="true">
+        <div class="note-item" data-id="${note.id}" data-category="${note.category}" data-content-length="${note.content.length}" draggable="true">
+          <input type="checkbox" class="note-checkbox" data-note-id="${note.id}">
           <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
           <div class="note-body">
             <div class="note-header">
@@ -3900,8 +4034,10 @@ ${JSON.stringify(reportData, null, 2)}`;
         </div>
       `).join('');
       this.bindNoteDragEvents();
+      this.bindNoteCheckboxEvents();
     } else {
       noteList.innerHTML = `<div class="empty-state">${window.i18n?.t('notebook.empty') || '暂无笔记'}</div>`;
+      this.hideNotebookBatchBar();
     }
   },
   
@@ -4021,16 +4157,16 @@ ${JSON.stringify(reportData, null, 2)}`;
     const activeItem = document.querySelector('.category-item.active');
     const activeCategory = activeItem ? activeItem.dataset.category : 'all';
 
-    let html = `<button class="category-item ${activeCategory === 'all' ? 'active' : ''}" data-category="all">${i?.t('notebook.allNotes') || '全部'}</button>`;
+    let html = `<div class="category-item ${activeCategory === 'all' ? 'active' : ''}" data-category="all" role="button" tabindex="0">${i?.t('notebook.allNotes') || '全部'}</div>`;
     allCategories.forEach(cat => {
       html += `
-        <div class="category-item-wrapper">
-          <button class="category-item ${activeCategory === cat.key ? 'active' : ''}" data-category="${cat.key}">${cat.label}</button>
+        <div class="category-item-wrapper" data-category="${cat.key}">
+          <div class="category-item ${activeCategory === cat.key ? 'active' : ''}" data-category="${cat.key}" role="button" tabindex="0">${cat.label}</div>
           <button class="category-edit" data-category="${cat.key}" title="${i?.t('notebook.category.edit') || '重命名'}">✏️</button>
           <button class="category-delete" data-category="${cat.key}" title="${i?.t('common.delete') || '删除'}${cat.label}">🗑️</button>
         </div>`;
     });
-    html += `<button class="category-add-btn" title="${i?.t('notebook.category.add') || '新增分类'}">${i?.t('notebook.category.add') || '＋ 新增分类'}</button>`;
+    html += `<div class="category-add-btn" role="button" tabindex="0" title="${i?.t('notebook.category.add') || '新增分类'}">${i?.t('notebook.category.add') || '＋ 新增分类'}</div>`;
     categoryListEl.innerHTML = html;
 
     // 重新绑定事件
@@ -4039,12 +4175,14 @@ ${JSON.stringify(reportData, null, 2)}`;
 
   // 绑定侧边栏分类事件（含新增、编辑、删除、拖放）
   bindCategoryEvents() {
-    // 分类点击
+    // 分类点击（使用 closest 确保 div 内子元素点击也能触发）
     document.querySelectorAll('.category-item').forEach(item => {
       item.addEventListener('click', (e) => {
+        const catItem = e.target.closest('.category-item');
+        if (!catItem) return;
         document.querySelectorAll('.category-item').forEach(i => i.classList.remove('active'));
-        e.target.classList.add('active');
-        this.loadNotes(e.target.dataset.category);
+        catItem.classList.add('active');
+        this.loadNotes(catItem.dataset.category);
       });
     });
 
@@ -4263,6 +4401,11 @@ ${JSON.stringify(reportData, null, 2)}`;
     const noteItems = document.querySelectorAll('.note-item[draggable="true"]');
     noteItems.forEach(item => {
       item.addEventListener('dragstart', (e) => {
+        // 复选框区域不触发拖拽
+        if (e.target.classList.contains('note-checkbox')) {
+          e.preventDefault();
+          return;
+        }
         this._dragNoteId = item.dataset.id;
         this._dragNoteCategory = item.dataset.category;
         item.classList.add('dragging');
@@ -4290,8 +4433,8 @@ ${JSON.stringify(reportData, null, 2)}`;
         item.classList.remove('dragging', 'dragging-active');
         this._dragNoteId = null;
         this._dragNoteCategory = null;
-        // 清除所有分类高亮
-        document.querySelectorAll('.category-item').forEach(c => {
+        // 清除所有分类高亮（包括 wrapper 和 category-item）
+        document.querySelectorAll('.category-item, .category-item-wrapper').forEach(c => {
           c.classList.remove('drop-target', 'drop-hover');
         });
       });
@@ -4300,32 +4443,49 @@ ${JSON.stringify(reportData, null, 2)}`;
 
   // 绑定侧边栏分类为拖放目标
   bindCategoryDropTargets() {
-    const categoryItems = document.querySelectorAll('.category-item');
-    categoryItems.forEach(item => {
-      item.addEventListener('dragover', (e) => {
+    // 绑定到 .category-item-wrapper（包含按钮的整行区域，更可靠的 drop 目标）
+    // 和独立的 .category-item（如"全部"）
+    const dropTargets = document.querySelectorAll('.category-item-wrapper, .category-item:not(.category-item-wrapper .category-item)');
+    dropTargets.forEach(target => {
+      const categoryKey = target.dataset.category;
+      if (!categoryKey) return;
+
+      target.addEventListener('dragover', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         e.dataTransfer.dropEffect = 'move';
       });
 
-      item.addEventListener('dragenter', (e) => {
+      target.addEventListener('dragenter', (e) => {
         e.preventDefault();
-        const targetCategory = item.dataset.category;
+        e.stopPropagation();
         // 只高亮非当前分类（"全部"分类不可拖入）
-        if (targetCategory !== 'all' && targetCategory !== this._dragNoteCategory) {
-          item.classList.add('drop-hover');
+        if (categoryKey !== 'all' && categoryKey !== this._dragNoteCategory) {
+          target.classList.add('drop-hover');
+          // 同时高亮内部的 category-item
+          const innerItem = target.querySelector('.category-item');
+          if (innerItem) innerItem.classList.add('drop-hover');
         }
       });
 
-      item.addEventListener('dragleave', () => {
-        item.classList.remove('drop-hover');
+      target.addEventListener('dragleave', (e) => {
+        // 只在真正离开目标时移除高亮
+        if (!target.contains(e.relatedTarget)) {
+          target.classList.remove('drop-hover');
+          const innerItem = target.querySelector('.category-item');
+          if (innerItem) innerItem.classList.remove('drop-hover');
+        }
       });
 
-      item.addEventListener('drop', async (e) => {
+      target.addEventListener('drop', async (e) => {
         e.preventDefault();
-        item.classList.remove('drop-hover');
+        e.stopPropagation();
+        target.classList.remove('drop-hover');
+        const innerItem = target.querySelector('.category-item');
+        if (innerItem) innerItem.classList.remove('drop-hover');
 
         const noteId = this._dragNoteId;
-        const targetCategory = item.dataset.category;
+        const targetCategory = categoryKey;
         const oldCategory = this._dragNoteCategory;
 
         if (!noteId || !targetCategory || targetCategory === 'all' || targetCategory === oldCategory) {
@@ -4352,6 +4512,223 @@ ${JSON.stringify(reportData, null, 2)}`;
         this._dragNoteCategory = null;
       });
     });
+  },
+
+  // ===== 记事本批量选择与发送给 ADP =====
+
+  // 绑定记事项复选框事件
+  bindNoteCheckboxEvents() {
+    const checkboxes = document.querySelectorAll('.note-checkbox');
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const noteItem = cb.closest('.note-item');
+        if (cb.checked) {
+          noteItem.classList.add('note-selected');
+        } else {
+          noteItem.classList.remove('note-selected');
+        }
+        this.updateNotebookBatchBar();
+      });
+      // 阻止复选框的点击冒泡到 note-item（避免展开预览）
+      cb.addEventListener('click', (e) => e.stopPropagation());
+    });
+  },
+
+  // 更新批量操作工具栏状态
+  updateNotebookBatchBar() {
+    const selectedCount = document.querySelectorAll('.note-checkbox:checked').length;
+    const batchBar = document.getElementById('notebookBatchBar');
+    const batchCount = document.getElementById('notebookBatchCount');
+    const selectAllCb = document.getElementById('notebookSelectAll');
+
+    if (selectedCount > 0) {
+      batchBar?.classList.remove('hidden');
+      if (batchCount) batchCount.textContent = `已选 ${selectedCount} 项`;
+    } else {
+      batchBar?.classList.add('hidden');
+    }
+
+    // 更新全选状态
+    const totalCheckboxes = document.querySelectorAll('.note-checkbox').length;
+    if (selectAllCb) {
+      selectAllCb.checked = selectedCount > 0 && selectedCount === totalCheckboxes;
+      selectAllCb.indeterminate = selectedCount > 0 && selectedCount < totalCheckboxes;
+    }
+  },
+
+  // 隐藏批量操作工具栏
+  hideNotebookBatchBar() {
+    document.getElementById('notebookBatchBar')?.classList.add('hidden');
+    const selectAllCb = document.getElementById('notebookSelectAll');
+    if (selectAllCb) {
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = false;
+    }
+  },
+
+  // 将选中的记事项发送给 ADP 小助手
+  async sendSelectedNotesToADP() {
+    const selectedCheckboxes = document.querySelectorAll('.note-checkbox:checked');
+    if (selectedCheckboxes.length === 0) {
+      this.showToast('请先选择要发送的记事项', 'warning');
+      return;
+    }
+
+    // Step 1: 先记录选中的 noteId，再清除选中状态
+    const noteIds = Array.from(selectedCheckboxes).map(cb => cb.dataset.noteId);
+    console.log('[App] sendSelectedNotesToADP: selected', noteIds.length, 'notes');
+    selectedCheckboxes.forEach(cb => {
+      cb.checked = false;
+      cb.closest('.note-item')?.classList.remove('note-selected');
+    });
+    this.hideNotebookBatchBar();
+
+    // Step 2: 先异步收集笔记内容（在当前 notebook 视图下完成，避免异步问题）
+    const notesData = [];
+    for (const noteId of noteIds) {
+      try {
+        const result = await window.electronAPI.notebookGetNote(noteId);
+        if (result.note) {
+          notesData.push({
+            id: result.note.id,
+            title: result.note.title,
+            content: result.note.content,
+            category: result.note.category,
+            createdAt: result.note.createdAt
+          });
+        }
+      } catch (err) {
+        console.error('[App] Failed to get note:', noteId, err);
+      }
+    }
+
+    if (notesData.length === 0) {
+      this.showToast('获取笔记内容失败', 'error');
+      return;
+    }
+
+    // Step 3: 构建合并文本
+    const combinedText = notesData.map(n => `## ${n.title}\n${n.content}`).join('\n\n---\n\n');
+    const totalLength = combinedText.length;
+
+    // Step 4: 准备好输入数据（短文本内容 or MD 文件附件）
+    let inputText = '';
+    if (totalLength <= 500) {
+      inputText = `请帮我总结分析以下笔记内容：\n\n${combinedText}`;
+    } else {
+      const now = new Date();
+      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+      const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '');
+      const fileName = `笔记汇总_${dateStr}_${timeStr}.md`;
+      const mdContent = `# 笔记汇总\n\n> 生成时间：${now.toLocaleString('zh-CN')}\n> 来源：${notesData.length} 条记事项\n\n---\n\n${combinedText}`;
+      const blob = new Blob([mdContent], { type: 'text/markdown' });
+      const file = new File([blob], fileName, { type: 'text/markdown' });
+      this._chatAttachments.push({
+        name: fileName,
+        size: blob.size,
+        mimeType: 'text/markdown',
+        type: 'text',
+        file: file
+      });
+      inputText = `请帮我总结分析附件中的 ${notesData.length} 条笔记内容`;
+    }
+
+    // Step 5: 强制切换到 AI 助手视图（核心：同步、防御性操作）
+    console.log('[App] sendSelectedNotesToADP: switching to AI assistant view');
+    try {
+      // 5a. 隐藏所有主视图（包括 aiAssistantView，先统一隐藏再单独显示）
+      const allViewIds = ['calendarView', 'notebookView', 'knowledgeView', 'documentsView', 'insightView', 'aiAssistantView'];
+      allViewIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.classList.add('hidden');
+          el.setAttribute('data-was-shown', 'false');
+        }
+      });
+
+      // 5b. 显示 AI 助手视图
+      const aiView = document.getElementById('aiAssistantView');
+      if (aiView) {
+        aiView.classList.remove('hidden');
+        aiView.setAttribute('data-was-shown', 'true');
+      } else {
+        console.error('[App] sendSelectedNotesToADP: aiAssistantView element NOT FOUND');
+        this.showToast('找不到 AI 助手页面', 'error');
+        return;
+      }
+
+      // 5c. 验证：确认只有 aiAssistantView 可见
+      const visibleViews = allViewIds.filter(id => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden');
+      });
+      console.log('[App] sendSelectedNotesToADP: visible views after switch:', visibleViews);
+      if (visibleViews.length !== 1 || visibleViews[0] !== 'aiAssistantView') {
+        console.error('[App] sendSelectedNotesToADP: UNEXPECTED visible views!', visibleViews);
+      }
+
+      // 5d. 更新 view-tab 状态（无 active tab 对应 AI 助手）
+      document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+
+      // 5e. 隐藏日期导航栏
+      const dateNav = document.querySelector('.date-navigator');
+      if (dateNav) dateNav.style.display = 'none';
+
+      // 5f. 更新 AI 模式切换按钮
+      this._updateAIModeToggle();
+
+      // 5g. 初始化功能卡片
+      this._initFeatureCards();
+
+      // 5h. 设置全局标记，防止其他代码切回视图
+      this._forceAIView = true;
+
+      // 5i. 延迟二次验证（检查是否被其他代码覆盖）
+      setTimeout(() => {
+        const aiViewCheck = document.getElementById('aiAssistantView');
+        const notebookViewCheck = document.getElementById('notebookView');
+        const aiHidden = aiViewCheck?.classList.contains('hidden');
+        const nbHidden = notebookViewCheck?.classList.contains('hidden');
+        const aiRect = aiViewCheck?.getBoundingClientRect();
+        const nbRect = notebookViewCheck?.getBoundingClientRect();
+        console.log('[App] sendSelectedNotesToADP: 500ms check - aiAssistantView.hidden=', aiHidden,
+          'offsetH=', aiViewCheck?.offsetHeight, 'rect=', JSON.stringify({w: aiRect?.width, h: aiRect?.height, t: aiRect?.top, l: aiRect?.left}),
+          '| notebookView.hidden=', nbHidden,
+          'offsetH=', notebookViewCheck?.offsetHeight, 'rect=', JSON.stringify({w: nbRect?.width, h: nbRect?.height}));
+        if (aiHidden || !nbHidden) {
+          console.warn('[App] sendSelectedNotesToADP: view was overridden! Re-applying...');
+          // 强制恢复
+          allViewIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+          });
+          if (aiViewCheck) aiViewCheck.classList.remove('hidden');
+        }
+        this._forceAIView = false;
+      }, 500);
+    } catch (viewErr) {
+      console.error('[App] sendSelectedNotesToADP: view switch error:', viewErr);
+    }
+
+    // Step 6: 填充输入框和附件（视图已切换完成）
+    try {
+      const input = document.getElementById('aiChatInput');
+      if (input) {
+        input.value = inputText;
+        setTimeout(() => input.focus(), 200);
+      }
+
+      // 如果有附件，渲染附件区域
+      if (this._chatAttachments.length > 0) {
+        this.renderChatAttachments();
+      }
+
+      this.showToast(`已准备 ${notesData.length} 条笔记，可编辑后发送`, 'success');
+    } catch (fillErr) {
+      console.error('[App] sendSelectedNotesToADP: fill input error:', fillErr);
+      this.showToast('内容准备出错，请手动输入', 'error');
+    }
   },
 
   async changeNoteCategory(noteId, currentCategory) {
@@ -4686,7 +5063,8 @@ ${JSON.stringify(reportData, null, 2)}`;
     
     if (result.notes && result.notes.length > 0) {
       noteList.innerHTML = result.notes.map(note => `
-        <div class="note-item" data-id="${note.id}" data-category="${note.category}" draggable="true">
+        <div class="note-item" data-id="${note.id}" data-category="${note.category}" data-content-length="${note.content.length}" draggable="true">
+          <input type="checkbox" class="note-checkbox" data-note-id="${note.id}">
           <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
           <div class="note-body">
             <div class="note-header">
@@ -4712,8 +5090,10 @@ ${JSON.stringify(reportData, null, 2)}`;
         </div>
       `).join('');
       this.bindNoteDragEvents();
+      this.bindNoteCheckboxEvents();
     } else {
       noteList.innerHTML = '<div class="empty-state">未找到匹配的笔记</div>';
+      this.hideNotebookBatchBar();
     }
   },
 

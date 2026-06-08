@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://21.91.29.59:3000; connect-src https://api.deepseek.com https://wss.lke.cloud.tencent.com wss://wss.lke.cloud.tencent.com http://21.91.29.59:3000 http://121.5.164.126:3450; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; connect-src http: https: wss:; font-src 'self' data:;">
   <title>忆境 Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="styles/appearance.css">
   <link rel="stylesheet" href="styles/audit.css">
   <link rel="stylesheet" href="styles/graph.css">
+  <link rel="stylesheet" href="styles/insight.css">
   <script src="scripts/i18n.js"></script>
 </head>
 <body>
@@ -49,6 +50,7 @@
           <button class="view-tab" data-view="notebook" data-i18n="nav.notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
           <button class="view-tab" data-view="documents" data-i18n="nav.documents">文档</button>
           <button class="view-tab" data-view="knowledge" data-i18n="nav.knowledge">知识</button>
+          <button class="view-tab" data-view="insight" data-i18n="nav.insight">洞察</button>
         </div>
         <div class="date-navigator">
           <button class="nav-btn" id="prevDate">◀</button>
@@ -174,11 +176,27 @@
                 </div>
               </div>
             </div>
-            <div class="notebook-list" id="notebookList">
-              <div class="empty-state" data-i18n="notebook.empty">暂无笔记</div>
+            <div class="notebook-main-area">
+              <!-- 批量操作工具栏 -->
+              <div class="notebook-batch-bar hidden" id="notebookBatchBar">
+                <label class="batch-select-all">
+                  <input type="checkbox" id="notebookSelectAll">
+                  <span>全选</span>
+                </label>
+                <span class="batch-count" id="notebookBatchCount">已选 0 项</span>
+                <div class="batch-actions">
+                  <button class="batch-btn batch-btn-adp" id="batchSendToADP" title="发送给 ADP 小助手分析">
+                    <span class="batch-btn-icon">🤖</span> 发给小助手
+                  </button>
+                  <button class="batch-btn batch-btn-cancel" id="batchCancelSelect" title="取消选择">✕</button>
+                </div>
+              </div>
+              <div class="notebook-list" id="notebookList">
+                <div class="empty-state" data-i18n="notebook.empty">暂无笔记</div>
               </div>
             </div>
-          </div>
+            </div><!-- /.notebook-content -->
+          </div><!-- /#notebookView -->
           <div class="ai-assistant-view hidden" id="aiAssistantView">
             <div class="ai-chat-container">
               <div class="chat-messages" id="chatMessages">
@@ -565,6 +583,52 @@
                   <div class="local-load-more" id="localLoadMore" style="display: none;">
                     <button class="local-load-more-btn" id="localLoadMoreBtn">加载更多</button>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 洞察视图 v2.3 -->
+          <div class="insight-view hidden" id="insightView">
+            <div class="insight-tabs">
+              <button class="insight-tab active" data-tab="dashboard"><span class="tab-icon">📊</span> 仪表盘</button>
+              <button class="insight-tab" data-tab="multimodal"><span class="tab-icon">📚</span> 知识库</button>
+              <button class="insight-tab" data-tab="activation"><span class="tab-icon">⚡</span> 知识活化</button>
+              <button class="insight-tab" data-tab="evolution"><span class="tab-icon">🌱</span> 知识演化</button>
+              <button class="insight-tab" data-tab="conflicts"><span class="tab-icon">⚡</span> 冲突检测</button>
+            </div>
+            <div class="insight-content">
+              <!-- 仪表盘面板 -->
+              <div class="insight-panel active" id="insightPanel_dashboard">
+                <div id="insightDashboardContent">
+                  <div class="insight-loading"><div class="spinner"></div><span>加载洞察数据...</span></div>
+                </div>
+              </div>
+              <!-- 知识库面板（多模态资产 + 知识书本） -->
+              <div class="insight-panel" id="insightPanel_multimodal">
+                <div id="insightMultimodalContent">
+                  <div class="insight-loading"><div class="spinner"></div><span>加载知识库...</span></div>
+                </div>
+              </div>
+              <!-- 知识活化面板 -->
+              <div class="insight-panel" id="insightPanel_activation">
+                <div class="activation-section-header" style="margin-bottom:16px">
+                  <h3 style="margin:0">⚡ 知识活化推荐</h3>
+                  <button class="activation-refresh-btn" id="activationRefreshBtn">刷新推荐</button>
+                </div>
+                <div id="insightActivationContent">
+                  <div class="insight-loading"><div class="spinner"></div><span>加载活化推荐...</span></div>
+                </div>
+              </div>
+              <!-- 知识演化面板 -->
+              <div class="insight-panel" id="insightPanel_evolution">
+                <div id="insightEvolutionContent">
+                  <div class="insight-loading"><div class="spinner"></div><span>加载知识演化...</span></div>
+                </div>
+              </div>
+              <!-- 冲突检测面板 -->
+              <div class="insight-panel" id="insightPanel_conflicts">
+                <div id="insightConflictContent">
+                  <div class="insight-loading"><div class="spinner"></div><span>加载冲突检测...</span></div>
                 </div>
               </div>
             </div>
@@ -980,6 +1044,55 @@
             <input type="password" id="adpGraphAppKey" placeholder="留空则使用智能推荐AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
               全局知识图谱构建专用 AppKey。留空时使用知识推荐 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpActivationAppKey">知识活化 AppKey</label>
+            <input type="password" id="adpActivationAppKey" placeholder="留空则使用智能推荐AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              知识活化推荐 + 知识缺口扫描专用 AppKey。留空时使用知识推荐 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpEvolutionAppKey">知识演化 AppKey</label>
+            <input type="password" id="adpEvolutionAppKey" placeholder="留空则使用智能推荐AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              知识演化追踪专用 AppKey。留空时使用知识推荐 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpConflictAppKey">冲突检测 AppKey</label>
+            <input type="password" id="adpConflictAppKey" placeholder="留空则使用智能推荐AppKey">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              知识冲突检测专用 AppKey。留空时使用知识推荐 AppKey。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="fileShareApiKey">文件共享 API Key</label>
+            <input type="password" id="fileShareApiKey" placeholder="留空使用内置默认 Key">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              File Share 服务 API Key（降级方案）。优先使用下方的「腾讯云文件上传」配置。
+            </small>
+          </div>
+          <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 12px; margin-top: 8px;">
+            <label style="font-weight: 600; margin-bottom: 8px; display: block;">腾讯云文件上传（推荐，ADP 官方规范）</label>
+            <small style="color: var(--text-secondary); margin-bottom: 8px; display: block;">
+              配置后，文件将上传到 ADP 的 COS 存储，后端可正常接收文档。在腾讯云控制台「访问管理 → API密钥管理」获取 SecretId/SecretKey，BotBizId 在 ADP 应用管理页面获取。
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="adpTcSecretId">腾讯云 SecretId</label>
+            <input type="password" id="adpTcSecretId" placeholder="输入腾讯云 SecretId">
+          </div>
+          <div class="form-group">
+            <label for="adpTcSecretKey">腾讯云 SecretKey</label>
+            <input type="password" id="adpTcSecretKey" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+          </div>
+          <div class="form-group">
+            <label for="adpBotBizId">BotBizId（应用ID）</label>
+            <input type="text" id="adpBotBizId" placeholder="177106121651545xxxx">
+            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+              ADP 应用的业务 ID，在应用管理页面的应用详情中获取。与 AppKey 不同。
             </small>
           </div>
           <div class="form-group">
@@ -1431,7 +1544,7 @@
             <div class="about-logo-area">
               <div class="about-logo">M</div>
               <h2 class="about-app-name">忆境 Memora</h2>
-              <span class="about-version">v2.2.0</span>
+              <span class="about-version">v2.4.0</span>
             </div>
 
             <div class="about-description">
@@ -1486,8 +1599,33 @@
               </div>
             </div>
 
-            <div class="about-changelog">
+              <div class="about-changelog">
               <h4 data-i18n="about.changelog">📋 版本说明</h4>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.4.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li>📚 多模态知识库 — 图片/文档/音视频/URL/腾讯会议统一管理</li>
+                  <li>📖 知识书本 — AI 自动整理知识体系，生成结构化书本</li>
+                  <li>📹 腾讯会议录屏及转译文本处理</li>
+                  <li>🔗 URL 收藏与关联知识</li>
+                  <li>🤖 AI 资产处理 — 自动生成标题/描述/标签/实体</li>
+                  <li>⚡ 活化/演化/冲突独立 AppKey 配置</li>
+                  <li>🐛 修复仪表盘记忆显示为 0 的问题</li>
+                </ul>
+              </div>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.3.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li data-i18n="about.v230.f1">洞察视图 — 知识仪表盘 + 记忆分布 + 统计概览</li>
+                  <li data-i18n="about.v230.f2">知识活化引擎 — 主动推荐被遗忘的知识，AI 扫描知识缺口</li>
+                  <li data-i18n="about.v230.f3">知识演化追踪 — 时间线展示知识的合并、更新、过时事件</li>
+                  <li data-i18n="about.v230.f4">知识冲突检测 — 自动发现矛盾信息，一键解决冲突</li>
+                  <li data-i18n="about.v230.f5">新增活化/演化/冲突三个 ADP AppKey 通道</li>
+                  <li data-i18n="about.v230.f6">CSP 安全策略升级，支持动态服务器地址</li>
+                </ul>
+              </div>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.2.0</span>
                 <span class="changelog-date">2026-06</span>
@@ -1502,7 +1640,7 @@
                 </ul>
               </div>
               <div class="about-changelog-item">
-                <span class="changelog-version">v2.1.0</span>
+                <span class="changelog-version">v2.2.0</span>
                 <span class="changelog-date">2026-06</span>
                 <ul>
                   <li data-i18n="about.v210.f1">全新多主题系统，支持日间/夜间及多彩风格切换</li>
@@ -1585,6 +1723,8 @@
       </div>
     </div>
   </div>
+
+<script>
   window.onerror = function(msg, url, line, col, error) {
     console.error('[JS Error]', msg, 'at line', line);
     return false;
@@ -1609,6 +1749,7 @@
   <script src="scripts/graph/graphView.js"></script>
 <script src="scripts/documents.js"></script>
 <script src="scripts/localFiles.js"></script>
+<script src="scripts/insight.js"></script>
 <script src="scripts/audit.js"></script>
 <script src="scripts/app.js"></script>
 <script>

@@ -46,6 +46,7 @@ const Calendar = {
           this.hideDateNavigator();
           if (view === 'notebook') this.renderNotebookView();
           else if (view === 'knowledge') this.renderKnowledgeView();
+          else if (view === 'insight') this.renderInsightView();
         }
       });
     });
@@ -72,6 +73,7 @@ const Calendar = {
     document.getElementById('notebookView')?.classList.add('hidden');
     document.getElementById('knowledgeView')?.classList.add('hidden');
     document.getElementById('aiAssistantView')?.classList.add('hidden');
+    document.getElementById('insightView')?.classList.add('hidden');
     // 恢复日历子视图（currentView 可能被其他视图标签覆盖过）
     this.currentView = this.calendarSubView;
     // 同步子标签激活状态
@@ -92,12 +94,15 @@ const Calendar = {
     document.getElementById('knowledgeView')?.classList.add('hidden');
     document.getElementById('aiAssistantView')?.classList.add('hidden');
     document.getElementById('documentsView')?.classList.add('hidden');
+    document.getElementById('insightView')?.classList.add('hidden');
     document.getElementById('calendarView')?.classList.add('hidden');
 
     if (activeView === 'notebook') {
       document.getElementById('notebookView')?.classList.remove('hidden');
     } else if (activeView === 'knowledge') {
       document.getElementById('knowledgeView')?.classList.remove('hidden');
+    } else if (activeView === 'insight') {
+      document.getElementById('insightView')?.classList.remove('hidden');
     }
   },
 
@@ -161,6 +166,9 @@ const Calendar = {
           break;
         case 'documents':
           displayText = window.i18n?.t('nav.documents') || '文档';
+          break;
+        case 'insight':
+          displayText = window.i18n?.t('nav.insight') || '洞察';
           break;
       }
     } else {
@@ -897,6 +905,17 @@ const Calendar = {
     document.getElementById('currentDate').textContent = window.i18n?.t('nav.documents') || '文档';
 
     if (window.Documents) Documents.onShow();
+  },
+
+  renderInsightView() {
+    this.hideOtherViews('insight');
+    this.calendarActive = false;
+    this.currentView = 'insight';
+
+    document.getElementById('currentDate').textContent = window.i18n?.t('nav.insight') || '洞察';
+    document.getElementById('insightView')?.classList.remove('hidden');
+
+    if (window.Insight) Insight.onShow();
   },
 
   showDateNavigator() {

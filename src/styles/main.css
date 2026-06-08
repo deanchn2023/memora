@@ -943,7 +943,8 @@ body {
 .day-view,
 .week-view,
 .month-view {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -968,6 +969,7 @@ body {
   background: var(--bg-glass);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  flex-shrink: 0;
 }
 
 .calendar-sub-tabs-inner {
@@ -1458,6 +1460,13 @@ body {
   overflow: hidden;
 }
 
+.notebook-main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .notebook-sidebar {
   width: 210px;
   padding: 20px 16px;
@@ -1489,6 +1498,8 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s var(--transition);
 }
 
 .category-edit {
@@ -1523,6 +1534,8 @@ body {
   cursor: pointer;
   transition: all 0.2s var(--transition);
   margin-top: 6px;
+  outline: none;
+  user-select: none;
 }
 
 .category-add-btn:hover {
@@ -1543,6 +1556,26 @@ body {
   cursor: pointer;
   transition: all 0.2s var(--transition);
   font-weight: 400;
+  outline: none;
+  user-select: none;
+}
+
+/* category-item-wrapper 拖放高亮 */
+.category-item-wrapper.drop-hover {
+  background: var(--gradient-brand) !important;
+  padding: 0 2px;
+}
+
+.category-item-wrapper.drop-hover .category-item {
+  color: white !important;
+  background: transparent !important;
+}
+
+.category-item-wrapper.drop-hover::after {
+  content: ' ↓';
+  font-weight: 700;
+  color: white;
+  padding-right: 4px;
 }
 
 .category-item:hover {
@@ -1620,6 +1653,115 @@ body {
   align-items: flex-start;
 }
 
+/* 记事项复选框 */
+.note-checkbox {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  accent-color: var(--primary-color);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.note-item:hover .note-checkbox,
+.note-item.note-selected .note-checkbox {
+  opacity: 1;
+}
+
+.note-item.note-selected {
+  border-color: var(--primary-color);
+  background: rgba(79, 142, 247, 0.04);
+}
+
+/* 批量操作工具栏 */
+.notebook-batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin: 0 24px 8px 24px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--primary-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.12);
+  flex-shrink: 0;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.batch-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.batch-select-all input {
+  accent-color: var(--primary-color);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.batch-count {
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.batch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.batch-btn-adp {
+  background: var(--gradient-brand);
+  color: white;
+}
+
+.batch-btn-adp:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.3);
+}
+
+.batch-btn-cancel {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.batch-btn-cancel:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.batch-btn-icon {
+  font-size: 14px;
+}
+
 /* 拖拽手柄 */
 .note-drag-handle {
   flex-shrink: 0;
@@ -1673,11 +1815,11 @@ body {
   /* dragstart 时保持可见（用于拖拽预览） */
 }
 
-/* 侧边栏分类拖放高亮 */
+/* 侧边栏分类拖放高亮（独立 category-item，如"全部"） */
 .category-item.drop-hover {
   background: var(--gradient-brand) !important;
   color: white !important;
-  transform: scale(1.05);
+  transform: scale(1.02);
   box-shadow: 0 4px 14px var(--primary-glow);
   border-color: transparent !important;
 }
@@ -2890,6 +3032,14 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  cursor: pointer;
+  color: var(--primary-color);
+  transition: opacity 0.15s;
+}
+
+.attachment-chip .attachment-name:hover {
+  opacity: 0.7;
+  text-decoration: underline;
 }
 
 .attachment-chip .attachment-size {
@@ -3087,15 +3237,18 @@ body {
   z-index: 0;
 }
 
-/* 确保内容在光球之上 */
+/* 确保内容在光球之上 + 绝对定位覆盖 main-view */
 .calendar-view,
-.day-view,
-.week-view,
-.month-view,
 .notebook-view,
 .ai-assistant-view,
-.documents-view {
-  position: relative;
+.knowledge-view,
+.documents-view,
+.insight-view {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 1;
 }
 

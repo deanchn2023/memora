@@ -264,19 +264,18 @@
 
 /* 状态色 */
 .status-growing {
-  border-left: 3px solid #007AFF;
+  background: rgba(0, 122, 255, 0.04);
 }
 
 .status-mature {
-  border-left: 3px solid #FF9500;
+  background: rgba(255, 149, 0, 0.04);
 }
 
 .status-distilled {
-  border-left: 3px solid #34C759;
+  background: rgba(52, 199, 89, 0.04);
 }
 
 .status-unclustered {
-  border-left: 3px solid var(--text-tertiary);
   opacity: 0.85;
 }
 
@@ -327,11 +326,10 @@
 }
 
 .kd-question-card.pending {
-  border-left: 3px solid #FF9500;
+  background: rgba(255, 149, 0, 0.03);
 }
 
 .kd-question-card.resolved {
-  border-left: 3px solid #34C759;
   opacity: 0.75;
 }
 

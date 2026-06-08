@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ADP配置
   getADPConfig: () => ipcRenderer.invoke('get-adp-config'),
   setADPConfig: (config) => ipcRenderer.invoke('set-adp-config', config),
-  sendADPMessage: (message) => ipcRenderer.invoke('send-adp-message', message),
+  sendADPMessage: (data) => ipcRenderer.invoke('send-adp-message', data),
   stopADPMessage: () => ipcRenderer.invoke('adp:stop-message'),
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
   onADPSSEEvent: (callback) => {
@@ -315,6 +315,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localFilesIndexStatus: () => ipcRenderer.invoke('local-files:index-status'),
   localFilesOpen: (filePath) => ipcRenderer.invoke('local-files:open', filePath),
   localFilesReveal: (filePath) => ipcRenderer.invoke('local-files:reveal', filePath),
+
+  // v2.3 洞察模块（异步任务模式）
+  insightGetActivations: () => ipcRenderer.invoke('insight:get-activations'),
+  insightAnalyzeGaps: () => ipcRenderer.invoke('insight:analyze-gaps'),
+  insightGetEvolutions: () => ipcRenderer.invoke('insight:get-evolutions'),
+  insightGetConflicts: () => ipcRenderer.invoke('insight:get-conflicts'),
+  insightDetectConflicts: () => ipcRenderer.invoke('insight:detect-conflicts'),
+  insightResolveConflict: (data) => ipcRenderer.invoke('insight:resolve-conflict', data),
+  // 异步任务：发起后立即返回 taskId，完成后通过 IPC 推送
+  insightStartTask: (taskType) => ipcRenderer.invoke('insight:start-task', { taskType }),
+  insightGetCachedResult: (taskType) => ipcRenderer.invoke('insight:get-cached-result', { taskType }),
+  insightGetTaskStatus: (taskType) => ipcRenderer.invoke('insight:get-task-status', { taskType }),
+  onInsightTaskComplete: (callback) => {
+    ipcRenderer.on('insight:task-complete', (event, data) => callback(data));
+  },
+  onInsightTaskProgress: (callback) => {
+    ipcRenderer.on('insight:task-progress', (event, data) => callback(data));
+  },
+
+  // v2.3 多模态知识库
+  multimodalImport: (options) => ipcRenderer.invoke('multimodal:import', options),
+  multimodalSaveUrl: (options) => ipcRenderer.invoke('multimodal:save-url', options),
+  multimodalSaveMeeting: (options) => ipcRenderer.invoke('multimodal:save-meeting', options),
+  multimodalList: (options) => ipcRenderer.invoke('multimodal:list', options),
+  multimodalGet: (id) => ipcRenderer.invoke('multimodal:get', id),
+  multimodalDelete: (id) => ipcRenderer.invoke('multimodal:delete', id),
+  multimodalUpdate: (id, updates) => ipcRenderer.invoke('multimodal:update', id, updates),
+  multimodalStats: () => ipcRenderer.invoke('multimodal:stats'),
+  multimodalProcess: (id) => ipcRenderer.invoke('multimodal:process', id),
+  multimodalGenerateBook: (options) => ipcRenderer.invoke('multimodal:generate-book', options),
+  multimodalGetBooks: () => ipcRenderer.invoke('multimodal:get-books'),
+  multimodalOpenFile: (id) => ipcRenderer.invoke('multimodal:open-file', id),
+  multimodalPickFiles: () => ipcRenderer.invoke('multimodal:pick-files'),
+  multimodalImportBuffer: (options) => ipcRenderer.invoke('multimodal:import-buffer', options),
 
   // 数据导出/导入
   dataExport: (password) => ipcRenderer.invoke('data:export', { password }),
