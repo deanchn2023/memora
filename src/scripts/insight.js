@@ -256,7 +256,26 @@ const Insight = {
       // 活化卡片操作
       const actionBtn = target.closest('.activation-card-action[data-action]');
       if (actionBtn) {
+        e.preventDefault();
         this._handleAction(actionBtn, actionBtn.dataset.action);
+        return;
+      }
+
+      // 活化卡片展开按钮
+      const expandBtn = target.closest('.activation-card-expand');
+      if (expandBtn) {
+        e.preventDefault();
+        const card = expandBtn.closest('.activation-card');
+        if (card) {
+          // 模拟点击第一个 action 按钮来展开详情
+          const firstAction = card.querySelector('.activation-card-action[data-action]');
+          if (firstAction) {
+            this._handleAction(firstAction, firstAction.dataset.action);
+          } else {
+            // 没有 action 按钮，显示基本信息
+            this._showActivationDetail(card);
+          }
+        }
         return;
       }
 
@@ -615,9 +634,130 @@ const Insight = {
       return;
     }
 
-    // 无缓存无运行 → 发起异步任务
-    container.innerHTML = '<div class="insight-loading"><div class="spinner"></div><span>正在发起知识活化分析...（可切换其他页面，完成后自动通知）</span></div>';
-    await this._startInsightTask('activations');
+    // 无缓存无运行 → 注入测试数据（开发阶段，避免每次调 AI）
+    await this._injectActivationTestData();
+  },
+
+  // 注入测试数据到缓存（开发阶段使用，避免消耗 AI 额度）
+  async _injectActivationTestData() {
+    const testData = {
+      activations: [
+        {
+          type: "deepen",
+          title: "提炼ADP通用卖点与竞对话术库",
+          desc: `近期您密集接触了大量ADP中标案例，对手常为火山引擎、Dify、百度等。但现状是这些信息分散在多个喜报中，尚未提炼成一套可复用的\u201c赢单话术\u201d和ADP差异化卖点列表。`,
+          entity: "ADP",
+          confidence: 0.95,
+          actions: [
+            `整理最近一周所有喜报，提取每个案例中ADP击败竞对的\u201c杀手锏\u201d（如RAG能力、私有化、建管一体）`,
+            "将竞对（火山引擎、Dify、字节）的弱点与ADP的优势汇总，形成一张竞品对比表",
+            "撰写一篇名为《ADP赢单案例复盘：如何击败火山引擎和Dify》的知识原子"
+          ]
+        },
+        {
+          type: "connection",
+          title: `连接\u201cADP二期\u201d与\u201c动态工作流/多Agent协同\u201d`,
+          desc: `您收藏了关于\u201cLLM动态路由\u201d、\u201cMulti-Agent编排\u201d和\u201cDynamic Workflow\u201d的笔记，而ADP二期立项恰好包含\u201c多智能体协同\u201d和\u201c技能资产\u201d。这表明二期方向与您近期兴趣点高度吻合。`,
+          entity: "ADP二期",
+          confidence: 0.9,
+          actions: [
+            `回顾\u201cLLM驱动路由\u201d和\u201cMulti-Agent编排\u201d的笔记`,
+            "将笔记中的概念与ADP二期规划关联，思考这些技术如何落地为二期功能",
+            "向团队提议，在二期设计中参考这些前沿模式"
+          ]
+        },
+        {
+          type: "gap",
+          title: `建立\u201cADP战略项目\u201d知识簇`,
+          desc: `您的记忆里充满了\u201c中标\u201d、\u201c突破\u201d、\u201c首单\u201d等高频词，但知识库中没有将这些关键项目聚合为一个\u201c标杆案例库\u201d，导致其商业价值未被体系化利用。`,
+          entity: "银保信项目",
+          confidence: 0.9,
+          actions: [
+            "创建一个名为《ADP灯塔客户与标杆案例集》的知识簇",
+            "将近期所有重大中标项目作为原子加入该簇",
+            "为每个案例原子标注：行业、金额、竞对、战略意义"
+          ]
+        },
+        {
+          type: "outdated",
+          title: `审核并更新\u201cADP演示场景\u201d知识点`,
+          desc: `知识原子中有一条关于\u201cADP 4.0演示场景\u201d的详细记录。考虑到您新中标项目和二期规划，原有演示场景可能已无法完全覆盖当前最佳实践和卖点。`,
+          entity: "产品-智能体",
+          confidence: 0.85,
+          actions: [
+            `定位到\u201cADP 4.0演示场景\u201d相关的知识原子`,
+            `评估\u201c银保信审核Agent\u201d和\u201c瑞幸咖啡\u201d等场景是否可以作为新的演示案例加入`,
+            `如有必要，撰写一个\u201cADP 5.0演示场景规划\u201d的新原子`
+          ]
+        },
+        {
+          type: "connection",
+          title: `连接\u201c专有云/私有化\u201d项目与\u201c信创/数据安全\u201d卖点`,
+          desc: `您的多个项目都强调\u201c专有云\u201d和\u201c私有化\u201d。而知识库中有关于ADP比拼\u201c信创适配\u201d和\u201c企业级治理\u201d的优势。将这些点连接起来，能形成一套针对金融、国央企、医疗等强监管行业的完整销售故事。`,
+          entity: "私有化部署",
+          confidence: 0.85,
+          actions: [
+            `回顾知识原子中关于ADP对标Anthropic和OpenAI的\u201c私有化\u201d、\u201c信创\u201d、\u201c治理\u201d优势`,
+            "撰写一篇名为《ADP私有化方案在强监管行业的价值与案例》的知识原子",
+            `新建原子时，引用\u201c南网\u201d、\u201c渤海银行\u201d、\u201c武汉新芯\u201d等案例作为支撑`
+          ]
+        },
+        {
+          type: "deepen",
+          title: `将\u201c三晋文化项目\u201d沉淀为行业解决方案指南`,
+          desc: `\u201c三晋文化\u201d项目首次将ADP与\u201c数字人\u201d产品打包，金额高达150W，是一个跨产品组合销售的典型案例。这代表了一种高价值的销售模式，不应只作为一条喜报被遗忘。`,
+          entity: "三晋文化大模型项目",
+          confidence: 0.8,
+          actions: [
+            "创建一个名为《ADP + X 组合销售案例》的知识原子",
+            "分析该案例中ADP与数字人结合的技术方案和商务策略",
+            "思考其他产品与ADP组合的可能性，并记录下来"
+          ]
+        },
+        {
+          type: "gap",
+          title: `构建\u201cBSC填写\u201d任务与\u201c项目成果\u201d的价值关联`,
+          desc: `知识库中详细记录了\u201cBSC填写\u201d的分工和截止日期，但这只是一个行政管理任务。它的价值和最终产出是什么？目前没有与任何具体项目成果或健康指标相连。`,
+          entity: "项目-管理",
+          confidence: 0.8,
+          actions: [
+            "查找BSC填写对应的具体指标",
+            "将这些指标分析的结果补充到BSC原子中",
+            `在\u201c竞品情况\u201d原子旁，关联您整理的竞对手册`
+          ]
+        },
+        {
+          type: "outdated",
+          title: `更新\u201c竞品对比\u201d知识原子`,
+          desc: `知识原子中提到ADP对标\u201cAnthropic Managed Agents\u201d等。但近期您频繁与\u201c火山引擎、Dify、百度\u201d竞争，这些才是更直接、更现实的对手。原有的竞品对比可能只具有历史参考价值。`,
+          entity: "产品-竞品",
+          confidence: 0.9,
+          actions: [
+            `立即更新竞品对比相关的知识原子，将\u201c火山引擎\u201d、\u201cDify\u201d作为主要对标对象`,
+            `参考各中标案例的\u201c击败原因\u201d，丰富对主要竞品弱点的描述`,
+            "删除或归档过时的竞品对比，保持知识的时效性"
+          ]
+        }
+      ],
+      summary: `知识库当前处于高活跃度状态，但信息碎片化严重。核心挑战是从\u2018密集的事件流\u2019中提炼出\u2018可复用的方法论和结构化知识\u2019，从而将零散的中标喜讯，转变为ADP持续制胜的战略资产。`
+    };
+
+    // 注入到后端缓存
+    const cacheResult = { items: testData.activations, summary: testData.summary };
+    try {
+      await window.electronAPI?.insightInjectTestData?.({
+        taskType: 'activations',
+        result: cacheResult
+      });
+      this.data.activations = testData.activations;
+      this._renderActivationsResult();
+      console.log('[Insight] Test data injected for activations');
+    } catch (err) {
+      console.warn('[Insight] Inject test data failed:', err.message);
+      // fallback: 直接渲染
+      this.data.activations = testData.activations;
+      this._renderActivationsResult();
+    }
   },
 
   _renderActivationsResult() {
@@ -720,18 +860,22 @@ const Insight = {
   _renderActivationCard(item) {
     const typeClass = item.type || 'atom';
     const actions = (item.actions || []).slice(0, 3);
+    const itemId = item.id || ('act_' + Math.random().toString(36).substr(2, 9));
     return `
-      <div class="activation-card" data-id="${item.id || ''}">
+      <div class="activation-card" data-id="${itemId}" data-entity="${this._escapeHtml(item.entity || '')}" data-confidence="${item.confidence || 0}">
         <div class="activation-card-header">
           <span class="activation-card-type ${typeClass}">${this._getTypeLabel(typeClass)}</span>
+          ${item.entity ? `<span class="activation-card-entity">${this._escapeHtml(item.entity)}</span>` : ''}
+          ${item.confidence ? `<span class="activation-card-confidence">${Math.round(item.confidence * 100)}%</span>` : ''}
           ${item.timeAgo ? `<span class="activation-card-time">${item.timeAgo}</span>` : ''}
         </div>
         <div class="activation-card-title">${this._escapeHtml(item.title || '')}</div>
         ${item.desc ? `<div class="activation-card-desc">${this._escapeHtml(item.desc)}</div>` : ''}
         ${actions.length > 0 ? `
           <div class="activation-card-actions">
-            ${actions.map((a, i) => `<button class="activation-card-action${i === 0 ? ' primary' : ''}" data-action="${this._escapeHtml(a)}">${this._escapeHtml(a)}</button>`).join('')}
+            ${actions.map((a, i) => `<button class="activation-card-action${i === 0 ? ' primary' : ''}" data-action="${this._escapeHtml(a)}" title="点击执行：${this._escapeHtml(a)}">${this._escapeHtml(a)}</button>`).join('')}
           </div>` : ''}
+        <button class="activation-card-expand" title="展开详情">▶</button>
       </div>`;
   },
 
@@ -739,24 +883,189 @@ const Insight = {
     const labels = {
       memory: '记忆', atom: '知识', article: '文章',
       conflict: '冲突', gap: '缺口', outdated: '过时',
-      activation: '活化', merge: '合并', update: '更新'
+      activation: '活化', merge: '合并', update: '更新',
+      deepen: '深化', connection: '关联'
     };
     return labels[type] || type;
   },
 
   _handleAction(btn, action) {
-    if (action.includes('搜索') || action.includes('查找')) {
+    const card = btn.closest('.activation-card');
+    if (!card) return;
+
+    // 关闭已展开的详情
+    const existingOverlay = card.querySelector('.activation-detail-overlay');
+    if (existingOverlay) existingOverlay.remove();
+
+    // 创建详情面板
+    const entity = card.dataset.entity || '';
+    const confidence = card.dataset.confidence || '0';
+    const title = card.querySelector('.activation-card-title')?.textContent || '';
+    const desc = card.querySelector('.activation-card-desc')?.textContent || '';
+    const allActions = [...card.querySelectorAll('.activation-card-action')].map(b => b.dataset.action).filter(Boolean);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'activation-detail-overlay';
+    overlay.innerHTML = `
+      <div class="activation-detail-content">
+        <div class="activation-detail-header">
+          <h3>${this._escapeHtml(title)}</h3>
+          <button class="activation-detail-close">✕</button>
+        </div>
+        ${entity ? `<div class="activation-detail-entity">关联实体：${this._escapeHtml(entity)}</div>` : ''}
+        ${confidence !== '0' ? `<div class="activation-detail-confidence">置信度：${Math.round(parseFloat(confidence) * 100)}%</div>` : ''}
+        ${desc ? `<div class="activation-detail-desc">${this._escapeHtml(desc)}</div>` : ''}
+        ${allActions.length > 0 ? `
+          <div class="activation-detail-actions">
+            <h4>建议操作</h4>
+            ${allActions.map(a => `
+              <div class="activation-detail-action-item">
+                <span>${this._escapeHtml(a)}</span>
+                <button class="activation-detail-do-btn" data-do-action="${this._escapeHtml(a)}">执行</button>
+              </div>`).join('')}
+          </div>` : ''}
+      </div>`;
+
+    document.body.appendChild(overlay);
+
+    // 绑定关闭
+    overlay.querySelector('.activation-detail-close')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.remove();
+    });
+
+    // 绑定"执行"按钮
+    overlay.querySelectorAll('.activation-detail-do-btn').forEach(doBtn => {
+      doBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const doAction = doBtn.dataset.doAction;
+        this._executeAction(doAction, entity, title);
+        overlay.remove();
+      });
+    });
+
+    // 点击 overlay 背景关闭
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+  },
+
+  /** 执行活化的建议操作 */
+  _executeAction(action, entity, title) {
+    console.log('[Insight] Execute action:', action, 'entity:', entity);
+
+    // 1. 搜索/查找 → 跳转知识跟随搜索
+    if (action.includes('搜索') || action.includes('查找') || action.includes('定位') || action.includes('回顾') || action.includes('参考')) {
       const searchInput = document.getElementById('knowledgeFollowInput');
       if (searchInput) {
-        const keyword = action.replace(/搜索关于|的资料|查找/g, '').replace(/[""]/g, '');
+        const keyword = action.replace(/搜索关于|的资料|查找|定位到|回顾|参考/g, '').replace(/["\u201c\u201d""]/g, '').trim();
         searchInput.value = keyword;
         document.querySelector('.view-tab[data-view="knowledge"]')?.click();
+        // 触发搜索
+        const searchBtn = document.getElementById('knowledgeFollowBtn');
+        if (searchBtn) searchBtn.click();
+        this._showToast(`正在搜索：${keyword}`, 'info');
       }
-    } else if (action.includes('记录') || action.includes('添加')) {
-      document.querySelector('.view-tab[data-view="notebook"]')?.click();
-    } else if (action.includes('查看')) {
-      console.log('[Insight] View detail:', action);
+      return;
     }
+
+    // 2. 创建/撰写/整理/构建 → 跳转记事本
+    if (action.includes('记录') || action.includes('添加') || action.includes('创建') || action.includes('撰写') || action.includes('整理') || action.includes('构建') || action.includes('新建')) {
+      document.querySelector('.view-tab[data-view="notebook"]')?.click();
+      this._showToast(`建议在记事本中：${action.substring(0, 30)}`, 'info');
+      return;
+    }
+
+    // 3. 更新/删除/审核/归档 → 提示操作
+    if (action.includes('更新') || action.includes('删除') || action.includes('审核') || action.includes('归档')) {
+      this._showToast(`操作提示：${action}`, 'info');
+      return;
+    }
+
+    // 4. 分析/评估/思考 → 跳转 AI 助手
+    if (action.includes('分析') || action.includes('评估') || action.includes('思考') || action.includes('提议')) {
+      this._navigateToAIAssistant(action);
+      return;
+    }
+
+    // 5. 默认：显示 toast 提示
+    this._showToast(`建议操作：${action.substring(0, 50)}`, 'info');
+  },
+
+  /** 导航到 AI 助手视图并填入内容 */
+  _navigateToAIAssistant(text) {
+    // 方式1：通过 app.js 的全局方法
+    if (window.app?.showAIAssistantView) {
+      window.app.showAIAssistantView();
+      setTimeout(() => {
+        const aiInput = document.getElementById('aiChatInput');
+        if (aiInput) {
+          aiInput.value = text;
+          aiInput.focus();
+        }
+      }, 150);
+      this._showToast('已填入 AI 助手，按回车发送', 'info');
+      return;
+    }
+
+    // 方式2：直接操作 DOM 切换视图
+    const allViews = ['calendarView', 'notebookView', 'knowledgeView', 'documentsView', 'insightView'];
+    allViews.forEach(id => document.getElementById(id)?.classList.add('hidden'));
+
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+
+    const aiView = document.getElementById('aiAssistantView');
+    if (aiView) {
+      aiView.classList.remove('hidden');
+    }
+
+    // 隐藏日期导航栏
+    const dateNav = document.querySelector('.date-navigator');
+    if (dateNav) dateNav.style.display = 'none';
+
+    setTimeout(() => {
+      const aiInput = document.getElementById('aiChatInput');
+      if (aiInput) {
+        aiInput.value = text;
+        aiInput.focus();
+      }
+    }, 150);
+    this._showToast('已填入 AI 助手，按回车发送', 'info');
+  },
+
+  /** 显示活化卡片详情（无 action 按钮时使用） */
+  _showActivationDetail(card) {
+    const existingOverlay = card.querySelector('.activation-detail-overlay');
+    if (existingOverlay) { existingOverlay.remove(); return; }
+
+    const title = card.querySelector('.activation-card-title')?.textContent || '';
+    const desc = card.querySelector('.activation-card-desc')?.textContent || '';
+    const entity = card.dataset.entity || '';
+    const confidence = card.dataset.confidence || '0';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'activation-detail-overlay';
+    overlay.innerHTML = `
+      <div class="activation-detail-content">
+        <div class="activation-detail-header">
+          <h3>${this._escapeHtml(title)}</h3>
+          <button class="activation-detail-close">✕</button>
+        </div>
+        ${entity ? `<div class="activation-detail-entity">关联实体：${this._escapeHtml(entity)}</div>` : ''}
+        ${confidence !== '0' ? `<div class="activation-detail-confidence">置信度：${Math.round(parseFloat(confidence) * 100)}%</div>` : ''}
+        ${desc ? `<div class="activation-detail-desc">${this._escapeHtml(desc)}</div>` : ''}
+      </div>`;
+
+    document.body.appendChild(overlay);
+    overlay.querySelector('.activation-detail-close')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.remove();
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
   },
 
   // ========== 知识演化 ==========
@@ -1366,8 +1675,14 @@ const Insight = {
         () => window.electronAPI?.multimodalGenerateBook?.({}),
         { success: false, error: '未知错误' }
       );
+      console.log('[Insight] Generate book result:', {
+        success: result?.success,
+        bookChapters: result?.book?.chapters?.length || 0,
+        error: result?.error
+      });
       if (result?.success) {
-        this._showToast('知识体系生成成功', 'success');
+        const chCount = result?.book?.chapters?.length || 0;
+        this._showToast(`知识体系生成成功！共 ${chCount} 章`, 'success');
         this.loadMultimodal();
       } else {
         this._showToast(result?.error || '生成失败', 'error');
@@ -1380,8 +1695,30 @@ const Insight = {
     }
   },
 
-  _viewBook(bookId) {
-    const book = this.data.multimodalBooks.find(b => b.id === bookId);
+  async _viewBook(bookId) {
+    let book = this.data.multimodalBooks.find(b => b.id === bookId);
+
+    // 如果内存中的 book 没有 chapters，尝试从后端重新获取完整数据
+    if (book && (!book.chapters || book.chapters.length === 0)) {
+      console.log('[Insight] Book has no chapters in memory, re-fetching from backend...', bookId);
+      try {
+        const booksResult = await this._safeCall(
+          () => window.electronAPI?.multimodalGetBooks?.(),
+          { books: [] }
+        );
+        const freshBook = (booksResult.books || []).find(b => b.id === bookId);
+        if (freshBook && freshBook.chapters && freshBook.chapters.length > 0) {
+          book = freshBook;
+          // 更新内存中的数据
+          const idx = this.data.multimodalBooks.findIndex(b => b.id === bookId);
+          if (idx >= 0) this.data.multimodalBooks[idx] = freshBook;
+          console.log('[Insight] Re-fetched book with', freshBook.chapters.length, 'chapters');
+        }
+      } catch (err) {
+        console.warn('[Insight] Re-fetch book failed:', err.message);
+      }
+    }
+
     if (!book) return;
 
     // 创建弹窗显示书本内容

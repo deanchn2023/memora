@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setAPIConfig: (config) => ipcRenderer.invoke('set-api-config', config),
   clearAPIKey: () => ipcRenderer.invoke('clear-api-key'),
   
+  // 全局 AI 模式控制（v2.3）
+  getGlobalAIMode: () => ipcRenderer.invoke('get-global-ai-mode'),
+  setGlobalAIMode: (mode) => ipcRenderer.invoke('set-global-ai-mode', mode),
+  onGlobalAIModeChanged: (callback) => {
+    ipcRenderer.on('global-ai-mode-changed', (event, mode) => callback(mode));
+  },
+  
   // ADP配置
   getADPConfig: () => ipcRenderer.invoke('get-adp-config'),
   setADPConfig: (config) => ipcRenderer.invoke('set-adp-config', config),
@@ -327,6 +334,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   insightStartTask: (taskType) => ipcRenderer.invoke('insight:start-task', { taskType }),
   insightGetCachedResult: (taskType) => ipcRenderer.invoke('insight:get-cached-result', { taskType }),
   insightGetTaskStatus: (taskType) => ipcRenderer.invoke('insight:get-task-status', { taskType }),
+  insightInjectTestData: (data) => ipcRenderer.invoke('insight:inject-test-data', data),
   onInsightTaskComplete: (callback) => {
     ipcRenderer.on('insight:task-complete', (event, data) => callback(data));
   },

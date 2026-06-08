@@ -324,6 +324,16 @@
   color: #CC9900;
 }
 
+.activation-card-type.deepen {
+  background: rgba(0,122,255,0.12);
+  color: #007AFF;
+}
+
+.activation-card-type.connection {
+  background: rgba(52,199,89,0.12);
+  color: #34C759;
+}
+
 .activation-card-type.outdated {
   background: rgba(142,142,147,0.15);
   color: #8E8E93;
@@ -1415,4 +1425,199 @@
     max-height: 90vh;
     border-radius: 16px;
   }
+}
+
+/* ---- 活化卡片实体/置信度标签 ---- */
+.activation-card-entity {
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
+  background: rgba(0,0,0,0.04);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.activation-card-confidence {
+  font-size: 10px;
+  color: var(--text-tertiary, #aeaeb2);
+  margin-left: auto;
+}
+
+/* ---- 活化卡片展开按钮 ---- */
+.activation-card-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 6px;
+  background: var(--bg-glass, rgba(255,255,255,0.6));
+  color: var(--text-tertiary, #aeaeb2);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.activation-card-expand:hover {
+  background: var(--accent-color, #007AFF);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* ---- 活化卡片详情面板 ---- */
+.activation-detail-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: activationDetailIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes activationDetailIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.activation-detail-content {
+  background: var(--bg-card, #fff);
+  border-radius: 16px;
+  padding: 20px;
+  max-width: 480px;
+  width: 100%;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.15);
+  animation: activationDetailSlide 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+@keyframes activationDetailSlide {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.activation-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.activation-detail-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0;
+  line-height: 1.4;
+  flex: 1;
+  padding-right: 12px;
+}
+
+.activation-detail-close {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-glass, rgba(0,0,0,0.06));
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.activation-detail-close:hover {
+  background: rgba(0,0,0,0.1);
+}
+
+.activation-detail-entity {
+  font-size: 12px;
+  color: var(--accent-color, #007AFF);
+  margin-bottom: 6px;
+}
+
+.activation-detail-confidence {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  margin-bottom: 8px;
+}
+
+.activation-detail-desc {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  line-height: 1.6;
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+}
+
+.activation-detail-actions h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0 0 8px 0;
+}
+
+.activation-detail-action-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--bg-glass, rgba(0,0,0,0.02));
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.06));
+  gap: 8px;
+}
+
+.activation-detail-action-item span {
+  font-size: 12px;
+  color: var(--text-primary, #1d1d1f);
+  line-height: 1.4;
+  flex: 1;
+}
+
+.activation-detail-do-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  border: none;
+  background: var(--accent-color, #007AFF);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.activation-detail-do-btn:hover {
+  opacity: 0.85;
+}
+
+/* Dark mode for activation detail */
+[data-theme="dark"] .activation-detail-content {
+  background: rgba(44,44,46,0.95);
+}
+
+[data-theme="dark"] .activation-detail-action-item {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .activation-card-expand {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+  color: #aeaeb2;
+}
+
+[data-theme="dark"] .activation-card-entity {
+  background: rgba(255,255,255,0.06);
 }

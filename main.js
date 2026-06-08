@@ -158,8 +158,27 @@ const DEFAULT_API_KEY = 'sk-b4116cb788d64e3fb20e8e5bd1333168';
 const DEFAULT_BASE_URL = 'https://api.deepseek.com';
 const DEFAULT_MODEL = 'deepseek-v4-flash';
 
+// 大用量 LLM 默认配置（高并发场景：剪贴板分析、记忆提取等高频调用）
+const DEFAULT_HIGHVOL_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
+const DEFAULT_HIGHVOL_MODEL = 'glm-4-flash';
+
 // 默认限制（使用内置Key时）
 const DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY = 10;
+
+// ===== 全局 AI 模式控制 =====
+// 'agent' = 所有 AI 调用走 ADP 智能体（已有 ADP 用原逻辑，原 LLM 调用改走通用 ADP AppKey）
+// 'llm'   = 所有 AI 调用走本地 LLM（已有 LLM 用原逻辑，原 ADP 调用改走大用量/小用量 LLM）
+function getGlobalAIMode() {
+  return getSetting('global_ai_mode') || 'agent'; // 默认 agent 模式
+}
+
+function setGlobalAIMode(mode) {
+  if (mode === 'agent' || mode === 'llm') {
+    setSetting('global_ai_mode', mode);
+    return true;
+  }
+  return false;
+}
 
 // AI调用限制配置
 let AI_DAILY_LIMIT = 1000;
@@ -733,6 +752,229 @@ function getAPIConfig() {
     model: userModel || DEFAULT_MODEL,
     dailyLimit: userDailyLimit || (userApiKey ? 1000 : DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY),
     isCustomKey: !!userApiKey
+  };
+}
+
+// 获取大用量 LLM 配置（高频调用场景：剪贴板分析、记忆提取等）
+// 大用量默认使用 GLM 模型（并发能力强、限流宽松）
+function getHighVolLLMConfig() {
+  // 优先云端配置
+  if (authState.isLoggedIn && remoteConfig?.api && !authState.forceLocalConfig) {
+    if (remoteConfig.api.highvol_base_url) {
+      return {
+        apiKey: remoteConfig.api.highvol_api_key || remoteConfig.api.api_key,
+        baseUrl: remoteConfig.api.highvol_base_url,
+        model: remoteConfig.api.highvol_model || DEFAULT_HIGHVOL_MODEL,
+        dailyLimit: remoteConfig.api.daily_limit || 500,
+        isCustomKey: false
+      };
+    }
+    // 云端未配置大用量，回退到通用 LLM 配置
+    return getAPIConfig();
+  }
+  
+  const userApiKey = getSetting('highvol_api_key');
+  const userBaseUrl = getSetting('highvol_base_url');
+  const userModel = getSetting('highvol_model');
+  
+  if (userBaseUrl) {
+    return {
+      apiKey: userApiKey || getSetting('api_key') || DEFAULT_API_KEY,
+      baseUrl: userBaseUrl,
+      model: userModel || DEFAULT_HIGHVOL_MODEL,
+      dailyLimit: parseInt(getSetting('api_daily_limit')) || 1000,
+      isCustomKey: !!(userApiKey || getSetting('api_key'))
+    };
+  }
+  
+  // 未配置大用量 LLM，回退到通用 LLM 配置
+  return getAPIConfig();
+}
+
+// ===== 统一 AI 调用路由（v2.3 全局模式控制） =====
+// 根据全局模式 (agent/llm) 和调用类别自动路由到 ADP 或 LLM
+// - module: 调用模块名（用于审计）
+// - category: 'highvol'(大用量) | 'lowvol'(小用量) — 仅 llm 模式下区分模型选择
+// - messages: OpenAI 格式消息数组
+// - fetchOptions: fetch 参数
+// - adpAppKey: agent 模式下使用的 ADP AppKey（可选，默认通用 AppKey）
+// - signal: AbortSignal
+// - traceId: 追踪 ID
+// - structured: false 表示对话类场景（可走 ADP 智能体），true 表示需要结构化 JSON 返回（必须走 LLM）
+async function callAI({ module, category = 'lowvol', messages, fetchOptions = {}, adpAppKey, signal, traceId, structured = true }) {
+  const mode = getGlobalAIMode();
+  
+  if (mode === 'agent' && !structured) {
+    // Agent 模式 + 对话类场景：走 ADP 智能体
+    const result = await callADPForLLM({ module, messages, adpAppKey, traceId });
+    if (!result.response) {
+      // ADP 失败时构造错误 response 供调用方兼容
+      result.response = { ok: false, status: 500, async json() { return {}; }, async text() { return result.error || 'ADP调用失败'; } };
+    }
+    return result;
+  } else {
+    // LLM 模式 或 Agent 模式下需要结构化 JSON 返回 或 对话类但 LLM 模式：走本地 LLM
+    const apiConfig = category === 'highvol' ? getHighVolLLMConfig() : getAPIConfig();
+    return await auditedDeepSeekCall({ module, apiConfig, messages, fetchOptions, traceId, signal });
+  }
+}
+
+// ADP 通用调用（非流式，用于替代原 LLM 调用场景）
+// 将 OpenAI messages 格式转为 ADP 单轮对话
+async function callADPForLLM({ module, messages, adpAppKey, traceId }) {
+  const adpConfig = await getADPConfigInternal();
+  const appKey = adpAppKey || adpConfig.appKey;
+  const url = adpConfig.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  
+  // 从 messages 提取 system prompt 和 user content
+  let systemRole = '';
+  let userContent = '';
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      systemRole += (systemRole ? '\n' : '') + (typeof msg.content === 'string' ? msg.content : '');
+    } else if (msg.role === 'user') {
+      userContent += (userContent ? '\n' : '') + (typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content));
+    } else if (msg.role === 'assistant' && msg.content) {
+      userContent += `\n[助手之前的回复]: ${typeof msg.content === 'string' ? msg.content : ''}`;
+    }
+  }
+
+  const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+  const body = {
+    AppKey: appKey,
+    ConversationId: convId,
+    VisitorId: 'memora_user',
+    Contents: [{ Type: 'text', Text: userContent }],
+    RequestId: requestId,
+    Incremental: false,
+    Stream: 'enable',
+    ...(systemRole ? { SystemRole: systemRole } : {}),
+  };
+
+  const startTime = Date.now();
+  const auditRecord = {
+    module: `adp_${module}`,
+    model: `adp_v2`,
+    baseUrl: url,
+    apiKey: null,
+    adpAppKey: appKey ? `${appKey.substring(0, 8)}...` : null,
+    input: { systemPromptLen: systemRole.length, userPromptLen: userContent.length, userPrompt: userContent.substring(0, 200) },
+    output: { status: null, contentLen: 0, content: '', finishReason: null },
+    tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    latencyMs: 0,
+    error: null,
+    traceId: traceId || null,
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    auditRecord.output.status = response.status;
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      auditRecord.error = `ADP HTTP ${response.status}: ${errText.substring(0, 200)}`;
+      auditRecord.latencyMs = Date.now() - startTime;
+      if (auditLogger) try { auditLogger.record(auditRecord); } catch (_) {}
+      return { response: null, auditId: auditRecord.id, error: auditRecord.error };
+    }
+
+    // 读取 SSE 流，收集完整回复
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullContent = '';
+    let thinkingContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(dataStr);
+          // V2 事件类型
+          if (evt.event === 'text.delta' && evt.data?.content) {
+            fullContent += evt.data.content;
+          } else if (evt.event === 'thought' && evt.data?.content) {
+            thinkingContent += evt.data.content;
+          } else if (evt.event === 'error') {
+            auditRecord.error = `ADP Error: ${evt.data?.message || JSON.stringify(evt.data)}`;
+          } else if (evt.event === 'token_stat' && evt.data) {
+            auditRecord.tokens.prompt_tokens = evt.data.input_tokens || 0;
+            auditRecord.tokens.completion_tokens = evt.data.output_tokens || 0;
+            auditRecord.tokens.total_tokens = auditRecord.tokens.prompt_tokens + auditRecord.tokens.completion_tokens;
+          }
+        } catch (e) { /* 忽略非JSON行 */ }
+      }
+    }
+
+    auditRecord.output.contentLen = fullContent.length;
+    auditRecord.output.content = fullContent.substring(0, 500);
+    auditRecord.output.finishReason = 'stop';
+    auditRecord.latencyMs = Date.now() - startTime;
+    if (auditLogger) try { auditLogger.record(auditRecord); } catch (_) {}
+    incrementAICallCount(); // ADP 调用也计数
+
+    // 返回与 auditedDeepSeekCall 兼容的结构
+    // 构造一个 fake response 对象，让调用方可以直接读取完整文本
+    const fakeResponse = {
+      ok: true,
+      status: 200,
+      body: null, // 非流式，body 为 null
+      _fullContent: fullContent,
+      _thinkingContent: thinkingContent,
+      async json() { return { choices: [{ message: { content: fullContent }, finish_reason: 'stop' }] }; },
+      async text() { return fullContent; },
+    };
+
+    return { response: fakeResponse, auditId: auditRecord.id, fullContent, thinkingContent };
+  } catch (err) {
+    auditRecord.error = err.message;
+    auditRecord.latencyMs = Date.now() - startTime;
+    if (auditLogger) try { auditLogger.record(auditRecord); } catch (_) {}
+    return { response: null, auditId: auditRecord.id, error: err.message };
+  }
+}
+
+// 内部获取 ADP 配置（避免 IPC）
+async function getADPConfigInternal() {
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+    return {
+      appKey: remoteConfig.adp.app_key || DEFAULT_ADP_APP_KEY,
+      url: remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
+      knowledgeAppKey: remoteConfig.adp.knowledge_app_key || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+      searchAppKey: remoteConfig.adp.search_app_key || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+      clusteringAppKey: remoteConfig.adp.clustering_app_key || DEFAULT_ADP_CLUSTERING_APP_KEY,
+      graphAppKey: remoteConfig.adp.graph_app_key || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+      activationAppKey: remoteConfig.adp.activation_app_key || DEFAULT_ADP_ACTIVATION_APP_KEY,
+      evolutionAppKey: remoteConfig.adp.evolution_app_key || DEFAULT_ADP_EVOLUTION_APP_KEY,
+      conflictAppKey: remoteConfig.adp.conflict_app_key || DEFAULT_ADP_CONFLICT_APP_KEY,
+    };
+  }
+  return {
+    appKey: getSetting('adp_app_key') || DEFAULT_ADP_APP_KEY,
+    url: getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
+    knowledgeAppKey: getSetting('adp_knowledge_app_key') || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+    searchAppKey: getSetting('adp_search_app_key') || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+    clusteringAppKey: getSetting('adp_clustering_app_key') || DEFAULT_ADP_CLUSTERING_APP_KEY,
+    graphAppKey: getSetting('adp_graph_app_key') || DEFAULT_ADP_KNOWLEDGE_APP_KEY,
+    activationAppKey: getSetting('adp_activation_app_key') || DEFAULT_ADP_ACTIVATION_APP_KEY,
+    evolutionAppKey: getSetting('adp_evolution_app_key') || DEFAULT_ADP_EVOLUTION_APP_KEY,
+    conflictAppKey: getSetting('adp_conflict_app_key') || DEFAULT_ADP_CONFLICT_APP_KEY,
   };
 }
 
@@ -1310,10 +1552,10 @@ async function analyzeClipboardText(text) {
       throw promptErr; // 重新抛出，让外层 catch 处理
     }
     
-    _sendLog(`[AI] 📤 调用AI API: ${apiConfig.baseUrl}/chat/completions model=${apiConfig.model}`);
-    const { response } = await auditedDeepSeekCall({
+    _sendLog(`[AI] 📤 调用AI API (clipboard_analysis)`);
+    const { response } = await callAI({
       module: 'clipboard_analysis',
-      apiConfig,
+      category: 'highvol',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
@@ -1531,9 +1773,9 @@ async function analyzeClipboardText(text) {
       if (memoryStore && result.is_valid_info && (result.is_task || confidence >= 0.7)) {
         // 调用记忆提取Prompt
         try {
-          const { response: memoryResponse } = await auditedDeepSeekCall({
+          const { response: memoryResponse } = await callAI({
             module: 'clipboard_memory',
-            apiConfig,
+            category: 'highvol',
             messages: [
               { role: 'system', content: getCurrentMemoryPrompt() },
               { role: 'user', content: `从以下文本中提取结构化记忆：\n\n${text}` }
@@ -1686,11 +1928,9 @@ async function analyzeClipboardText(text) {
 
 async function estimateTaskDuration(task) {
   try {
-    const apiConfig = getAPIConfig();
-
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'estimate_duration',
-      apiConfig,
+      category: 'highvol',
       messages: [
         { role: 'system', content: '你是一个时间管理专家，能够准确预估任务所需时间。只返回数字（分钟数）。' },
         { role: 'user', content: `预估以下任务需要多少分钟完成：\n\n任务：${task.title}\n描述：${task.description || '无'}` }
@@ -1857,8 +2097,6 @@ ipcMain.handle('estimate-duration', async (event, task) => {
 // AI分析任务输入
 ipcMain.handle('analyze-task', async (event, text) => {
   try {
-    const apiConfig = getAPIConfig();
-    
     if (!canMakeAICall()) {
       return { success: false, error: '每日调用次数已达上限' };
     }
@@ -1872,9 +2110,9 @@ ipcMain.handle('analyze-task', async (event, text) => {
       userPrompt += '\n\n[预分类信号：检测到编号列表，这通常是任务列表]';
     }
     
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'analyze_task',
-      apiConfig,
+      category: 'highvol',
       messages: [
         { role: 'system', content: getCurrentAIPrompt() },
         { role: 'user', content: userPrompt }
@@ -1916,8 +2154,6 @@ ipcMain.handle('analyze-task', async (event, text) => {
 
 ipcMain.handle('analyze-clipboard', async (event, text) => {
   try {
-    const apiConfig = getAPIConfig();
-    
     if (!canMakeAICall()) {
       return { success: false, error: '每日调用次数已达上限' };
     }
@@ -2030,9 +2266,9 @@ ipcMain.handle('analyze-clipboard', async (event, text) => {
 - 遇到 **@任何人 + 行动要求** → **is_task=true, confidence >= 0.9**
 - 遇到 **编号列表（1）2）3）等）+ 行动描述** → **is_task=true, confidence >= 0.85**`;
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'analyze_clipboard',
-      apiConfig,
+      category: 'lowvol',
       messages: [
         { role: 'system', content: clipboardPrompt },
         { role: 'user', content: text }
@@ -2088,15 +2324,13 @@ ${feedback}
 
 请返回优化后的完整Prompt，保持原有格式和结构，但根据反馈调整判断逻辑。`;
 
-    const apiConfig = getAPIConfig();
-    
     if (!canMakeAICall()) {
       return { success: false, error: '每日调用次数已达上限' };
     }
     
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'optimize_prompt',
-      apiConfig,
+      category: 'lowvol',
       messages: [
         { role: 'user', content: optimizePrompt }
       ],
@@ -2181,19 +2415,25 @@ ipcMain.handle('set-ai-daily-limit', async (event, limit) => {
 // API配置相关
 ipcMain.handle('get-api-config', async () => {
   const config = getAPIConfig();
+  const highVolConfig = getHighVolLLMConfig();
   return {
     baseUrl: config.baseUrl,
     model: config.model,
     dailyLimit: config.dailyLimit,
     isCustomKey: config.isCustomKey,
-    fromServer: authState.isLoggedIn && !!remoteConfig?.api && !authState.forceLocalConfig,  // v2.0: 标记是否来自服务器
-    forceLocalConfig: authState.forceLocalConfig || false
-    // 不返回apiKey，防止泄露
+    fromServer: authState.isLoggedIn && !!remoteConfig?.api && !authState.forceLocalConfig,
+    forceLocalConfig: authState.forceLocalConfig || false,
+    // 大用量 LLM 配置
+    highvolBaseUrl: highVolConfig.baseUrl,
+    highvolModel: highVolConfig.model,
+    highvolApiKeySet: !!highVolConfig.apiKey,
+    // 全局 AI 模式
+    globalAIMode: getGlobalAIMode(),
   };
 });
 
 ipcMain.handle('set-api-config', async (event, config) => {
-  if (config.apiKey) {
+  if (config.apiKey !== undefined) {
     setSetting('api_key', config.apiKey);
   }
   if (config.baseUrl) {
@@ -2205,7 +2445,33 @@ ipcMain.handle('set-api-config', async (event, config) => {
   if (config.dailyLimit) {
     setSetting('api_daily_limit', config.dailyLimit.toString());
   }
+  // 大用量 LLM 配置
+  if (config.highvolApiKey !== undefined) {
+    setSetting('highvol_api_key', config.highvolApiKey);
+  }
+  if (config.highvolBaseUrl) {
+    setSetting('highvol_base_url', config.highvolBaseUrl);
+  }
+  if (config.highvolModel) {
+    setSetting('highvol_model', config.highvolModel);
+  }
   return { success: true };
+});
+
+// 全局 AI 模式控制
+ipcMain.handle('get-global-ai-mode', async () => {
+  return { mode: getGlobalAIMode() };
+});
+
+ipcMain.handle('set-global-ai-mode', async (event, mode) => {
+  const result = setGlobalAIMode(mode);
+  if (result) {
+    // 通知所有窗口模式已更新
+    if (mainWindow) {
+      mainWindow.webContents.send('global-ai-mode-changed', mode);
+    }
+  }
+  return { success: result, mode: getGlobalAIMode() };
 });
 
 ipcMain.handle('clear-api-key', async () => {
@@ -3646,8 +3912,6 @@ ipcMain.handle('search-related-memories', async (event, content) => {
 // === AI 整理单条记忆 ===
 ipcMain.handle('memory:ai-organize', async (event, content) => {
   try {
-    const apiConfig = getAPIConfig();
-    if (!apiConfig.apiKey) return { success: false, error: '请先配置 AI API Key' };
     if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
 
     // 获取相关历史记忆做参照
@@ -3674,9 +3938,9 @@ ipcMain.handle('memory:ai-organize', async (event, content) => {
 }
 分类：instant=临时, short=近期, long=长期有价值。只输出JSON。`;
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'memory_extract',
-      apiConfig,
+      category: 'highvol',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `记忆内容：${content}\n\n相关历史记忆：\n${relatedText}` }
@@ -3767,8 +4031,7 @@ ipcMain.handle('memory:ai-organize', async (event, content) => {
 // === AI 批量整理记忆 ===
 ipcMain.handle('memory:ai-batch-organize', async () => {
   try {
-    const apiConfig = getAPIConfig();
-    if (!apiConfig.apiKey) return { success: false, error: '请先配置 AI API Key' };
+    if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
     if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
 
     if (!memoryStore) return { success: false, error: '记忆系统未初始化' };
@@ -3791,9 +4054,9 @@ ipcMain.handle('memory:ai-batch-organize', async () => {
 }
 规则：合并保留最完整信息；覆盖仅在新信息完全取代旧信息时用；只输出JSON。`;
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'memory_organize',
-      apiConfig,
+      category: 'highvol',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: memoriesText }
@@ -4763,6 +5026,11 @@ function _loadProfile() {
 }
 
 async function _callADPForGraph(prompt) {
+  // v2.3: LLM 模式下改用 LLM 调用
+  if (getGlobalAIMode() === 'llm') {
+    return await _callLLMForGraph(prompt);
+  }
+
   // 获取图谱专用 ADP 配置（graphAppKey）
   let graphAppKey, url;
   if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
@@ -4937,6 +5205,80 @@ async function _callADPForGraph(prompt) {
   }
 }
 
+// LLM 模式下的图谱构建（替代 _callADPForGraph）
+async function _callLLMForGraph(prompt) {
+  const startTime = Date.now();
+  try {
+    console.log('[Graph] Calling LLM for graph build (LLM mode), prompt length:', prompt.length);
+    const { response } = await callAI({
+      module: 'graph_build',
+      category: 'lowvol',
+      messages: [{ role: 'user', content: prompt }],
+      fetchOptions: { temperature: 0.3, max_tokens: 8000 },
+    });
+
+    if (!response || !response.ok) {
+      throw new Error('LLM 调用失败');
+    }
+
+    let fullText = '';
+    // callAI 在 agent 模式下返回 fakeResponse，有 fullContent 属性
+    if (response._fullContent) {
+      fullText = response._fullContent;
+    } else {
+      const data = await response.json();
+      fullText = data.choices?.[0]?.message?.content || '';
+    }
+
+    if (!fullText) throw new Error('LLM 返回内容为空');
+
+    const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('LLM 返回格式异常，无 JSON');
+
+    const graphData = JSON.parse(jsonMatch[0]);
+    // 兼容处理（同 _callADPForGraph）
+    if (graphData.edges) {
+      graphData.edges = graphData.edges.map(e => ({
+        ...e,
+        source_id: e.source_id || e.source,
+        target_id: e.target_id || e.target,
+      }));
+    }
+    if (graphData.nodes) {
+      graphData.nodes = graphData.nodes.map(n => ({
+        ...n,
+        health: n.health === 'needs_attention' ? 'unhealthy' : (n.health || 'healthy'),
+      }));
+    }
+
+    if (auditLogger) {
+      try {
+        auditLogger.record({
+          id: `graph_${Date.now()}`,
+          module: 'graph_build_llm',
+          model: getAPIConfig().model,
+          baseUrl: getAPIConfig().baseUrl,
+          input: { userPromptLen: prompt.length },
+          output: { status: 200, contentLen: fullText.length, finishReason: 'completed' },
+          tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          latencyMs: Date.now() - startTime,
+          error: null,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (_) {}
+    }
+
+    return graphData;
+  } catch (e) {
+    console.error('[Graph] LLM call error:', e);
+    return {
+      nodes: [], edges: [],
+      health_report: { summary: {}, gaps: [], outdated: [], conflicts: [], duplicates: [], orphans: [] },
+      overview: { totalNodes: 0, totalEdges: 0, densityDistribution: {}, healthDistribution: {}, topDomains: [], weakestAreas: [], knowledgeScore: 0 }
+    };
+  }
+}
+
 ipcMain.handle('get-memory-prompt', async () => {
   return getCurrentMemoryPrompt();
 });
@@ -4969,9 +5311,9 @@ ipcMain.handle('extract-memory', async (event, content) => {
     
     console.log('[Memory] Calling API with content length:', content.length);
     
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'memory_extract_ipc',
-      apiConfig,
+      category: 'highvol',
       messages: [
         { role: 'system', content: prompt },
         { role: 'user', content: content }
@@ -5053,10 +5395,8 @@ async function optimizePrompts() {
   if (feedbackStore.length < 5) return;
   
   try {
-    const apiConfig = getAPIConfig();
-    
     if (!canMakeAICall()) return;
-    
+
     const feedbackSummary = feedbackStore.slice(-20).map(f => ({
       type: f.type,
       content: f.content.substring(0, 100) + (f.content.length > 100 ? '...' : ''),
@@ -5090,9 +5430,9 @@ async function optimizePrompts() {
       }
     `;
     
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'optimize_prompts',
-      apiConfig,
+      category: 'lowvol',
       messages: [
         { role: 'system', content: '你是一个AI助手，擅长优化Prompt和识别规则。' },
         { role: 'user', content: optimizationPrompt }
@@ -5515,7 +5855,7 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments }) 
     }
 
     const startTs = Date.now();
-    console.log('[Agent] Invoke (streaming) - intent:', intent, 'model:', apiConfig.model, 'baseUrl:', apiConfig.baseUrl);
+    console.log('[Agent] Invoke (streaming) - intent:', intent, 'mode:', getGlobalAIMode(), 'model:', apiConfig.model, 'baseUrl:', apiConfig.baseUrl);
     const { response } = await auditedDeepSeekCall({
       module: 'agent',
       apiConfig,
@@ -6498,7 +6838,6 @@ function classifyClipboardIntent(text, aiResult) {
 // 知识原子提取：从笔记内容中提取知识原子
 async function extractKnowledgeAtoms(content, sourceNoteId, tags) {
   try {
-    const apiConfig = getAPIConfig();
     const promptPath = path.join(PROMPT_DIR, 'knowledge_atom_extraction.md');
     let promptTemplate;
     try {
@@ -6525,9 +6864,9 @@ async function extractKnowledgeAtoms(content, sourceNoteId, tags) {
       .replace('{title}', '')
       .replace('{content}', content.substring(0, 1500));
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'knowledge_extract_atoms',
-      apiConfig,
+      category: 'lowvol',
       messages: [{ role: 'user', content: prompt }],
       fetchOptions: { temperature: 0.3, max_tokens: 1000 },
     });
@@ -6717,8 +7056,14 @@ function getClusteringADPConfig() {
 }
 
 // 单批 AI 调用 + 解析（使用 ADP SSE 接口）
+// v2.3: LLM 模式下自动切换为 LLM 调用
 async function processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount = 0) {
   const prompt = buildClusteringPrompt(existingClusters, batchAtoms, promptTemplate);
+
+  // v2.3: LLM 模式下走 LLM
+  if (getGlobalAIMode() === 'llm') {
+    return await _processClusteringBatchLLM(batchAtoms, existingClusters, promptTemplate, prompt, retryCount);
+  }
 
   // 登录检查
   if (!authState.isLoggedIn) {
@@ -7005,6 +7350,66 @@ function localKeywordPreCluster(unclustered) {
 }
 
 // 知识聚类：将未归簇的原子智能分组（支持分批处理）
+// LLM 模式下的聚类批次处理
+async function _processClusteringBatchLLM(batchAtoms, existingClusters, promptTemplate, prompt, retryCount = 0) {
+  try {
+    console.log('[Knowledge] Clustering via LLM (LLM mode), atoms:', batchAtoms.length);
+    const { response } = await callAI({
+      module: 'knowledge_clustering',
+      category: 'lowvol',
+      messages: [{ role: 'user', content: prompt }],
+      fetchOptions: { temperature: 0.3, max_tokens: 4000, response_format: { type: 'json_object' } },
+    });
+
+    if (!response || !response.ok) {
+      if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+        console.warn('[Knowledge] LLM clustering failed, retrying...', retryCount + 1);
+        await new Promise(r => setTimeout(r, 2000));
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
+      }
+      return { success: false, error: 'LLM 调用失败', assignments: [] };
+    }
+
+    let fullText = '';
+    if (response._fullContent) {
+      fullText = response._fullContent;
+    } else {
+      const data = await response.json();
+      fullText = data.choices?.[0]?.message?.content || '';
+    }
+
+    if (!fullText) {
+      if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 1000));
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
+      }
+      return { success: false, error: 'LLM 返回内容为空', assignments: [] };
+    }
+
+    // 解析 JSON
+    try {
+      const jsonStr = fullText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(jsonStr);
+      incrementClusteringCallCount();
+      return { success: true, assignments: parsed.assignments || [], mature_cluster_ids: parsed.mature_cluster_ids || [] };
+    } catch (e) {
+      if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+        console.warn('[Knowledge] Clustering parse error (LLM), retrying...', retryCount + 1);
+        await new Promise(r => setTimeout(r, 1000));
+        return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
+      }
+      return { success: false, error: 'JSON 解析失败', assignments: [] };
+    }
+  } catch (e) {
+    if (retryCount < CLUSTERING_CONFIG.MAX_RETRIES) {
+      console.warn('[Knowledge] Batch error (LLM), retrying...', retryCount + 1, e.message);
+      await new Promise(r => setTimeout(r, 1000));
+      return processClusteringBatch(batchAtoms, existingClusters, promptTemplate, retryCount + 1);
+    }
+    return { success: false, error: e.message, assignments: [] };
+  }
+}
+
 async function autoClusterAtoms() {
   try {
     let unclustered = knowledgeStore.getAtoms({ unclustered: true });
@@ -7209,7 +7614,6 @@ async function generateArticle(clusterId) {
       }
     }
 
-    const apiConfig = getAPIConfig();
     const promptPath = path.join(PROMPT_DIR, 'knowledge_article_synthesis.md');
     let promptTemplate;
     try {
@@ -7237,9 +7641,9 @@ async function generateArticle(clusterId) {
       .replace('{cluster_domain}', cluster.domain || '通用')
       .replace('{atoms}', atomsStr);
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'knowledge_article',
-      apiConfig,
+      category: 'lowvol',
       messages: [{ role: 'user', content: prompt }],
       fetchOptions: { temperature: 0.4, max_tokens: 3000 },
     });
@@ -7494,7 +7898,13 @@ ipcMain.handle('open-external', async (event, url) => {
 });
 
 // 知识跟随：ADP 搜索（SSE 流式）
+// v2.3: LLM 模式下改用 LLM 流式替代
 ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversationId }) => {
+  // v2.3: LLM 模式下走 LLM 流式
+  if (getGlobalAIMode() === 'llm') {
+    return await _knowledgeSearchLLM(event, { query, intent, conversationId });
+  }
+
   // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
   let searchAppKey, knowledgeAppKey, generalAppKey, url;
   if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
@@ -7737,6 +8147,69 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
   }
 });
 
+// LLM 模式下的知识搜索（替代 ADP SSE）
+async function _knowledgeSearchLLM(event, { query, intent, conversationId }) {
+  try {
+    const apiConfig = getHighVolLLMConfig(); // 搜索可能频繁，使用大用量配置
+    const systemPrompt = '你是一个知识助手，帮助用户搜索和整理知识。根据用户的查询，提供相关知识和深入分析。';
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: query },
+    ];
+
+    const { response } = await auditedDeepSeekCall({
+      module: 'knowledge_search_llm',
+      apiConfig,
+      messages,
+      fetchOptions: { temperature: 0.5, stream: true },
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `LLM 调用失败 (${response.status})` };
+    }
+
+    // 流式读取并推送
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === '[DONE]') {
+          mainWindow.webContents.send('knowledge:adp-chunk', {
+            event: 'done', content: fullContent, isFinal: true,
+          });
+          break;
+        }
+        try {
+          const parsed = JSON.parse(dataStr);
+          const delta = parsed.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            fullContent += delta;
+            mainWindow.webContents.send('knowledge:adp-chunk', {
+              event: 'text.delta', content: delta, isFinal: false,
+            });
+          }
+        } catch (_) {}
+      }
+    }
+
+    return { success: true, streaming: true, source: 'llm' };
+  } catch (e) {
+    console.error('[Knowledge] LLM search error:', e);
+    return { success: false, error: e.message };
+  }
+}
+
 // 停止 ADP 流式输出
 ipcMain.handle('knowledge:stop-adp', async () => {
   if (activeADPController) {
@@ -7901,9 +8374,9 @@ ipcMain.handle('knowledge:extract-keywords', async (event, { query }) => {
       model = getSetting('model') || DEFAULT_MODEL;
     }
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'search_keyword',
-      apiConfig: { baseUrl, apiKey, model },
+      category: 'highvol',
       messages: [
         { role: 'system', content: '你是一个关键词提取专家。从用户的语义化搜索语句中提取出唯一的核心关键词。只输出1个核心关键词，不超过7个字，不要有其他内容。去除虚词、语气词和修饰语，保留最能代表搜索意图的核心词。例如："如何优化数据库查询性能" → "数据库"，"最近在研究的前端框架有什么推荐" → "前端框架"，"React中useState的使用方法" → "useState"，"机器学习中的梯度下降算法" → "梯度下降"' },
         { role: 'user', content: query }
@@ -8025,8 +8498,7 @@ ipcMain.handle('profile:suggestions', async () => {
 // === AI 批量导入画像 ===
 ipcMain.handle('profile:import-ai', async (event, text) => {
   try {
-    const apiConfig = getAPIConfig();
-    if (!apiConfig.apiKey) return { success: false, error: '请先配置 AI API Key' };
+    if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
 
     const profile = loadProfile();
     const systemPrompt = `你是忆境 Memora 的画像解析 AI。从用户文本中提取结构化信息，输出严格JSON：
@@ -8038,9 +8510,9 @@ ipcMain.handle('profile:import-ai', async (event, text) => {
 }
 规则：提取所有人物并推断关系(领导/同事/下属/客户/合作伙伴)；项目状态根据描述推断；只输出JSON，不输出markdown。内容尽量精简，name和description要简短。`;
 
-    const { response } = await auditedDeepSeekCall({
+    const { response } = await callAI({
       module: 'profile_import',
-      apiConfig,
+      category: 'lowvol',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: text }
@@ -8529,6 +9001,12 @@ const insightTaskManager = {
   isRunning(taskType) {
     const task = this.tasks.get(taskType);
     return task && task.status === 'running';
+  },
+
+  // 注入缓存数据（用于测试数据或离线数据恢复）
+  injectCache(taskType, result) {
+    this.cache.set(taskType, { result, completedAt: Date.now() });
+    console.log(`[Insight] Cache injected for: ${taskType}`);
   }
 };
 
@@ -8832,6 +9310,16 @@ ipcMain.handle('insight:start-task', async (event, { taskType }) => {
 ipcMain.handle('insight:get-cached-result', async (event, { taskType }) => {
   const cached = insightTaskManager.getCachedResult(taskType);
   return cached;
+});
+
+// 注入测试数据到缓存（开发调试用，不调 AI 直接展示）
+ipcMain.handle('insight:inject-test-data', async (event, { taskType, result }) => {
+  try {
+    insightTaskManager.injectCache(taskType, result);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // 获取任务状态
@@ -9281,19 +9769,24 @@ ipcMain.handle('multimodal:generate-book', async (event, options) => {
         .map(([name, info]) => ({ name, type: info.type, count: info.count }));
     }
 
-    // 调用 ADP 生成知识书本大纲
-    const config = await getInsightADPConfig('evolution');
+    // 调用 LLM 生成知识书本大纲（v2.4: 统一走 callAI，保证 JSON 格式）
     const bookPrompt = `你是一个知识体系整理专家。根据用户的知识库数据，生成一本结构化的知识书本。
+
+⚠️ **title 命名规则（非常重要）**：
+- 标题必须反映知识库的实际内容领域，不要用泛泛的"我的知识体系"
+- 格式示例："AI与云计算知识体系"、"产品设计与用户体验知识库"、"金融科技与合规知识体系"
+- 根据知识库中占比最高的领域来命名
+- 如果知识库覆盖多个领域，取 TOP 2-3 个领域组合命名
 
 返回 JSON：
 {
-  "title": "书本标题（如：我的AI与产品知识体系）",
+  "title": "根据内容生成的具体标题（不要用'我的知识体系'这种泛泛名称）",
   "chapters": [
     {
       "title": "第一章：领域名",
-      "summary": "本章概要",
+      "summary": "本章概要（50-100字）",
       "sections": [
-        { "title": "1.1 小节名", "content": "该小节的核心知识点描述" }
+        { "title": "1.1 小节名", "content": "该小节的核心知识点描述（100-200字，要有实质内容）" }
       ]
     }
   ],
@@ -9305,9 +9798,30 @@ ${JSON.stringify(summary)}`;
 
     const result = await callADPForInsight(config, bookPrompt, JSON.stringify(summary), 'book_generation');
 
+    console.log('[Multimodal] Generate book AI result:', {
+      hasTitle: !!result.title,
+      hasChapters: !!(result.chapters && result.chapters.length),
+      chaptersCount: result.chapters?.length || 0,
+      resultKeys: Object.keys(result || {})
+    });
+
+    // 智能默认标题：如果 AI 没有返回好标题，基于知识库内容生成
+    let bookTitle = result.title;
+    if (!bookTitle || bookTitle === '我的知识体系' || bookTitle === '未命名') {
+      // 根据知识库域名生成默认标题
+      const topDomains = Object.entries(summary.topDomains || {}).sort((a, b) => b[1] - a[1]);
+      const topDomainNames = topDomains.slice(0, 2).map(d => d[0]).filter(d => d !== '未分类');
+      if (topDomainNames.length > 0) {
+        bookTitle = `${topDomainNames.join('与')}知识体系`;
+      } else {
+        const date = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+        bookTitle = `知识体系 ${date}`;
+      }
+    }
+
     const book = {
       id: `book_${Date.now()}`,
-      title: result.title || '我的知识体系',
+      title: bookTitle || '我的知识体系',
       chapters: result.chapters || [],
       generatedAt: new Date().toISOString(),
       assetCount: assets.length,
@@ -9340,9 +9854,15 @@ ipcMain.handle('multimodal:get-books', async () => {
       try {
         const fullPath = path.join(mmPath, 'books', b.fileName);
         if (fs.existsSync(fullPath)) {
-          return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+          const bookData = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+          console.log('[Multimodal] get-books: loaded', b.id, 'chapters:', bookData.chapters?.length || 0);
+          return bookData;
+        } else {
+          console.warn('[Multimodal] get-books: file not found:', fullPath);
         }
-      } catch (_) {}
+      } catch (e) {
+        console.warn('[Multimodal] get-books: parse error for', b.id, e.message);
+      }
       return b;
     });
     return { books };
@@ -9484,7 +10004,15 @@ function loadPromptTemplate(name) {
 }
 
 // 调用 ADP 进行洞察分析（非流式，同步等待结果）
+// v2.3: LLM 模式下自动切换为 LLM 调用
+// v2.4: Agent 模式下也走 LLM（洞察分析需要结构化 JSON，ADP 智能体无法保证 JSON 格式）
 async function callADPForInsight(config, promptTemplate, contextStr, module) {
+  // v2.4: LLM 和 Agent 模式都走 LLM（结构化 JSON 输出必须走 LLM）
+  const mode = getGlobalAIMode();
+  if (mode === 'llm' || mode === 'agent') {
+    return await _callLLMForInsight(promptTemplate, contextStr, module);
+  }
+
   const https = require('https');
   const http = require('http');
 
@@ -9569,6 +10097,52 @@ async function callADPForInsight(config, promptTemplate, contextStr, module) {
     req.write(JSON.stringify(requestBody));
     req.end();
   });
+}
+
+// LLM 模式下的洞察分析（替代 callADPForInsight）
+async function _callLLMForInsight(promptTemplate, contextStr, module) {
+  try {
+    console.log('[Insight] Calling LLM for insight, module:', module);
+    const isBookGen = module === 'book_generation';
+    const { response } = await callAI({
+      module: `insight_${module}`,
+      category: isBookGen ? 'highvol' : 'lowvol',
+      messages: [
+        { role: 'user', content: `${promptTemplate}\n\n## 当前知识库数据\n\n${contextStr}` }
+      ],
+      fetchOptions: { temperature: 0.3, max_tokens: isBookGen ? 8000 : 4000 },
+    });
+
+    if (!response || !response.ok) {
+      return { summary: 'LLM 调用失败，请稍后重试' };
+    }
+
+    let fullText = '';
+    if (response._fullContent) {
+      fullText = response._fullContent;
+    } else {
+      const data = await response.json();
+      fullText = data.choices?.[0]?.message?.content || '';
+    }
+
+    // 从文本中提取 JSON
+    const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      auditLogger.log({
+        module: `insight_${module}_llm`,
+        action: 'llm_call',
+        inputTokens: contextStr.length,
+        status: 'success'
+      });
+      return result;
+    } else {
+      return { summary: fullText.substring(0, 500) };
+    }
+  } catch (e) {
+    console.error('[Insight] LLM call error:', e.message);
+    return { summary: '分析失败: ' + e.message };
+  }
 }
 
 // 时间格式化

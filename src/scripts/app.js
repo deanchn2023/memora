@@ -7,7 +7,7 @@ const App = {
   newNoteCount: 0, // 记事本角标：不在记事本页时新笔记的累加计数
   dbSyncTimer: null, // 数据库同步定时器
   _chatAttachments: [], // 聊天文件附件列表
-  _aiAssistantMode: null, // AI 助手模式：'agent' 或 'llm'
+  _aiAssistantMode: null, // AI 助手模式：'agent' 或 'llm'（全局控制）
   _agentStreamTimerStart: 0, // Agent 流式计时起点
   _agentStreamTimerInterval: null, // Agent 流式计时器
   _userAvatarSvg: `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="uBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0E6FF"/><stop offset="1" stop-color="#E0F0FF"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#uBg)"/><circle cx="20" cy="14.5" r="6.5" fill="#C4B5FD"/><ellipse cx="20" cy="30" rx="10.5" ry="8" fill="#C4B5FD"/><circle cx="17.5" cy="13.8" r="1" fill="#7C3AED"/><circle cx="22.5" cy="13.8" r="1" fill="#7C3AED"/><path d="M18.5 16.2 Q20 17.8 21.5 16.2" stroke="#7C3AED" stroke-width="0.9" fill="none" stroke-linecap="round"/><circle cx="15" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="25" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="12" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/><circle cx="28" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/></svg>`,
@@ -98,6 +98,9 @@ const App = {
 
     // 恢复视觉偏好（主题、字体大小、效果开关）
     this._restoreVisualPrefs();
+    
+    // 恢复全局 AI 模式（从主进程加载，始终可见）
+    this._initGlobalAIMode();
     
     // i18n：恢复语言偏好 + 绑定切换 + 注册 UI 更新
     this._initI18n();
@@ -375,15 +378,21 @@ const App = {
     // AI助手相关事件
     document.getElementById('openAIAssistantBtn')?.addEventListener('click', () => this.showAIAssistantView());
 
-    // AI 助手模式切换（Agent/LLM）
+    // AI 助手模式切换（Agent/LLM）→ 全局控制 v2.3
     document.getElementById('aiModeAgent')?.addEventListener('click', () => {
-      this._aiAssistantMode = 'agent';
-      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'agent'));
+      this._setGlobalAIMode('agent');
     });
     document.getElementById('aiModeLLM')?.addEventListener('click', () => {
-      this._aiAssistantMode = 'llm';
-      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'llm'));
+      this._setGlobalAIMode('llm');
     });
+
+    // 监听全局模式变更
+    if (window.electronAPI?.onGlobalAIModeChanged) {
+      window.electronAPI.onGlobalAIModeChanged((mode) => {
+        this._aiAssistantMode = mode;
+        document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+      });
+    }
 
     // 通知铃铛
     document.getElementById('notificationBellBtn')?.addEventListener('click', () => this._toggleNotificationPanel());
@@ -643,7 +652,12 @@ const App = {
       document.getElementById('apiDailyLimit').value = config.dailyLimit || 1000;
       document.getElementById('currentKeyType').textContent = `当前使用: ${config.isCustomKey ? '✏️ 自定义密钥' : (config.fromServer ? '🏢 组织配置' : '📦 内置密钥')}`;
       document.getElementById('currentDailyLimit').textContent = `每日限制: ${config.dailyLimit}次`;
-      
+
+      // 大用量 LLM 配置
+      document.getElementById('highvolBaseUrl').value = config.highvolBaseUrl || '';
+      document.getElementById('highvolModel').value = config.highvolModel || '';
+      document.getElementById('highvolApiKey').value = ''; // 不回显 key
+
       // v2.0: 登录状态时 API 面板显示提示
       this._updateConfigServerHints(config.fromServer);
     });
@@ -1382,26 +1396,42 @@ const App = {
     }, 100);
   },
 
+  /** 初始化全局 AI 模式（启动时调用，从主进程恢复） */
+  _initGlobalAIMode() {
+    const toggle = document.getElementById('aiModeToggle');
+    if (!toggle) return;
+
+    if (window.electronAPI?.getGlobalAIMode) {
+      window.electronAPI.getGlobalAIMode().then(result => {
+        this._aiAssistantMode = result.mode || 'agent';
+        toggle.querySelectorAll('.ai-mode-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.mode === this._aiAssistantMode);
+        });
+      });
+    } else {
+      this._aiAssistantMode = 'agent';
+    }
+  },
+
   /** 更新 AI 助手模式切换按钮 */
   _updateAIModeToggle() {
     const toggle = document.getElementById('aiModeToggle');
     if (!toggle) return;
 
-    // 始终显示模式切换
-    toggle.classList.remove('hidden');
-
-    // 已登录默认 agent 模式，未登录默认 llm 模式
-    const isLoggedIn = this._isOrgLoggedIn();
-    const defaultMode = isLoggedIn ? 'agent' : 'llm';
-
-    if (!this._aiAssistantMode) {
-      this._aiAssistantMode = defaultMode;
-    }
-
-    // 更新按钮状态
+    // 更新按钮状态（模式切换已始终可见，无需再 remove hidden）
     toggle.querySelectorAll('.ai-mode-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === this._aiAssistantMode);
     });
+  },
+
+  /** 设置全局 AI 模式 */
+  async _setGlobalAIMode(mode) {
+    this._aiAssistantMode = mode;
+    document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    // 持久化到主进程
+    if (window.electronAPI?.setGlobalAIMode) {
+      await window.electronAPI.setGlobalAIMode(mode);
+    }
   },
 
   /** 判断是否已登录组织 */
@@ -3211,7 +3241,11 @@ ${JSON.stringify(reportData, null, 2)}`;
         apiKey: apiKey || null,
         baseUrl: baseUrl || null,
         model: model || null,
-        dailyLimit: dailyLimit || null
+        dailyLimit: dailyLimit || null,
+        // 大用量 LLM 配置
+        highvolApiKey: document.getElementById('highvolApiKey').value || null,
+        highvolBaseUrl: document.getElementById('highvolBaseUrl').value || null,
+        highvolModel: document.getElementById('highvolModel').value || null,
       });
       
       // 保存ADP配置
@@ -4012,12 +4046,12 @@ ${JSON.stringify(reportData, null, 2)}`;
           <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
           <div class="note-body">
             <div class="note-header">
-              <h3 class="note-title">${note.title}</h3>
+              <h3 class="note-title">${this.escapeHtml(note.title)}</h3>
               <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
             </div>
-            <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
+            <p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>
             <div class="note-preview hidden" id="note-preview-${note.id}">
-              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
+              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
               <div class="note-preview-hint">点击复制 | 双击编辑</div>
             </div>
             <div class="note-footer">
@@ -5068,12 +5102,12 @@ ${JSON.stringify(reportData, null, 2)}`;
           <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
           <div class="note-body">
             <div class="note-header">
-              <h3 class="note-title">${note.title}</h3>
+              <h3 class="note-title">${this.escapeHtml(note.title)}</h3>
               <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
             </div>
-            <p class="note-content">${note.content.substring(0, 200)}${note.content.length > 200 ? '...' : ''}</p>
+            <p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>
             <div class="note-preview hidden" id="note-preview-${note.id}">
-              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${note.content}</div>
+              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
               <div class="note-preview-hint">点击复制 | 双击编辑</div>
             </div>
             <div class="note-footer">

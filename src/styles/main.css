@@ -401,10 +401,6 @@ body {
   border-radius: 10px;
 }
 
-.ai-mode-toggle.hidden {
-  display: none;
-}
-
 .ai-mode-btn {
   padding: 4px 10px;
   border: none;
@@ -1075,6 +1071,16 @@ body {
 .config-status {
   display: flex;
   gap: 20px;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
   margin-top: 16px;
   padding: 14px 16px;
   background: var(--bg-secondary);
