@@ -7670,7 +7670,7 @@ ${JSON.stringify(reportData, null, 2)}`;
   async _syncNow() {
     const settings = this._getSyncSettings();
     if (!settings.enabled) {
-      this._showToast('请先开启云端同步', 'warning');
+      this.showToast('请先开启云端同步', 'warning');
       return;
     }
 
@@ -7682,22 +7682,22 @@ ${JSON.stringify(reportData, null, 2)}`;
     } catch (e) {}
 
     if (!isLoggedIn) {
-      this._showToast('请先登录后再同步', 'warning');
+      this.showToast('请先登录后再同步', 'warning');
       return;
     }
 
     try {
       const result = await SyncEngine.fullSync();
       if (result.ok) {
-        this._showToast(`同步完成：上传 ${result.pushed} 条，下载 ${result.pulled} 条`, 'success');
+        this.showToast(`同步完成：上传 ${result.pushed} 条，下载 ${result.pulled} 条`, 'success');
         this._refreshSyncStatus();
         // 刷新日历/任务视图
         this.refreshCalendarView?.();
       } else {
-        this._showToast('同步失败：' + (result.reason || '未知错误'), 'error');
+        this.showToast('同步失败：' + (result.reason || '未知错误'), 'error');
       }
     } catch (err) {
-      this._showToast('同步失败：' + (err.message || '未知错误'), 'error');
+      this.showToast('同步失败：' + (err.message || '未知错误'), 'error');
     }
   },
 

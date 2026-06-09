@@ -3331,11 +3331,43 @@ ipcMain.handle('sync:deactivate-device', async (event, data) => {
 ipcMain.handle('sync:full', async (event, data) => {
   console.log('[Sync] Full sync, device:', data.device_id, ', since:', data.since);
 
-  // 补充 notes 和 knowledge 数据（这些在主进程管理）
+  // 补充渲染进程无法直接获取的数据（notes/knowledge/tasks 从数据库补充）
+  console.log('[Sync] Data source check: db exists=', !!db, 'db.data=', !!db?.data, 'tasks count=', db?.data?.tasks?.length || 0, 'changes keys=', Object.keys(data.changes || {}));
   try {
+    // Tasks（从本地数据库补充，渲染进程 Store 可能遗漏）
+    if (data.changes && !data.changes.tasks && db && db.data && db.data.tasks) {
+      try {
+        const dbTasks = db.data.tasks || [];
+        const since = data.since ? new Date(data.since).getTime() : 0;
+        const changedTasks = dbTasks.filter(t => {
+          const updated = new Date(t.updatedAt || t.createdAt || t.dueDate || 0).getTime();
+          return updated > since;
+        });
+        if (changedTasks.length > 0) {
+          data.changes.tasks = changedTasks.map(t => ({
+            id: t.id,
+            base_revision: t.revision || 0,
+            title: t.title,
+            description: t.description || '',
+            status: t.status || 'pending',
+            priority: t.priority || 'medium',
+            category: t.category || '',
+            tags: JSON.stringify(t.tags || []),
+            due_date: t.dueDate || null,
+            created_at: t.createdAt || null,
+            updated_at: t.updatedAt || t.createdAt || null
+          }));
+          console.log('[Sync] Supplemented', changedTasks.length, 'tasks from local DB');
+        }
+      } catch (e) {
+        console.warn('[Sync] Failed to collect tasks from local DB:', e.message);
+      }
+    }
+
     // Notes
     if (notebook && data.changes && !data.changes.notes) {
       const allNotes = notebook.search('');
+      console.log('[Sync] Notes: total=', allNotes.length, ', notebook available');
       const since = data.since ? new Date(data.since).getTime() : 0;
       const changedNotes = allNotes.filter(n =>
         new Date(n.updatedAt || n.createdAt || 0).getTime() > since
@@ -3432,6 +3464,8 @@ ipcMain.handle('sync:full', async (event, data) => {
     console.warn('[Sync] Failed to supplement data:', e.message);
   }
 
+  const changesSummary = Object.entries(data.changes || {}).map(([k, v]) => `${k}:${v?.length || 0}`).join(', ');
+  console.log('[Sync] Sending full sync request, changes:', changesSummary || 'empty');
   const result = await syncApiRequest('/full', { body: data });
 
   // 同步成功后，将 pull 下来的 notes/knowledge 写入本地
