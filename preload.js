@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setADPConfig: (config) => ipcRenderer.invoke('set-adp-config', config),
   sendADPMessage: (data) => ipcRenderer.invoke('send-adp-message', data),
   stopADPMessage: () => ipcRenderer.invoke('adp:stop-message'),
+  newADPChat: () => ipcRenderer.invoke('adp:new-chat'),
+  setADPConversationId: (convId) => ipcRenderer.invoke('adp:set-conversation-id', convId),
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
   onADPSSEEvent: (callback) => {
     ipcRenderer.on('adp:sse-event', (event, data) => callback(data));
@@ -162,6 +164,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notebookGetStats: () => ipcRenderer.invoke('notebook-get-stats'),
   notebookGetCategories: () => ipcRenderer.invoke('notebook-get-categories'),
   notebookSaveCategories: (categories) => ipcRenderer.invoke('notebook-save-categories', categories),
+  notebookExportMarkdown: (data) => ipcRenderer.invoke('notebook-export-markdown', data),
   
   // 反馈系统（用于持续优化）
   recordFeedback: (feedback) => ipcRenderer.invoke('record-feedback', feedback),
@@ -322,6 +325,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localFilesIndexStatus: () => ipcRenderer.invoke('local-files:index-status'),
   localFilesOpen: (filePath) => ipcRenderer.invoke('local-files:open', filePath),
   localFilesReveal: (filePath) => ipcRenderer.invoke('local-files:reveal', filePath),
+  localFilesSelectDirectory: () => ipcRenderer.invoke('local-files:select-directory'),
+  localFilesGetCustomDirs: () => ipcRenderer.invoke('local-files:get-custom-dirs'),
+  localFilesAddCustomDir: (data) => ipcRenderer.invoke('local-files:add-custom-dir', data),
+  localFilesRemoveCustomDir: (data) => ipcRenderer.invoke('local-files:remove-custom-dir', data),
 
   // v2.3 洞察模块（异步任务模式）
   insightGetActivations: () => ipcRenderer.invoke('insight:get-activations'),
@@ -361,5 +368,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 数据导出/导入
   dataExport: (password) => ipcRenderer.invoke('data:export', { password }),
   dataImport: (password, filePath) => ipcRenderer.invoke('data:import', { password, filePath }),
-  dataImportConfirm: (importData, mergeMode) => ipcRenderer.invoke('data:import-confirm', { importData, mergeMode })
+  dataImportConfirm: (importData, mergeMode) => ipcRenderer.invoke('data:import-confirm', { importData, mergeMode }),
+
+  // v2.1 云端同步
+  sync: {
+    registerDevice: (data) => ipcRenderer.invoke('sync:register-device', data),
+    getDeviceList: () => ipcRenderer.invoke('sync:get-device-list'),
+    deactivateDevice: (data) => ipcRenderer.invoke('sync:deactivate-device', data),
+    full: (data) => ipcRenderer.invoke('sync:full', data),
+    push: (data) => ipcRenderer.invoke('sync:push', data),
+    pull: (data) => ipcRenderer.invoke('sync:pull', data),
+    resolve: (data) => ipcRenderer.invoke('sync:resolve', data),
+    getStatus: () => ipcRenderer.invoke('sync:get-status'),
+  },
+  // 兼容旧调用方式（App.js 中使用 window.electronAPI.syncXxx）
+  syncRegisterDevice: (data) => ipcRenderer.invoke('sync:register-device', data),
+  syncGetDeviceList: () => ipcRenderer.invoke('sync:get-device-list'),
+  syncDeactivateDevice: (data) => ipcRenderer.invoke('sync:deactivate-device', data),
+  syncFull: (data) => ipcRenderer.invoke('sync:full', data),
+  syncPush: (data) => ipcRenderer.invoke('sync:push', data),
+  syncPull: (data) => ipcRenderer.invoke('sync:pull', data),
+  syncResolve: (data) => ipcRenderer.invoke('sync:resolve', data),
+  syncGetStatus: () => ipcRenderer.invoke('sync:get-status'),
+  onSyncStatusChanged: (callback) => {
+    ipcRenderer.on('sync:status-changed', (event, data) => callback(data));
+  },
 });

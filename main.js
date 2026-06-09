@@ -3266,6 +3266,251 @@ ipcMain.handle('notifications:mark-all-read', async () => {
   return await markAllNotificationsRead();
 });
 
+// ===== 云端同步 IPC =====
+
+const SYNC_API_BASE = '/memora/sync';
+
+async function syncApiRequest(path, options = {}) {
+  if (!authState.isLoggedIn || !authState.token) {
+    return { ok: false, error: 'Not authenticated' };
+  }
+  const server = getAuthServer();
+  const baseUrl = server.configUrl || server.authUrl;
+  const url = `${baseUrl}${SYNC_API_BASE}${path}`;
+
+  try {
+    const res = await fetch(url, {
+      method: options.method || 'POST',
+      headers: {
+        'Authorization': `Bearer ${authState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
+
+    if (res.status === 401) {
+      console.warn('[Sync] Token expired');
+      return { ok: false, error: 'Token expired' };
+    }
+
+    if (res.status === 403) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: data.code || 'DEVICE_DEACTIVATED', status: 403 };
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.error('[Sync] API error:', res.status, text);
+      return { ok: false, error: `HTTP ${res.status}`, status: res.status };
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.error('[Sync] Network error:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+// 注册设备
+ipcMain.handle('sync:register-device', async (event, data) => {
+  console.log('[Sync] Register device:', data.device_id);
+  return await syncApiRequest('/device/register', { body: data });
+});
+
+// 获取设备列表
+ipcMain.handle('sync:get-device-list', async () => {
+  return await syncApiRequest('/device/list', { method: 'GET' });
+});
+
+// 停用设备
+ipcMain.handle('sync:deactivate-device', async (event, data) => {
+  return await syncApiRequest('/device/deactivate', { body: data });
+});
+
+// 全量同步
+ipcMain.handle('sync:full', async (event, data) => {
+  console.log('[Sync] Full sync, device:', data.device_id, ', since:', data.since);
+
+  // 补充 notes 和 knowledge 数据（这些在主进程管理）
+  try {
+    // Notes
+    if (notebook && data.changes && !data.changes.notes) {
+      const allNotes = notebook.search('');
+      const since = data.since ? new Date(data.since).getTime() : 0;
+      const changedNotes = allNotes.filter(n =>
+        new Date(n.updatedAt || n.createdAt || 0).getTime() > since
+      );
+      if (changedNotes.length > 0) {
+        data.changes.notes = changedNotes.map(n => ({
+          id: n.id,
+          base_revision: n.revision || 0,
+          title: n.title || '',
+          content: n.content || '',
+          category: n.category || 'default',
+          tags: JSON.stringify(n.tags || []),
+          created_at: n.createdAt,
+          updated_at: n.updatedAt || n.createdAt
+        }));
+      }
+    }
+
+    // Knowledge nodes
+    if (db && data.changes && !data.changes.knowledge_nodes) {
+      try {
+        const nodes = db.graphGetNodes({});
+        const since = data.since ? new Date(data.since).getTime() : 0;
+        const changedNodes = nodes.filter(n =>
+          new Date(n.updated_at || n.created_at || 0).getTime() > since
+        );
+        if (changedNodes.length > 0) {
+          data.changes.knowledge_nodes = changedNodes.map(n => ({
+            id: n.id,
+            base_revision: n.revision || 0,
+            name: n.name,
+            type: n.type,
+            domain: n.domain,
+            health: n.health,
+            extra: n.extra || '{}',
+            created_at: n.created_at,
+            updated_at: n.updated_at
+          }));
+        }
+      } catch (e) {
+        console.warn('[Sync] Failed to collect knowledge_nodes:', e.message);
+      }
+    }
+
+    // Knowledge edges
+    if (db && data.changes && !data.changes.knowledge_edges) {
+      try {
+        const edges = db.graphGetEdges({});
+        const since = data.since ? new Date(data.since).getTime() : 0;
+        const changedEdges = edges.filter(e =>
+          new Date(e.updated_at || e.created_at || 0).getTime() > since
+        );
+        if (changedEdges.length > 0) {
+          data.changes.knowledge_edges = changedEdges.map(e => ({
+            id: e.id,
+            base_revision: e.revision || 0,
+            source_id: e.source_id,
+            target_id: e.target_id,
+            type: e.type,
+            created_at: e.created_at,
+            updated_at: e.updated_at
+          }));
+        }
+      } catch (e) {
+        console.warn('[Sync] Failed to collect knowledge_edges:', e.message);
+      }
+    }
+
+    // Clipboard memories
+    if (memoryStore && data.changes && !data.changes.clipboard_memories) {
+      try {
+        const memories = memoryStore.search({ type: 'instant', limit: 1000 });
+        const since = data.since ? new Date(data.since).getTime() : 0;
+        const changedMemories = memories.filter(m =>
+          new Date(m.created_at || 0).getTime() > since
+        );
+        if (changedMemories.length > 0) {
+          data.changes.clipboard_memories = changedMemories.map(m => ({
+            id: m.id,
+            base_revision: m.revision || 0,
+            content: m.content,
+            memory_type: m.type,
+            business_category: m.business_category,
+            confidence: m.confidence,
+            source: m.source || 'clipboard',
+            created_at: m.created_at
+          }));
+        }
+      } catch (e) {
+        console.warn('[Sync] Failed to collect clipboard_memories:', e.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[Sync] Failed to supplement data:', e.message);
+  }
+
+  const result = await syncApiRequest('/full', { body: data });
+
+  // 同步成功后，将 pull 下来的 notes/knowledge 写入本地
+  if (result && result.pulled) {
+    try {
+      // Notes
+      if (result.pulled.notes && result.pulled.notes.length > 0 && notebook) {
+        for (const note of result.pulled.notes) {
+          if (note.origin_device_id === data.device_id) continue;  // 防回声
+          if (note.deleted_at) continue;  // 已删除
+          try {
+            const existing = notebook.getNote(note.id);
+            if (!existing) {
+              notebook.addNote({
+                id: note.id,
+                title: note.title,
+                content: note.content,
+                category: note.category,
+                tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []),
+                revision: note.revision,
+                createdAt: note.created_at,
+                updatedAt: note.updated_at
+              });
+            } else if ((note.revision || 0) > (existing.revision || 0)) {
+              notebook.updateNote(note.id, {
+                title: note.title,
+                content: note.content,
+                category: note.category,
+                tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []),
+                revision: note.revision,
+                updatedAt: note.updated_at
+              });
+            }
+          } catch (e) {
+            console.warn('[Sync] Failed to apply note:', note.id, e.message);
+          }
+        }
+      }
+
+      // Knowledge nodes
+      if (result.pulled.knowledge_nodes && result.pulled.knowledge_nodes.length > 0 && db) {
+        for (const node of result.pulled.nodes || result.pulled.knowledge_nodes) {
+          if (node.origin_device_id === data.device_id) continue;
+          if (node.deleted_at) continue;
+          try {
+            db.upsertKnowledgeNode(node);
+          } catch (e) {
+            console.warn('[Sync] Failed to apply knowledge node:', node.id, e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Sync] Failed to apply pulled data:', e.message);
+    }
+  }
+
+  return result;
+});
+
+// 推送
+ipcMain.handle('sync:push', async (event, data) => {
+  return await syncApiRequest('/push', { body: data });
+});
+
+// 拉取
+ipcMain.handle('sync:pull', async (event, data) => {
+  return await syncApiRequest('/pull', { body: data });
+});
+
+// 解决冲突
+ipcMain.handle('sync:resolve', async (event, data) => {
+  return await syncApiRequest('/resolve', { body: data });
+});
+
+// 获取同步状态
+ipcMain.handle('sync:get-status', async () => {
+  return await syncApiRequest('/status', { method: 'GET' });
+});
+
 // ===== 版本更新 =====
 
 // 检查更新（公开接口，无需登录）
@@ -3430,6 +3675,30 @@ ipcMain.handle('config:sync', async () => {
 
 // ADP消息发送（流式SSE推送，参考 knowledge:search-adp 架构）
 let activeChatADPController = null;
+let currentADPConversationId = null; // 持久化会话ID，同一对话内复用
+
+function generateConversationId() {
+  return Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+}
+
+// 新建对话：重置会话ID
+ipcMain.handle('adp:new-chat', async () => {
+  currentADPConversationId = null;
+  console.log('[ADP Chat] New conversation started, convId reset');
+  return { success: true };
+});
+
+// 设置特定会话的 ConversationId（用于切换对话时恢复上下文）
+ipcMain.handle('adp:set-conversation-id', async (event, convId) => {
+  if (convId && typeof convId === 'string') {
+    currentADPConversationId = convId;
+    console.log('[ADP Chat] ConversationId restored to:', convId);
+  } else {
+    currentADPConversationId = null;
+    console.log('[ADP Chat] ConversationId cleared');
+  }
+  return { success: true };
+});
 
 ipcMain.handle('send-adp-message', async (event, data) => {
   // 支持两种调用方式：
@@ -3468,7 +3737,14 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   const _adpChatAppKey = appKey;
   const _adpChatModel = `adp_v2${configSource !== 'default' ? `(${configSource})` : ''}`;
   
-  const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+  // 复用同一会话的 ConversationId，保持上下文连续性
+  if (!currentADPConversationId) {
+    currentADPConversationId = generateConversationId();
+    console.log('[ADP Chat] New conversationId generated:', currentADPConversationId);
+  } else {
+    console.log('[ADP Chat] Reusing conversationId:', currentADPConversationId);
+  }
+  const convId = currentADPConversationId;
   const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
 
   // 构建 Contents 数组（ADP V2 格式）
@@ -3843,7 +4119,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
       activeChatADPController = null;
     })();
 
-    return { success: true, streaming: true, configSource };
+    return { success: true, streaming: true, configSource, conversationId: convId };
   } catch (error) {
     activeChatADPController = null;
     if (error.name === 'AbortError') {
@@ -4418,6 +4694,58 @@ ipcMain.handle('notebook-save-categories', async (event, categories) => {
   if (!notebook) return { success: false };
   notebook.saveCustomCategories(categories);
   return { success: true };
+});
+
+// 笔记导出为 Markdown
+ipcMain.handle('notebook-export-markdown', async (event, { noteIds, defaultName }) => {
+  try {
+    const { dialog } = require('electron');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '导出笔记为 Markdown',
+      defaultPath: defaultName || 'notes.md',
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    });
+    if (result.canceled) return { success: false, canceled: true };
+
+    // 收集笔记数据
+    const notes = [];
+    for (const id of noteIds) {
+      const note = notebook.getNoteById(id);
+      if (note) notes.push(note);
+    }
+
+    if (notes.length === 0) return { success: false, error: '未找到笔记' };
+
+    // 生成 Markdown 内容
+    let md = '';
+    if (notes.length === 1) {
+      // 单条笔记
+      const n = notes[0];
+      md = `# ${n.title || '无标题'}\n\n`;
+      md += n.content + '\n\n';
+      md += `---\n`;
+      md += `- 分类：${n.category || '未分类'}\n`;
+      md += `- 创建时间：${new Date(n.createdAt).toLocaleString('zh-CN')}\n`;
+      if (n.tags && n.tags.length) md += `- 标签：${n.tags.join(', ')}\n`;
+    } else {
+      // 多条笔记合并
+      md = `# 笔记合集（${notes.length} 条）\n\n`;
+      md += `> 导出时间：${new Date().toLocaleString('zh-CN')}\n\n`;
+      md += `---\n\n`;
+      notes.forEach((n, i) => {
+        md += `## ${i + 1}. ${n.title || '无标题'}\n\n`;
+        md += n.content + '\n\n';
+        md += `*分类：${n.category || '未分类'} | 创建：${new Date(n.createdAt).toLocaleString('zh-CN')}*\n\n`;
+        if (i < notes.length - 1) md += `---\n\n`;
+      });
+    }
+
+    fs.writeFileSync(result.filePath, md, 'utf-8');
+    return { success: true, filePath: result.filePath, count: notes.length };
+  } catch (e) {
+    console.error('[Notebook] Export error:', e);
+    return { success: false, error: e.message };
+  }
 });
 
 // ========== 知识萃取IPC处理器 ==========
@@ -8669,6 +8997,7 @@ function checkWeeklyOptimizer() {
 
 // ===== 本地文件索引服务 =====
 const LOCAL_INDEX_PATH = path.join(app.getPath('userData'), 'local-file-index.json');
+const CUSTOM_DIRS_PATH = path.join(app.getPath('userData'), 'custom-dirs.json');
 // 安全获取系统路径，不支持的名称返回 null
 function getSafeSystemPath(name) {
   try { return app.getPath(name); } catch { return null; }
@@ -8696,6 +9025,27 @@ const DIRECTORY_MAP = {
   movies: { label: '🎬 影片', path: () => getMoviesPath() },
   home: { label: '🏠 主目录', path: () => getSafeSystemPath('home') },
 };
+
+/** 加载自定义目录列表 */
+function loadCustomDirs() {
+  try {
+    if (fs.existsSync(CUSTOM_DIRS_PATH)) {
+      return JSON.parse(fs.readFileSync(CUSTOM_DIRS_PATH, 'utf-8'));
+    }
+  } catch (e) {
+    console.error('[LocalFiles] Failed to load custom dirs:', e);
+  }
+  return [];
+}
+
+/** 保存自定义目录列表 */
+function saveCustomDirs(dirs) {
+  try {
+    fs.writeFileSync(CUSTOM_DIRS_PATH, JSON.stringify(dirs, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('[LocalFiles] Failed to save custom dirs:', e);
+  }
+}
 
 const FILE_TYPE_MAP = {
   document: { label: '文档', icon: '📄', exts: ['pdf','doc','docx','txt','rtf','odt','pages','md'] },
@@ -8808,7 +9158,28 @@ ipcMain.handle('local-files:index', async (event, { directories, forceRebuild })
 
     for (const dirKey of sortedDirs) {
       const dirConfig = DIRECTORY_MAP[dirKey];
-      if (!dirConfig) continue;
+      if (!dirConfig) {
+        // 自定义目录：key 格式为 custom:<absPath>
+        if (dirKey.startsWith('custom:')) {
+          const dirPath = dirKey.slice(7);
+          if (!dirPath || !fs.existsSync(dirPath)) continue;
+
+          const dirMeta = index.directories[dirKey];
+          if (!forceRebuild && dirMeta && dirMeta.lastScanned) continue;
+
+          const files = scanDirectory(dirPath, 3, 0, 5000, false);
+          files.forEach(f => f.directory = dirKey);
+          newFiles = newFiles.concat(files);
+          scannedCount += files.length;
+
+          index.files = index.files.filter(f => f.directory !== dirKey);
+          index.directories[dirKey] = {
+            lastScanned: new Date().toISOString(),
+            fileCount: files.length
+          };
+        }
+        continue;
+      }
       const dirPath = dirConfig.path();
       if (!dirPath || !fs.existsSync(dirPath)) continue;
 
@@ -8956,6 +9327,64 @@ ipcMain.handle('local-files:reveal', async (event, filePath) => {
   } catch (e) {
     return { success: false, error: e.message };
   }
+});
+
+// 选择文件夹对话框
+ipcMain.handle('local-files:select-directory', async () => {
+  try {
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: '选择文件夹'
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { success: false, canceled: true };
+    }
+    const dirPath = result.filePaths[0];
+    const dirName = path.basename(dirPath);
+    return { success: true, path: dirPath, name: dirName };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 获取自定义目录列表
+ipcMain.handle('local-files:get-custom-dirs', async () => {
+  return { success: true, dirs: loadCustomDirs() };
+});
+
+// 添加自定义目录
+ipcMain.handle('local-files:add-custom-dir', async (event, { dirPath, dirName }) => {
+  const dirs = loadCustomDirs();
+  const key = 'custom:' + dirPath;
+  // 检查是否已存在
+  if (dirs.some(d => d.path === dirPath)) {
+    return { success: false, error: '该文件夹已添加' };
+  }
+  const newDir = { key, path: dirPath, name: dirName || path.basename(dirPath) };
+  dirs.push(newDir);
+  saveCustomDirs(dirs);
+  // 立即索引该目录
+  localFileIndex = null; // 清缓存，强制重新加载
+  return { success: true, dir: newDir };
+});
+
+// 删除自定义目录
+ipcMain.handle('local-files:remove-custom-dir', async (event, { dirPath }) => {
+  let dirs = loadCustomDirs();
+  const key = 'custom:' + dirPath;
+  dirs = dirs.filter(d => d.path !== dirPath);
+  saveCustomDirs(dirs);
+  // 从索引中移除该目录的文件
+  const index = loadLocalFileIndex();
+  const removedCount = index.files.filter(f => f.directory === key).length;
+  index.files = index.files.filter(f => f.directory !== key);
+  delete index.directories[key];
+  try {
+    fs.writeFileSync(LOCAL_INDEX_PATH, JSON.stringify(index, null, 2), 'utf-8');
+  } catch (e) { /* ignore */ }
+  localFileIndex = null;
+  return { success: true, removedCount };
 });
 
 // === v2.3 洞察模块 IPC ===

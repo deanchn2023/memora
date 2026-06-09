@@ -44,6 +44,14 @@ const Store = {
   saveTasks(tasks) {
     try {
       localStorage.setItem(this.TASKS_KEY, JSON.stringify(tasks));
+      // 通知同步引擎
+      if (typeof SyncEngine !== 'undefined' && SyncEngine._getSettings?.().enabled) {
+        const recentChanges = tasks.filter(t => {
+          const updated = new Date(t.updatedAt || t.createdAt).getTime();
+          return Date.now() - updated < 5000;  // 5秒内更新的
+        });
+        recentChanges.forEach(t => SyncEngine.markDirty('tasks', t));
+      }
       return true;
     } catch (error) {
       console.error('保存任务失败:', error);

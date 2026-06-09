@@ -67,6 +67,7 @@
   min-width: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  align-items: center;
 }
 
 .local-dir-tabs::-webkit-scrollbar {
@@ -83,6 +84,9 @@
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.2s var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .local-dir-tab:hover {
@@ -94,6 +98,61 @@
   background: var(--primary-color);
   color: white;
   border-color: var(--primary-color);
+}
+
+.local-dir-tab.active .local-dir-remove {
+  color: rgba(255,255,255,0.7);
+}
+
+.local-dir-tab.active .local-dir-remove:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.2);
+}
+
+/* 自定义文件夹标签 */
+.local-dir-tab-custom {
+  border-style: dashed;
+}
+
+.local-dir-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: 2px;
+  line-height: 1;
+}
+
+.local-dir-remove:hover {
+  color: #FF3B30;
+  background: rgba(255, 59, 48, 0.1);
+}
+
+/* 添加文件夹按钮 */
+.local-dir-tab-add {
+  padding: 4px 10px;
+  border: 1.5px dashed var(--border-color);
+  border-radius: 20px;
+  font-size: 13px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s var(--transition);
+  flex-shrink: 0;
+}
+
+.local-dir-tab-add:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: rgba(0, 122, 255, 0.04);
 }
 
 /* 类型标签（第二行） */

@@ -64,20 +64,20 @@
             <button class="ai-mode-btn active" data-mode="agent" id="aiModeAgent">🤖 Agent</button>
             <button class="ai-mode-btn" data-mode="llm" id="aiModeLLM">💬 LLM</button>
           </div>
-          <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><linearGradient id="aBtnBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="12" fill="url(#aBtnBg)"/><text x="20" y="27" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="700" fill="white">M</text></svg></button>
-          <button class="audit-btn" id="openAuditBtn" data-tooltip="审计日志"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-          <button class="lang-toggle-btn" id="langToggleBtn" data-tooltip="语言/Language">中</button>
-          <button class="settings-btn" id="openSettingsBtn" data-tooltip="设置">⚙️</button>
+          <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M5 20a7 7 0 0114 0"/><circle cx="10" cy="9.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="14" cy="9.5" r="0.8" fill="currentColor" stroke="none"/><path d="M10 12.5c.6.5 3.4.5 4 0"/><path d="M9 6c-1.5-1-3.5-.5-3.5 1.5"/><path d="M15 6c1.5-1 3.5-.5 3.5 1.5"/></svg></button>
+          <button class="audit-btn" id="openAuditBtn" data-tooltip="审计日志"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></button>
+          <button class="lang-toggle-btn" id="langToggleBtn" data-tooltip="语言/Language"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></button>
+          <button class="settings-btn" id="openSettingsBtn" data-tooltip="设置"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
           <!-- 通知铃铛 -->
           <button class="notification-bell-btn hidden" id="notificationBellBtn" data-tooltip="通知">
-            🔔
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
             <span class="notification-badge hidden" id="notificationBadge">0</span>
           </button>
           <!-- 登录按钮：未登录时显示 -->
-          <button class="login-btn" id="headerLoginBtn" data-tooltip="登录"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="20" cy="20" r="20" fill="#E8F5E9"/><circle cx="20" cy="15" r="7" fill="#81C784"/><ellipse cx="20" cy="32" rx="12" ry="9" fill="#81C784"/><circle cx="17" cy="14" r="1.2" fill="#2E7D32"/><circle cx="23" cy="14" r="1.2" fill="#2E7D32"/><path d="M18 17.5 Q20 19.5 22 17.5" stroke="#2E7D32" stroke-width="1" fill="none" stroke-linecap="round"/><circle cx="14" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/><circle cx="26" cy="16" r="1.5" fill="#A5D6A7" opacity="0.6"/></svg></button>
+          <button class="login-btn" id="headerLoginBtn" data-tooltip="登录"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></button>
           <!-- 已登录用户信息 -->
           <div class="user-badge hidden" id="headerUserBadge">
-            <span class="user-badge-avatar" id="headerUserAvatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="uBgH" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0E6FF"/><stop offset="1" stop-color="#E0F0FF"/></linearGradient></defs><circle cx="20" cy="20" r="20" fill="url(#uBgH)"/><circle cx="20" cy="14.5" r="6.5" fill="#C4B5FD"/><ellipse cx="20" cy="30" rx="10.5" ry="8" fill="#C4B5FD"/><circle cx="17.5" cy="13.8" r="1" fill="#7C3AED"/><circle cx="22.5" cy="13.8" r="1" fill="#7C3AED"/><path d="M18.5 16.2 Q20 17.8 21.5 16.2" stroke="#7C3AED" stroke-width="0.9" fill="none" stroke-linecap="round"/><circle cx="15" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="25" cy="15" r="1.8" fill="#DDD6FE" opacity="0.7"/><circle cx="12" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/><circle cx="28" cy="19" r="1.2" fill="#DDD6FE" opacity="0.5"/></svg></span>
+            <span class="user-badge-avatar" id="headerUserAvatar"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
             <span class="user-badge-name" id="headerUserName">-</span>
           </div>
         </div>
@@ -185,6 +185,9 @@
                 </label>
                 <span class="batch-count" id="notebookBatchCount">已选 0 项</span>
                 <div class="batch-actions">
+                  <button class="batch-btn batch-btn-download" id="batchDownloadMD" title="下载为 Markdown 文件">
+                    <span class="batch-btn-icon">📥</span> 下载
+                  </button>
                   <button class="batch-btn batch-btn-adp" id="batchSendToADP" title="发送给 ADP 小助手分析">
                     <span class="batch-btn-icon">🤖</span> 发给小助手
                   </button>
@@ -199,70 +202,87 @@
           </div><!-- /#notebookView -->
           <div class="ai-assistant-view hidden" id="aiAssistantView">
             <div class="ai-chat-container">
-              <div class="chat-messages" id="chatMessages">
-                <!-- 功能提示卡片 -->
-                <div class="feature-cards">
-                  <div class="feature-card active" data-category="task" title="智能任务分析">
-                    <div class="feature-icon">📝</div>
-                    <div class="feature-content">
-                      <h4>智能任务分析</h4>
-                      <p>帮你分析和管理待办事项</p>
-                    </div>
-                  </div>
-                  <div class="feature-card" data-category="bidding" title="招投标支持">
-                    <div class="feature-icon">📋</div>
-                    <div class="feature-content">
-                      <h4>招投标支持</h4>
-                      <p>招投标文档智能生成</p>
-                    </div>
-                  </div>
-                  <div class="feature-card" data-category="knowledge" title="知识助手">
-                    <div class="feature-icon">📚</div>
-                    <div class="feature-content">
-                      <h4>知识助手</h4>
-                      <p>产品知识与助销资料</p>
-                    </div>
-                  </div>
+              <!-- 对话列表侧栏 -->
+              <div class="chat-sidebar" id="chatSidebar">
+                <div class="chat-sidebar-header">
+                  <button class="new-chat-btn" id="newChatBtn" title="新建对话">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    新对话
+                  </button>
                 </div>
-                
-                <!-- 快捷问题胶囊 -->
-                <div class="quick-questions">
-                  <p class="quick-title">💡 快捷问题</p>
-                  <div class="quick-capsules" id="quickCapsules">
-                    <!-- 智能任务分析 -->
-                    <button class="quick-capsule agent-priority" data-question="今天该做什么？帮我排个优先级" data-category="task">🎯 今日排程</button>
-                    <button class="quick-capsule agent-report" data-question="生成今天的工作日报" data-category="task">📊 生成日报</button>
-                    <button class="quick-capsule agent-knowledge" data-question="帮我整理一下最近的笔记" data-category="task">📚 整理笔记</button>
-                    <button class="quick-capsule agent-memory" data-question="帮我整理一下记忆，看看哪些需要保留" data-category="task">🧠 整理记忆</button>
-                    <button class="quick-capsule agent-priority" data-question="最紧急的事项是什么？" data-category="task">🔥 紧急事项</button>
-                    <button class="quick-capsule agent-report" data-question="给我一些时间管理建议" data-category="task">⏰ 时间建议</button>
-                  </div>
-                </div>
-                
-                <div class="message assistant">
-                  <div class="message-avatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="aBgH" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="14" fill="url(#aBgH)"/><text x="20" y="26" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="white">M</text></svg></div>
-                  <div class="message-content">
-                    <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
-                  </div>
+                <div class="chat-session-list" id="chatSessionList">
+                  <!-- 动态生成 -->
                 </div>
               </div>
-              <div class="chat-attachments" id="chatAttachments"></div>
-              <div class="chat-input-area">
-                <input type="file" id="chatFileInput" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.zip,.rar,.txt,.md,.csv" style="display:none">
-                <div class="input-wrapper">
-                  <button class="file-upload-btn" id="chatFileUploadBtn" title="上传文件">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-                    </svg>
-                  </button>
-                  <input type="text" id="aiChatInput" placeholder="输入你的问题..." autocomplete="off">
-                  <button class="action-btn" id="clearChatBtn">清空</button>
-                  <button class="send-btn" id="sendAIMessageBtn">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <line x1="22" y1="2" x2="11" y2="13"></line>
-                      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                    </svg>
-                  </button>
+              <!-- 对话主区域 -->
+              <div class="chat-main" id="chatMain">
+                <div class="chat-messages" id="chatMessages">
+                  <!-- 功能提示卡片 -->
+                  <div class="feature-cards">
+                    <div class="feature-card active" data-category="task" title="智能任务分析">
+                      <div class="feature-icon">📝</div>
+                      <div class="feature-content">
+                        <h4>智能任务分析</h4>
+                        <p>帮你分析和管理待办事项</p>
+                      </div>
+                    </div>
+                    <div class="feature-card" data-category="bidding" title="招投标支持">
+                      <div class="feature-icon">📋</div>
+                      <div class="feature-content">
+                        <h4>招投标支持</h4>
+                        <p>招投标文档智能生成</p>
+                      </div>
+                    </div>
+                    <div class="feature-card" data-category="knowledge" title="知识助手">
+                      <div class="feature-icon">📚</div>
+                      <div class="feature-content">
+                        <h4>知识助手</h4>
+                        <p>产品知识与助销资料</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- 快捷问题胶囊 -->
+                  <div class="quick-questions">
+                    <p class="quick-title">💡 快捷问题</p>
+                    <div class="quick-capsules" id="quickCapsules">
+                      <!-- 智能任务分析 -->
+                      <button class="quick-capsule agent-priority" data-question="今天该做什么？帮我排个优先级" data-category="task">🎯 今日排程</button>
+                      <button class="quick-capsule agent-report" data-question="生成今天的工作日报" data-category="task">📊 生成日报</button>
+                      <button class="quick-capsule agent-knowledge" data-question="帮我整理一下最近的笔记" data-category="task">📚 整理笔记</button>
+                      <button class="quick-capsule agent-memory" data-question="帮我整理一下记忆，看看哪些需要保留" data-category="task">🧠 整理记忆</button>
+                      <button class="quick-capsule agent-priority" data-question="最紧急的事项是什么？" data-category="task">🔥 紧急事项</button>
+                      <button class="quick-capsule agent-report" data-question="给我一些时间管理建议" data-category="task">⏰ 时间建议</button>
+                    </div>
+                  </div>
+                  
+                  <div class="message assistant">
+                    <div class="message-avatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="aBgH" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="14" fill="url(#aBgH)"/><text x="20" y="26" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="white">M</text></svg></div>
+                    <div class="message-content">
+                      <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="chat-attachments" id="chatAttachments"></div>
+                <div class="chat-input-area">
+                  <input type="file" id="chatFileInput" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.zip,.rar,.txt,.md,.csv" style="display:none">
+                  <div class="input-wrapper">
+                    <button class="file-upload-btn" id="chatFileUploadBtn" title="上传文件">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                      </svg>
+                    </button>
+                    <textarea id="aiChatInput" placeholder="输入你的问题..." autocomplete="off" rows="1"></textarea>
+                    <button class="stop-btn hidden" id="stopAIMessageBtn" title="停止生成">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    </button>
+                    <button class="send-btn" id="sendAIMessageBtn">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -552,6 +572,8 @@
                     <button class="local-dir-tab" data-dir="pictures">🖼 图片</button>
                     <button class="local-dir-tab" data-dir="movies">🎬 影片</button>
                     <button class="local-dir-tab" data-dir="home">🏠 主目录</button>
+                    <!-- 自定义文件夹标签将动态插入此处 -->
+                    <button class="local-dir-tab-add" id="localAddDirBtn" title="添加自定义文件夹">＋</button>
                   </div>
                   <button class="local-refresh-btn" id="localRefreshBtn">🔄 刷新索引</button>
                 </div>
@@ -966,6 +988,7 @@
           <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">画像</button>
           <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆</button>
           <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">外观</button>
+          <button class="settings-tab" data-tab="sync" data-i18n="settings.tab.sync">同步</button>
           <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
@@ -1469,6 +1492,122 @@
         </div>
 
         <!-- 数据管理 -->
+        <!-- 云同步 -->
+        <div class="settings-panel hidden" id="syncPanel">
+          <div class="data-management-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">☁️</span>
+              <div>
+                <h4>云端同步</h4>
+                <p class="data-section-desc">开启后，任务、记事本、知识等数据将通过 ADPToolkit 服务器同步至云端，支持多设备访问（移动端 MemoraMobile 等）</p>
+              </div>
+            </div>
+            <div class="data-section-body">
+              <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                  <label style="margin-bottom:0;">启用云端同步</label>
+                  <small style="color:var(--text-secondary);display:block;margin-top:4px;">关闭时数据仅存储在本地，不会上传到云端</small>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cloudSyncToggle">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <!-- 同步配置（开启后显示） -->
+              <div id="syncConfigSection" class="hidden" style="margin-top:16px;">
+                <div class="form-group">
+                  <label>同步服务器</label>
+                  <input type="text" id="syncServerUrl" placeholder="ADPToolkit 服务器地址" readonly>
+                  <small style="color:var(--text-secondary);margin-top:4px;display:block;">由组织配置自动下发，无需手动设置</small>
+                </div>
+
+                <div class="form-group">
+                  <label>同步范围</label>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+                    <label class="sync-scope-chip">
+                      <input type="checkbox" id="syncTasks" checked>
+                      <span>📋 任务</span>
+                    </label>
+                    <label class="sync-scope-chip">
+                      <input type="checkbox" id="syncNotes" checked>
+                      <span>📝 记事本</span>
+                    </label>
+                    <label class="sync-scope-chip">
+                      <input type="checkbox" id="syncKnowledge" checked>
+                      <span>🧠 知识图谱</span>
+                    </label>
+                    <label class="sync-scope-chip">
+                      <input type="checkbox" id="syncClipboard" checked>
+                      <span>📋 剪贴板</span>
+                    </label>
+                  </div>
+                  <small style="color:var(--text-secondary);margin-top:8px;display:block;">选择需要同步到云端的数据类型，未勾选的仅保存在本地</small>
+                </div>
+
+                <div class="form-group">
+                  <label>同步频率</label>
+                  <div class="import-mode-selector">
+                    <label class="import-mode-option">
+                      <input type="radio" name="syncFrequency" value="realtime" checked>
+                      <span class="import-mode-label">
+                        <strong>⚡ 实时</strong>
+                        <small>数据变更后立即同步</small>
+                      </span>
+                    </label>
+                    <label class="import-mode-option">
+                      <input type="radio" name="syncFrequency" value="interval">
+                      <span class="import-mode-label">
+                        <strong>⏱️ 定时</strong>
+                        <small>每 5 分钟自动同步一次</small>
+                      </span>
+                    </label>
+                    <label class="import-mode-option">
+                      <input type="radio" name="syncFrequency" value="manual">
+                      <span class="import-mode-label">
+                        <strong>👆 手动</strong>
+                        <small>仅点击同步按钮时同步</small>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                  <button class="btn primary" id="syncNowBtn">🔄 立即同步</button>
+                  <button class="btn secondary" id="syncStatusBtn">📊 查看同步状态</button>
+                </div>
+
+                <!-- 同步状态 -->
+                <div id="syncStatus" class="hidden" style="margin-top:16px;padding:12px;background:var(--bg-tertiary);border-radius:10px;font-size:13px;">
+                  <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                    <span style="color:var(--text-secondary);">上次同步</span>
+                    <span id="lastSyncTime">从未同步</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                    <span style="color:var(--text-secondary);">同步方向</span>
+                    <span id="syncDirection">—</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                    <span style="color:var(--text-secondary);">待上传</span>
+                    <span id="pendingPushCount">0 条</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;">
+                    <span style="color:var(--text-secondary);">待下载</span>
+                    <span id="pendingPullCount">0 条</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 未开启提示 -->
+              <div id="syncDisabledHint" style="margin-top:16px;padding:16px;background:var(--bg-tertiary);border-radius:10px;text-align:center;">
+                <div style="font-size:24px;margin-bottom:8px;">🔒</div>
+                <div style="color:var(--text-secondary);font-size:13px;">云端同步已关闭，所有数据仅存储在本地</div>
+                <div style="color:var(--text-tertiary);font-size:12px;margin-top:4px;">开启后可通过 MemoraMobile 随时访问您的数据</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-panel hidden" id="backupPanel">
           <div class="data-management-section">
             <div class="data-section-header">
@@ -1765,7 +1904,8 @@
 <script src="scripts/pomodoro.js"></script>
 <script src="scripts/calendar.js"></script>
 <script src="scripts/reminder.js"></script>
-<script src="scripts/knowledgeSearch.js"></script>
+  <script src="scripts/sync.js"></script>
+  <script src="scripts/knowledgeSearch.js"></script>
 <script src="scripts/knowledgeFollow.js"></script>
 <script src="scripts/knowledgeDistillation.js"></script>
   <script src="scripts/graph/forceLayout.js"></script>

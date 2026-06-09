@@ -25,6 +25,9 @@ const App = {
   _adpCurrentBubble: null,
   _adpRenderPending: false,
   _adpConfigSource: '',
+  // 对话会话管理
+  _chatSessions: [],        // 所有对话会话
+  _activeSessionId: null,   // 当前活跃的会话ID
 
   init() {
     console.log('[App] init() starting...');
@@ -40,6 +43,10 @@ const App = {
     
     // 从数据库加载数据（如果可用）
     this.initDatabaseSync();
+    
+    // 加载对话会话列表
+    this._loadChatSessions();
+    this._renderChatSessionList();
     
     try {
       Pomodoro.init();
@@ -64,7 +71,15 @@ const App = {
     } catch (e) {
       console.error('[App] Reminder.init() failed:', e);
     }
-    
+
+    try {
+      SyncEngine.init();
+      console.log('[App] SyncEngine.init() completed');
+      this.updateInitTest('[App] SyncEngine initialized');
+    } catch (e) {
+      console.error('[App] SyncEngine.init() failed:', e);
+    }
+
     try {
       this.bindEvents();
       console.log('[App] bindEvents() completed');
@@ -113,6 +128,12 @@ const App = {
           this._updateOrgUI(data);
           if (data.isLoggedIn) {
             this._updateConfigServerHints(true);
+            // 登录成功后自动启动同步（如果已开启）
+            const syncSettings = this._getSyncSettings();
+            if (syncSettings.enabled && SyncEngine && !SyncEngine._initialized) {
+              SyncEngine.init();
+              SyncEngine._startAutoSync?.();
+            }
           } else {
             this._updateConfigServerHints(false);
           }
@@ -366,6 +387,19 @@ const App = {
     document.getElementById('importDataBtn')?.addEventListener('click', () => this.importDataFile());
     document.getElementById('importConfirmBtn')?.addEventListener('click', () => this.confirmImportData());
     document.getElementById('importCancelBtn')?.addEventListener('click', () => this.cancelImportData());
+
+    // 云同步
+    document.getElementById('cloudSyncToggle')?.addEventListener('change', (e) => this._toggleCloudSync(e.target.checked));
+    document.getElementById('syncNowBtn')?.addEventListener('click', () => this._syncNow());
+    document.getElementById('syncStatusBtn')?.addEventListener('click', () => this._toggleSyncStatus());
+    // 同步范围变更
+    ['syncTasks', 'syncNotes', 'syncKnowledge', 'syncClipboard'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', () => this._saveSyncScope());
+    });
+    // 同步频率变更
+    document.querySelectorAll('input[name="syncFrequency"]').forEach(radio => {
+      radio.addEventListener('change', (e) => this._saveSyncFrequency(e.target.value));
+    });
     document.getElementById('aiOrganizeMemoryBtn')?.addEventListener('click', () => this.aiOrganizeAndAddMemory());
     document.getElementById('aiBatchOrganizeBtn')?.addEventListener('click', () => this.aiBatchOrganizeMemories());
     document.getElementById('memoryTypeFilter')?.addEventListener('change', () => this.loadMemories());
@@ -419,12 +453,44 @@ const App = {
       });
     }
     document.getElementById('sendAIMessageBtn')?.addEventListener('click', () => this.sendAIMessage());
-    document.getElementById('aiChatInput')?.addEventListener('keypress', (e) => {
+    const chatInput = document.getElementById('aiChatInput');
+    // IME 组合状态追踪
+    let isComposing = false;
+    chatInput?.addEventListener('compositionstart', () => { isComposing = true; });
+    chatInput?.addEventListener('compositionend', () => { isComposing = false; });
+    chatInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
+        // IME 组合期间（如中文输入法输英文），回车确认输入，不发送
+        if (isComposing) return;
+        // Ctrl+Enter 或 Cmd+Enter 换行
+        if (e.ctrlKey || e.metaKey) return;
+        // 普通回车发送
+        e.preventDefault();
         this.sendAIMessage();
       }
     });
-    document.getElementById('clearChatBtn')?.addEventListener('click', () => this.clearChat());
+    chatInput?.addEventListener('input', () => {
+      chatInput.style.height = 'auto';
+      chatInput.style.height = chatInput.scrollHeight + 'px';
+    });
+    // 停止生成按钮
+    document.getElementById('stopAIMessageBtn')?.addEventListener('click', () => this.stopADPGeneration());
+    // 新建对话
+    document.getElementById('newChatBtn')?.addEventListener('click', () => this.createNewChatSession());
+    // 对话列表点击
+    document.getElementById('chatSessionList')?.addEventListener('click', (e) => {
+      const item = e.target.closest('.chat-session-item');
+      const deleteBtn = e.target.closest('.chat-session-delete');
+      if (deleteBtn) {
+        e.stopPropagation();
+        const sessionId = deleteBtn.dataset.sessionId;
+        this.deleteChatSession(sessionId);
+        return;
+      }
+      if (item) {
+        this.switchChatSession(item.dataset.sessionId);
+      }
+    });
     
     // 文件上传
     document.getElementById('chatFileUploadBtn')?.addEventListener('click', () => {
@@ -541,6 +607,7 @@ const App = {
       this.updateNotebookBatchBar();
     });
     document.getElementById('batchSendToADP')?.addEventListener('click', () => this.sendSelectedNotesToADP());
+    document.getElementById('batchDownloadMD')?.addEventListener('click', () => this.downloadSelectedNotes());
     document.getElementById('batchCancelSelect')?.addEventListener('click', () => {
       document.querySelectorAll('.note-checkbox').forEach(cb => {
         cb.checked = false;
@@ -589,6 +656,9 @@ const App = {
             break;
           case 'extract':
             this.extractMemory(noteId);
+            break;
+          case 'download':
+            this.downloadNoteAsMarkdown(noteId);
             break;
           case 'delete':
             this.deleteNote(noteId);
@@ -641,6 +711,7 @@ const App = {
       if (tabName === 'profile') this.loadProfileEditor();
       if (tabName === 'prompt') this.loadPromptFiles();
       if (tabName === 'appearance') this._loadAppearanceSettings();
+      if (tabName === 'sync') this._loadSyncSettings();
     }
   },
 
@@ -1499,6 +1570,8 @@ const App = {
   },
 
   showKnowledgeView() {
+    // 离开 AI 助手时保存当前对话
+    this._saveCurrentSessionMessages();
     // 隐藏其他视图
     document.getElementById('calendarView')?.classList.add('hidden');
     document.getElementById('notebookView')?.classList.add('hidden');
@@ -1528,6 +1601,11 @@ const App = {
     // 需要有消息或附件
     if (!message && this._chatAttachments.length === 0) return;
 
+    // 对话会话管理：如果没有活跃会话，自动创建
+    if (!this._activeSessionId) {
+      this.createNewChatSession();
+    }
+
     const chatMessages = document.getElementById('chatMessages');
     const attachments = [...this._chatAttachments]; // 复制附件列表
     
@@ -1551,14 +1629,48 @@ const App = {
       <div class="message-content">
         <p>${this.escapeHtml(message || '发送了文件')}</p>
         ${attachmentsHtml}
+        <div class="message-actions user-msg-actions">
+          <button class="msg-action-btn copy-user-msg" title="复制"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+          <button class="msg-action-btn edit-user-msg" title="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+        </div>
         <span class="message-time">${this._formatChatTime(new Date())}</span>
       </div>
     `;
     chatMessages.appendChild(userMessage);
+
+    // 绑定用户消息操作按钮
+    const msgContent = userMessage.querySelector('.message-content');
+    userMessage.querySelector('.copy-user-msg')?.addEventListener('click', async () => {
+      const p = msgContent.querySelector('p');
+      const text = p ? p.textContent : '';
+      await window.electronAPI?.writeClipboardText(text);
+      this.showToast('已复制到剪贴板', 'success');
+    });
+    userMessage.querySelector('.edit-user-msg')?.addEventListener('click', () => {
+      const p = msgContent.querySelector('p');
+      const text = p ? p.textContent : '';
+      const inputEl = document.getElementById('aiChatInput');
+      if (inputEl) {
+        inputEl.value = text;
+        inputEl.style.height = 'auto';
+        inputEl.style.height = inputEl.scrollHeight + 'px';
+        inputEl.focus();
+      }
+    });
     
     input.value = '';
+    input.style.height = 'auto';
     this.clearChatAttachments();
     chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // 更新会话标题（从第一条用户消息）
+    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+    if (session && session.title === '新对话' && message) {
+      session.title = message.length > 30 ? message.slice(0, 30) + '...' : message;
+      session.updatedAt = new Date().toISOString();
+      this._saveChatSessions();
+      this._renderChatSessionList();
+    }
 
     // 添加助手消息占位符（带加载动画）
     const assistantMessage = document.createElement('div');
@@ -1615,11 +1727,17 @@ const App = {
           this._adpCurrentText = '';
           this._adpThinkingText = '';
           this._adpStepMap = {};
+          this._updateStreamingUI(true);
           this._adpToolStepCount = 0;
           this._adpFileItems = [];
           this._adpCurrentBubble = null;
           this._adpRenderPending = false;
           this._adpConfigSource = result.configSource || '';
+          // 保存 conversationId 到当前会话，用于切换对话时恢复
+          if (result.conversationId && this._activeSessionId) {
+            const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+            if (session) session.conversationId = result.conversationId;
+          }
           this._adpTimerStart = Date.now();
           this._adpTimerInterval = setInterval(() => {
             const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
@@ -1800,7 +1918,7 @@ const App = {
     // 移除不需要复制的元素
     clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section').forEach(el => el.remove());
     const text = clone.innerText || clone.textContent || '';
-    navigator.clipboard.writeText(text.trim()).then(() => {
+    (window.electronAPI ? window.electronAPI.writeClipboardText(text.trim()) : navigator.clipboard.writeText(text.trim())).then(() => {
       btn.classList.add('copied');
       btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
       this.showToast('已复制到剪贴板', 'success');
@@ -2431,6 +2549,7 @@ const App = {
     // 清理状态
     this._adpStreaming = false;
     this._adpCurrentBubble = null;
+    this._updateStreamingUI(false);
     window.electronAPI?.removeADPListeners?.();
     if (this._adpStreamResolve) {
       this._adpStreamResolve();
@@ -2439,6 +2558,9 @@ const App = {
 
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // 流式完成后保存会话消息
+    this._saveCurrentSessionMessages();
   },
 
   _addErrorToADP(messageContent, errMsg) {
@@ -3069,35 +3191,100 @@ const App = {
   },
 
   clearChat() {
-    const chatMessages = document.getElementById('chatMessages');
-    
-    // 清空附件
-    this.clearChatAttachments();
+    // 改为创建新对话
+    this.createNewChatSession();
+  },
 
-    // 停止 ADP 流式
-    if (this._adpStreaming) {
-      this._adpStreaming = false;
-      if (this._adpTimerInterval) { clearInterval(this._adpTimerInterval); this._adpTimerInterval = null; }
-      window.electronAPI?.stopADPMessage?.();
-      window.electronAPI?.removeADPListeners?.();
-      if (this._adpStreamResolve) { this._adpStreamResolve(); this._adpStreamResolve = null; }
+  // ============ 对话会话管理 ============
+
+  _loadChatSessions() {
+    try {
+      const data = localStorage.getItem('memora_chat_sessions');
+      if (data) {
+        this._chatSessions = JSON.parse(data);
+      }
+    } catch (e) {
+      console.error('[Chat] Failed to load sessions:', e);
+      this._chatSessions = [];
     }
-    
-    // 保留功能提示卡片和快捷问题胶囊，只清空对话消息
+  },
+
+  _saveChatSessions() {
+    try {
+      // 只保存元数据，不保存完整 HTML（太大）
+      const toSave = this._chatSessions.map(s => ({
+        id: s.id,
+        title: s.title,
+        messageCount: s.messageCount || 0,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt || s.createdAt,
+      }));
+      localStorage.setItem('memora_chat_sessions', JSON.stringify(toSave));
+    } catch (e) {
+      console.error('[Chat] Failed to save sessions:', e);
+    }
+  },
+
+  _renderChatSessionList() {
+    const listEl = document.getElementById('chatSessionList');
+    if (!listEl) return;
+
+    if (this._chatSessions.length === 0) {
+      listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-tertiary); font-size: 12px;">暂无对话</div>';
+      return;
+    }
+
+    // 按更新时间倒序
+    const sorted = [...this._chatSessions].sort((a, b) =>
+      new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)
+    );
+
+    listEl.innerHTML = sorted.map(session => `
+      <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}" data-session-id="${session.id}">
+        <span class="chat-session-icon">💬</span>
+        <span class="chat-session-title">${this.escapeHtml(session.title || '新对话')}</span>
+        <button class="chat-session-delete" data-session-id="${session.id}" title="删除对话">×</button>
+      </div>
+    `).join('');
+  },
+
+  createNewChatSession() {
+    // 如果正在流式，先停止
+    if (this._adpStreaming) {
+      this.stopADPGeneration();
+    }
+
+    // 保存当前对话消息
+    this._saveCurrentSessionMessages();
+
+    // 通知主进程重置 ConversationId
+    window.electronAPI?.newADPChat?.();
+
+    // 创建新会话
+    const sessionId = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    const session = {
+      id: sessionId,
+      title: '新对话',
+      messageCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    this._chatSessions.unshift(session);
+    this._activeSessionId = sessionId;
+    this._saveChatSessions();
+    this._renderChatSessionList();
+
+    // 清空聊天区域（保留功能卡片和快捷问题）
+    const chatMessages = document.getElementById('chatMessages');
     const featureCards = chatMessages.querySelector('.feature-cards');
     const quickQuestions = chatMessages.querySelector('.quick-questions');
-    
-    chatMessages.innerHTML = '';
-    
-    if (featureCards) {
-      chatMessages.appendChild(featureCards);
-    }
-    
-    if (quickQuestions) {
-      chatMessages.appendChild(quickQuestions);
-    }
 
-    // 用 insertAdjacentHTML 避免破坏已恢复的 DOM 事件监听器
+    chatMessages.innerHTML = '';
+
+    if (featureCards) chatMessages.appendChild(featureCards);
+    if (quickQuestions) chatMessages.appendChild(quickQuestions);
+
     chatMessages.insertAdjacentHTML('beforeend', `
       <div class="message assistant">
         <div class="message-avatar">${this._assistantAvatarSvg}</div>
@@ -3108,8 +3295,162 @@ const App = {
       </div>
     `);
 
-    // 重新绑定功能卡片事件（事件委托模式下只需一次，此处为安全兜底）
     this._initFeatureCards();
+    // 保存空白对话到 sessionStorage
+    sessionStorage.setItem('memora_active_session', sessionId);
+  },
+
+  switchChatSession(sessionId) {
+    if (sessionId === this._activeSessionId) return;
+
+    // 如果正在流式，先停止
+    if (this._adpStreaming) {
+      this.stopADPGeneration();
+    }
+
+    // 保存当前对话消息
+    this._saveCurrentSessionMessages();
+
+    // 切换到目标会话
+    this._activeSessionId = sessionId;
+    // 更新该会话的 updatedAt，使其排到最前
+    const targetSession = this._chatSessions.find(s => s.id === sessionId);
+    if (targetSession) {
+      targetSession.updatedAt = new Date().toISOString();
+      this._saveChatSessions();
+    }
+    this._renderChatSessionList();
+    sessionStorage.setItem('memora_active_session', sessionId);
+
+    // 恢复目标会话的消息
+    this._restoreSessionMessages(sessionId);
+
+    // 通知主进程切换到该会话的 ConversationId
+    const session = this._chatSessions.find(s => s.id === sessionId);
+    if (session && session.conversationId) {
+      // 主进程需要提供设置特定 convId 的能力
+      window.electronAPI?.setADPConversationId?.(session.conversationId);
+    }
+  },
+
+  deleteChatSession(sessionId) {
+    const idx = this._chatSessions.findIndex(s => s.id === sessionId);
+    if (idx === -1) return;
+
+    // 删除 sessionStorage 中保存的消息
+    sessionStorage.removeItem('memora_session_msg_' + sessionId);
+
+    this._chatSessions.splice(idx, 1);
+    this._saveChatSessions();
+
+    // 如果删除的是当前会话，切换到其他会话或新建
+    if (sessionId === this._activeSessionId) {
+      if (this._chatSessions.length > 0) {
+        this.switchChatSession(this._chatSessions[0].id);
+      } else {
+        this.createNewChatSession();
+      }
+    } else {
+      this._renderChatSessionList();
+    }
+  },
+
+  _saveCurrentSessionMessages() {
+    if (!this._activeSessionId) return;
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+
+    // 收集所有 message 元素的 HTML
+    const messages = chatMessages.querySelectorAll('.message');
+    const htmlParts = [];
+    messages.forEach(msg => htmlParts.push(msg.outerHTML));
+
+    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+    if (session) {
+      session.messageCount = messages.length;
+      session.updatedAt = new Date().toISOString();
+      // 自动从第一条用户消息提取标题
+      if (session.title === '新对话') {
+        const firstUserMsg = chatMessages.querySelector('.message.user .message-content p');
+        if (firstUserMsg) {
+          session.title = firstUserMsg.textContent.trim().slice(0, 30);
+          if (firstUserMsg.textContent.trim().length > 30) session.title += '...';
+        }
+      }
+    }
+
+    // 保存消息 HTML 到 sessionStorage（比 localStorage 更适合大文本）
+    try {
+      sessionStorage.setItem('memora_session_msg_' + this._activeSessionId, htmlParts.join(''));
+    } catch (e) {
+      console.warn('[Chat] sessionStorage quota exceeded, skipping save');
+    }
+
+    this._saveChatSessions();
+    this._renderChatSessionList();
+  },
+
+  _restoreSessionMessages(sessionId) {
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+
+    const featureCards = chatMessages.querySelector('.feature-cards');
+    const quickQuestions = chatMessages.querySelector('.quick-questions');
+
+    // 读取保存的消息
+    const savedHtml = sessionStorage.getItem('memora_session_msg_' + sessionId);
+
+    chatMessages.innerHTML = '';
+
+    if (featureCards) chatMessages.appendChild(featureCards);
+    if (quickQuestions) chatMessages.appendChild(quickQuestions);
+
+    if (savedHtml) {
+      chatMessages.insertAdjacentHTML('beforeend', savedHtml);
+    } else {
+      // 无保存的消息，显示欢迎语
+      chatMessages.insertAdjacentHTML('beforeend', `
+        <div class="message assistant">
+          <div class="message-avatar">${this._assistantAvatarSvg}</div>
+          <div class="message-content">
+            <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
+            <span class="message-time assistant-time">${this._formatChatTime(new Date())}</span>
+          </div>
+        </div>
+      `);
+    }
+
+    this._initFeatureCards();
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  // 停止 ADP 生成
+  stopADPGeneration() {
+    if (!this._adpStreaming) return;
+
+    this._adpStreaming = false;
+    if (this._adpTimerInterval) { clearInterval(this._adpTimerInterval); this._adpTimerInterval = null; }
+    window.electronAPI?.stopADPMessage?.();
+    window.electronAPI?.removeADPListeners?.();
+    if (this._adpStreamResolve) { this._adpStreamResolve(); this._adpStreamResolve = null; }
+    this._updateStreamingUI(false);
+    document.getElementById('aiChatInput')?.focus();
+  },
+
+  _updateStreamingUI(streaming) {
+    const stopBtn = document.getElementById('stopAIMessageBtn');
+    const sendBtn = document.getElementById('sendAIMessageBtn');
+    const input = document.getElementById('aiChatInput');
+    if (streaming) {
+      stopBtn?.classList.remove('hidden');
+      sendBtn?.classList.add('hidden');
+      input?.setAttribute('placeholder', 'AI 正在思考...');
+    } else {
+      stopBtn?.classList.add('hidden');
+      sendBtn?.classList.remove('hidden');
+      input?.setAttribute('placeholder', '输入你的问题...');
+    }
   },
 
   _formatChatTime(date) {
@@ -4059,6 +4400,7 @@ ${JSON.stringify(reportData, null, 2)}`;
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
               ${this.getAnalysisStatusTag(note)}
               <div class="note-actions">
+                <button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
                 <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
                 <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
                 <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
@@ -4601,6 +4943,57 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
   },
 
+  /** 下载单条笔记为 Markdown */
+  async downloadNoteAsMarkdown(noteId) {
+    try {
+      const result = await window.electronAPI?.notebookExportMarkdown({
+        noteIds: [noteId],
+        defaultName: `note-${noteId.substring(0, 8)}.md`
+      });
+      if (result?.canceled) return;
+      if (result?.success) {
+        this.showToast(`已导出到 ${result.filePath}`);
+      } else {
+        this.showToast(result?.error || '导出失败', 'error');
+      }
+    } catch (e) {
+      console.error('[App] Download note error:', e);
+      this.showToast('导出出错', 'error');
+    }
+  },
+
+  /** 批量下载选中笔记为 Markdown */
+  async downloadSelectedNotes() {
+    const selectedCheckboxes = document.querySelectorAll('.note-checkbox:checked');
+    if (selectedCheckboxes.length === 0) {
+      this.showToast('请先选择要下载的记事项', 'warning');
+      return;
+    }
+
+    const noteIds = Array.from(selectedCheckboxes).map(cb => cb.dataset.noteId);
+    try {
+      const result = await window.electronAPI?.notebookExportMarkdown({
+        noteIds,
+        defaultName: `notes-${noteIds.length}条-${new Date().toISOString().slice(0, 10)}.md`
+      });
+      if (result?.canceled) return;
+      if (result?.success) {
+        this.showToast(`已导出 ${result.count} 条笔记到 ${result.filePath}`);
+        // 清除选中状态
+        selectedCheckboxes.forEach(cb => {
+          cb.checked = false;
+          cb.closest('.note-item')?.classList.remove('note-selected');
+        });
+        this.hideNotebookBatchBar();
+      } else {
+        this.showToast(result?.error || '导出失败', 'error');
+      }
+    } catch (e) {
+      console.error('[App] Batch download error:', e);
+      this.showToast('导出出错', 'error');
+    }
+  },
+
   // 将选中的记事项发送给 ADP 小助手
   async sendSelectedNotesToADP() {
     const selectedCheckboxes = document.querySelectorAll('.note-checkbox:checked');
@@ -4853,7 +5246,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     if (window.electronAPI) {
       const result = await window.electronAPI.notebookGetNote(id);
       if (result.note) {
-        navigator.clipboard.writeText(result.note.content);
+        await window.electronAPI?.writeClipboardText(result.note.content);
         this.showToast('笔记内容已复制到剪贴板');
       }
     }
@@ -4863,7 +5256,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     if (window.electronAPI) {
       const result = await window.electronAPI.notebookGetNote(noteId);
       if (result.note) {
-        navigator.clipboard.writeText(result.note.content);
+        await window.electronAPI?.writeClipboardText(result.note.content);
         this.showToast('已复制到剪贴板');
       }
     }
@@ -5115,6 +5508,7 @@ ${JSON.stringify(reportData, null, 2)}`;
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
               ${this.getAnalysisStatusTag(note)}
               <div class="note-actions">
+                <button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
                 <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
                 <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
                 <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
@@ -6308,7 +6702,7 @@ ${JSON.stringify(reportData, null, 2)}`;
         }
         break;
       case 'copy-result':
-        if (result) navigator.clipboard.writeText(JSON.stringify(result, null, 2)).then(() => this.showToast('已复制到剪贴板'));
+        if (result) (window.electronAPI ? window.electronAPI.writeClipboardText(JSON.stringify(result, null, 2)) : navigator.clipboard.writeText(JSON.stringify(result, null, 2))).then(() => this.showToast('已复制到剪贴板'));
         break;
       case 'apply-memory-changes':
         if (result?.promote?.length && window.electronAPI) {
@@ -7161,6 +7555,221 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
 
   // ============= 外观设置 =============
+  // ===== 云同步 =====
+
+  _loadSyncSettings() {
+    const settings = this._getSyncSettings();
+    const toggle = document.getElementById('cloudSyncToggle');
+    const configSection = document.getElementById('syncConfigSection');
+    const disabledHint = document.getElementById('syncDisabledHint');
+    const syncServerUrl = document.getElementById('syncServerUrl');
+
+    if (toggle) toggle.checked = settings.enabled;
+
+    // 显示/隐藏
+    if (settings.enabled) {
+      configSection?.classList.remove('hidden');
+      disabledHint?.classList.add('hidden');
+    } else {
+      configSection?.classList.add('hidden');
+      disabledHint?.classList.remove('hidden');
+    }
+
+    // 同步服务器地址（从登录状态读取）
+    if (syncServerUrl) {
+      if (window.electronAPI?.authGetState) {
+        window.electronAPI.authGetState().then(state => {
+          if (state.isLoggedIn) {
+            syncServerUrl.value = 'ADPToolkit Config Server';
+          } else {
+            syncServerUrl.value = '未登录';
+          }
+        }).catch(() => {
+          syncServerUrl.value = '待配置';
+        });
+      } else {
+        syncServerUrl.value = '待配置';
+      }
+    }
+
+    // 同步范围
+    document.getElementById('syncTasks').checked = settings.scope.tasks !== false;
+    document.getElementById('syncNotes').checked = settings.scope.notes !== false;
+    document.getElementById('syncKnowledge').checked = settings.scope.knowledge !== false;
+    document.getElementById('syncClipboard').checked = settings.scope.clipboard !== false;
+
+    // 同步频率
+    const freqRadio = document.querySelector(`input[name="syncFrequency"][value="${settings.frequency || 'realtime'}"]`);
+    if (freqRadio) freqRadio.checked = true;
+
+    // 同步状态
+    if (settings.lastSyncAt) {
+      document.getElementById('lastSyncTime').textContent = this._formatRelativeTime(settings.lastSyncAt);
+    }
+  },
+
+  _getSyncSettings() {
+    try {
+      const raw = localStorage.getItem('memora_sync_settings');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return {
+      enabled: false,
+      serverUrl: '',
+      scope: { tasks: true, notes: true, knowledge: true, clipboard: true },
+      frequency: 'realtime',
+      lastSyncAt: null
+    };
+  },
+
+  _saveSyncSettings(settings) {
+    localStorage.setItem('memora_sync_settings', JSON.stringify(settings));
+  },
+
+  _toggleCloudSync(enabled) {
+    const settings = this._getSyncSettings();
+    settings.enabled = enabled;
+    this._saveSyncSettings(settings);
+
+    const configSection = document.getElementById('syncConfigSection');
+    const disabledHint = document.getElementById('syncDisabledHint');
+
+    if (enabled) {
+      configSection?.classList.remove('hidden');
+      disabledHint?.classList.add('hidden');
+      // 读取服务器地址
+      const server = window.electronAPI?.authGetServerUrls
+        ? null : null;
+      // 从 authState 获取服务器地址
+      if (window.electronAPI?.authGetState) {
+        window.electronAPI.authGetState().then(state => {
+          const serverUrl = document.getElementById('syncServerUrl');
+          if (serverUrl && state.isLoggedIn) {
+            serverUrl.value = '已连接 ADPToolkit';
+          } else if (serverUrl) {
+            serverUrl.value = '未登录';
+          }
+        });
+      }
+      // 启用同步引擎
+      SyncEngine.enable().then(() => {
+        this._showToast('云端同步已开启', 'success');
+        // 更新同步状态面板
+        this._refreshSyncStatus();
+      }).catch(err => {
+        this._showToast('同步启用失败：' + err.message, 'error');
+      });
+    } else {
+      configSection?.classList.add('hidden');
+      disabledHint?.classList.remove('hidden');
+      SyncEngine.disable();
+      this._showToast('云端同步已关闭', 'info');
+    }
+  },
+
+  async _syncNow() {
+    const settings = this._getSyncSettings();
+    if (!settings.enabled) {
+      this._showToast('请先开启云端同步', 'warning');
+      return;
+    }
+
+    // 检查是否已登录
+    let isLoggedIn = false;
+    try {
+      const state = await window.electronAPI?.authGetState();
+      isLoggedIn = state?.isLoggedIn;
+    } catch (e) {}
+
+    if (!isLoggedIn) {
+      this._showToast('请先登录后再同步', 'warning');
+      return;
+    }
+
+    try {
+      const result = await SyncEngine.fullSync();
+      if (result.ok) {
+        this._showToast(`同步完成：上传 ${result.pushed} 条，下载 ${result.pulled} 条`, 'success');
+        this._refreshSyncStatus();
+        // 刷新日历/任务视图
+        this.refreshCalendarView?.();
+      } else {
+        this._showToast('同步失败：' + (result.reason || '未知错误'), 'error');
+      }
+    } catch (err) {
+      this._showToast('同步失败：' + (err.message || '未知错误'), 'error');
+    }
+  },
+
+  _refreshSyncStatus() {
+    const stats = SyncEngine._getStats?.() || {};
+    const lastSyncEl = document.getElementById('lastSyncTime');
+    const syncDirEl = document.getElementById('syncDirection');
+    const pendingPushEl = document.getElementById('pendingPushCount');
+    const pendingPullEl = document.getElementById('pendingPullCount');
+
+    if (lastSyncEl) {
+      lastSyncEl.textContent = this._formatRelativeTime(stats.lastSyncAt || SyncEngine.getLastSyncAt());
+    }
+    if (syncDirEl) {
+      if (stats.lastPushedCount > 0 && stats.lastPulledCount > 0) syncDirEl.textContent = '↑↓ 双向';
+      else if (stats.lastPushedCount > 0) syncDirEl.textContent = '↑ 上传';
+      else if (stats.lastPulledCount > 0) syncDirEl.textContent = '↓ 下载';
+      else syncDirEl.textContent = '—';
+    }
+    if (pendingPushEl) pendingPushEl.textContent = '0 条';
+    if (pendingPullEl) pendingPullEl.textContent = '0 条';
+  },
+
+  _saveSyncScope() {
+    const settings = this._getSyncSettings();
+    settings.scope = {
+      tasks: document.getElementById('syncTasks')?.checked ?? true,
+      notes: document.getElementById('syncNotes')?.checked ?? true,
+      knowledge: document.getElementById('syncKnowledge')?.checked ?? true,
+      clipboard: document.getElementById('syncClipboard')?.checked ?? true
+    };
+    this._saveSyncSettings(settings);
+    // 同步到 SyncEngine
+    const seSettings = SyncEngine._getSettings?.();
+    if (seSettings) {
+      seSettings.scope = settings.scope;
+      SyncEngine._saveSettings?.(seSettings);
+    }
+  },
+
+  _saveSyncFrequency(frequency) {
+    const settings = this._getSyncSettings();
+    settings.frequency = frequency;
+    this._saveSyncSettings(settings);
+    // 同步到 SyncEngine 并重启定时器
+    const seSettings = SyncEngine._getSettings?.();
+    if (seSettings) {
+      seSettings.frequency = frequency;
+      SyncEngine._saveSettings?.(seSettings);
+      if (settings.enabled) {
+        SyncEngine._startAutoSync?.();
+      }
+    }
+  },
+
+  _toggleSyncStatus() {
+    const el = document.getElementById('syncStatus');
+    if (!el) return;
+    el.classList.toggle('hidden');
+  },
+
+  _formatRelativeTime(isoStr) {
+    if (!isoStr) return '从未';
+    const now = Date.now();
+    const then = new Date(isoStr).getTime();
+    const diff = Math.floor((now - then) / 1000);
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+    return `${Math.floor(diff / 86400)} 天前`;
+  },
+
   _loadAppearanceSettings() {
     this._renderThemeGrid();
     this._loadVisualToggles();
@@ -7350,8 +7959,9 @@ ${JSON.stringify(reportData, null, 2)}`;
     });
 
     // 更新语言切换按钮文本
-    const langBtn = document.getElementById('langToggleBtn');
-    if (langBtn) langBtn.textContent = i.t('lang.label');
+    // 语言切换按钮只更新 tooltip，SVG 图标保持不变
+    // const langBtn = document.getElementById('langToggleBtn');
+    // if (langBtn) langBtn.textContent = i.t('lang.label');
 
     // 导航标签已由 data-i18n 处理
 

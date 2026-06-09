@@ -68,6 +68,8 @@ const Calendar = {
   },
 
   showCalendarView() {
+    // 离开 AI 助手时保存当前对话
+    window.app?._saveCurrentSessionMessages?.();
     document.getElementById('calendarView')?.classList.remove('hidden');
     document.getElementById('documentsView')?.classList.add('hidden');
     document.getElementById('notebookView')?.classList.add('hidden');
@@ -89,6 +91,10 @@ const Calendar = {
   },
 
   hideOtherViews(activeView) {
+    // 离开 AI 助手时保存当前对话
+    if (document.getElementById('aiAssistantView') && !document.getElementById('aiAssistantView').classList.contains('hidden')) {
+      window.app?._saveCurrentSessionMessages?.();
+    }
     // 隐藏非当前激活的视图
     document.getElementById('notebookView')?.classList.add('hidden');
     document.getElementById('knowledgeView')?.classList.add('hidden');
@@ -545,7 +551,7 @@ const Calendar = {
             <div class="week-task priority-${task.priority}${task.status === 'completed' ? ' completed' : ''} draggable-task" data-id="${task.id}" draggable="${task.status !== 'completed'}" title="${this.getTaskTooltip(task)}">
               <span class="week-task-time">${new Date(task.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
               ${task.status === 'completed' ? '<span class="week-task-check">✓</span>' : ''}
-              ${task.title}
+              <span class="week-task-title">${task.title}</span>
               <button class="week-task-delete" data-task-id="${task.id}">×</button>
             </div>
           `).join('')}
@@ -679,13 +685,13 @@ const Calendar = {
       dayEl.className = `month-day drop-target ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''}`;
       dayEl.dataset.date = dateStr;
 
-      // 月视图显示任务标签（最多3个）
-      const taskTags = dayTasks.slice(0, 3).map(task => {
+      // 月视图显示任务标签（最多5个）
+      const taskTags = dayTasks.slice(0, 5).map(task => {
         const priorityClass = task.priority || 'medium';
         const completedClass = task.status === 'completed' ? ' completed' : '';
         return `<div class="month-task-tag priority-${priorityClass}${completedClass}" data-id="${task.id}" draggable="${task.status !== 'completed'}" title="${this.getTaskTooltip(task)}">${task.status === 'completed' ? '✓ ' : ''}${task.title}</div>`;
       }).join('');
-      const moreCount = dayTasks.length > 3 ? `<div class="month-task-more">+${dayTasks.length - 3}</div>` : '';
+      const moreCount = dayTasks.length > 5 ? `<div class="month-task-more">+${dayTasks.length - 5}</div>` : '';
 
       dayEl.innerHTML = `
         <div class="month-day-number">${date.getDate()}</div>
