@@ -9,7 +9,7 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));  // 同步数据可能较大
 
 // 健康检查
 app.get('/', (req, res) => {
@@ -1440,6 +1440,53 @@ function runMigrations() {
 
 runMigrations();
 
+// ===== 数据同步路由（v3 revision 乐观锁） =====
+const syncRoutes = require('./sync-routes')(db);
+// capabilities 是公开端点，不需要认证
+app.get('/memora/sync/capabilities', (req, res) => {
+  const { platform } = req.query;
+  const PLATFORM_CAPABILITIES = {
+    electron: {
+      tasks: { read: true, write: true, own: true },
+      notes: { read: true, write: true, own: true },
+      knowledge_nodes: { read: true, write: true, own: true },
+      knowledge_edges: { read: true, write: true, own: true },
+      clipboard_memories: { read: true, write: true, own: true },
+      profile: { read: true, write: true }
+    },
+    flutter: {
+      tasks: { read: true, write: true, own: true },
+      notes: { read: true, write: true, own: true },
+      knowledge_nodes: { read: true, write: false, own: false },
+      knowledge_edges: { read: true, write: false, own: false },
+      clipboard_memories: { read: true, write: false, own: false },
+      profile: { read: true, write: true }
+    },
+    miniprogram: {
+      tasks: { read: true, write: true, own: true },
+      notes: { read: true, write: false, own: false },
+      knowledge_nodes: { read: true, write: false, own: false },
+      knowledge_edges: { read: true, write: false, own: false },
+      clipboard_memories: { read: false, write: false, own: false },
+      profile: { read: true, write: false }
+    },
+    web: {
+      tasks: { read: true, write: false, own: false },
+      notes: { read: true, write: false, own: false },
+      knowledge_nodes: { read: true, write: false, own: false },
+      knowledge_edges: { read: true, write: false, own: false },
+      clipboard_memories: { read: true, write: false, own: false },
+      profile: { read: true, write: false }
+    }
+  };
+  if (platform && PLATFORM_CAPABILITIES[platform]) {
+    res.json({ platform, capabilities: PLATFORM_CAPABILITIES[platform] });
+  } else {
+    res.json({ platforms: Object.keys(PLATFORM_CAPABILITIES), capabilities: PLATFORM_CAPABILITIES });
+  }
+});
+app.use('/memora/sync', adpAuthMiddleware, syncRoutes);
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Memora Config Server] Running on http://0.0.0.0:${PORT}`);
   console.log(`[Memora Config Server] API endpoints:`);
@@ -1456,6 +1503,18 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  POST /memora/activity/logout`);
   console.log(`  GET  /memora/updates/check`);
   console.log(`  GET  /memora/updates/download/:filename`);
+  console.log(`  --- 数据同步 v3 ---`);
+  console.log(`  POST /memora/sync/device/register`);
+  console.log(`  GET  /memora/sync/device/list`);
+  console.log(`  POST /memora/sync/device/deactivate`);
+  console.log(`  POST /memora/sync/push`);
+  console.log(`  POST /memora/sync/pull`);
+  console.log(`  POST /memora/sync/full  ⭐核心`);
+  console.log(`  POST /memora/sync/resolve`);
+  console.log(`  GET  /memora/sync/status`);
+  console.log(`  DELETE /memora/sync/data`);
+  console.log(`  GET  /memora/sync/capabilities`);
+  console.log(`  --- 管理端 ---`);
   console.log(`  POST /memora/admin/notifications`);
   console.log(`  GET  /memora/admin/notifications`);
   console.log(`  PUT  /memora/admin/notifications/:id`);
