@@ -21,6 +21,9 @@ class ClipboardScheduler {
     this.getSettingFn = options.getSettingFn;
     this.processedHashes = options.processedHashes || new Set();
     this.maxHashes = options.maxHashes || 500;
+    // 图片去重 hash 集（基于像素内容的 SHA-256）— 用于粘贴时去重
+    // 注意：剪贴板轮询不再自动保存图片，图片保存改为粘贴触发
+    this.processedImageHashes = options.processedImageHashes || new Set();
 
     // 暂存器
     this.buffer = new ClipboardBuffer({
@@ -64,6 +67,9 @@ class ClipboardScheduler {
     this.lastClipboardText = '';
     this.isAnalyzing = false;
     this._pollCount = 0; // 轮询计数
+
+    // 图片去重 hash 集（基于像素内容的 SHA-256）— 用于粘贴时去重
+    // 注意：剪贴板轮询不再自动保存图片，图片保存改为粘贴触发
 
     // 待重试的分析队列
     this.pendingAnalysis = [];
@@ -184,11 +190,11 @@ class ClipboardScheduler {
 
     this._pollCount++;
     try {
+      // ===== 检测剪贴板文本（图片不再自动保存，改为粘贴触发） =====
       const currentText = this.clipboard.readText();
       
-      // 无内容
+      // 无文本
       if (!currentText) {
-        // 首次轮询或有变化时输出
         if (this._pollCount <= 3) {
           this._log(`[Scheduler] 🔘 第${this._pollCount}次轮询: 剪贴板为空`);
         }
@@ -216,7 +222,7 @@ class ClipboardScheduler {
       this._log(`[Scheduler] 📋 ✨ 检测到剪贴板变化: "${currentText.substring(0, 80).replace(/\n/g, '↵')}${currentText.length > 80 ? '...' : ''}" (${currentText.length}字)`);
       this.lastClipboardText = currentText;
 
-      // 检查是否启用暂存
+      // 文本内容走缓冲区或直接分析（图文混合也按文本处理）
       if (this._isEnabled('clipboard_buffer_enabled')) {
         this._handleWithBuffer(currentText);
       } else {
@@ -229,7 +235,8 @@ class ClipboardScheduler {
   }
 
   /**
-   * 通过暂存器处理（聚合模式）
+   * 通过暂存器处理（聚合模式）— 仅处理文本，图文混合按文本处理
+   * @param {string} text - 剪贴板文本
    */
   _handleWithBuffer(text) {
     // 轻量 preClassify 入场过滤
@@ -284,7 +291,6 @@ class ClipboardScheduler {
     const hash = getClipboardHash(mergedText);
     if (this.processedHashes.has(hash)) {
       this._log('[Scheduler] 🔁 合并文本已处理过，跳过');
-      // 🔧 修复：跳过时也要重置 isAnalyzing
       return;
     }
 
@@ -292,14 +298,14 @@ class ClipboardScheduler {
     // 保存 fragmentHashes，在 onAnalysisComplete 后统一标记
     this._pendingFragmentHashes = fragmentHashes || [];
 
-    // 调用分析函数
+    // 调用分析函数（纯文本，无图片）
     this._log(`[Scheduler] 🤖 提交AI分析...`);
     this._doAnalyze(mergedText);
   }
 
   /**
-   * 执行分析（带重试机制）
-   * 🔧 修复：正确 await analyzeFn，捕获异步错误
+   * 执行分析（带重试机制）— 纯文本，图片由粘贴触发单独处理
+   * @param {string} text - 待分析文本
    */
   async _doAnalyze(text) {
     if (this.isAnalyzing) {
@@ -430,6 +436,27 @@ class ClipboardScheduler {
 
   getAssociationHandler() {
     return this.associationHandler;
+  }
+
+  /**
+   * 检查图片 hash 是否已处理过（粘贴时去重用）
+   * @param {string} imageHash - SHA-256 hash
+   * @returns {boolean}
+   */
+  hasProcessedImage(imageHash) {
+    return this.processedImageHashes.has(imageHash);
+  }
+
+  /**
+   * 标记图片 hash 为已处理（粘贴保存后调用）
+   * @param {string} imageHash - SHA-256 hash
+   */
+  markImageProcessed(imageHash) {
+    this.processedImageHashes.add(imageHash);
+    if (this.processedImageHashes.size > this.maxHashes) {
+      const arr = Array.from(this.processedImageHashes);
+      this.processedImageHashes = new Set(arr.slice(-this.maxHashes));
+    }
   }
 
   setNotebook(notebook) {

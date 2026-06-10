@@ -1628,6 +1628,126 @@ body {
   align-items: flex-start;
 }
 
+/* 图片笔记缩略图 */
+.note-image-thumb {
+  width: 120px;
+  min-height: 80px;
+  max-height: 200px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.note-image-thumb img {
+  object-fit: cover;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.2s ease;
+}
+.note-image-thumb:hover img {
+  transform: scale(1.05);
+}
+.note-image-placeholder {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+  padding: 8px;
+}
+.note-preview-image {
+  text-align: center;
+  padding: 8px;
+}
+.note-preview-image img {
+  max-width: 100%;
+  max-height: 500px;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+/* 图片全屏查看器 */
+.image-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.25s ease;
+}
+.image-viewer-overlay.hidden {
+  display: none;
+}
+.image-viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+}
+.image-viewer-container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 92vw;
+  max-height: 92vh;
+}
+.image-viewer-img {
+  max-width: 90vw;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  cursor: grab;
+  user-select: none;
+}
+.image-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 16px;
+  padding: 0 8px;
+}
+.image-viewer-title {
+  color: rgba(255,255,255,0.8);
+  font-size: 14px;
+  font-weight: 500;
+}
+.image-viewer-actions {
+  display: flex;
+  gap: 8px;
+}
+.image-viewer-btn {
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+.image-viewer-btn:hover {
+  background: rgba(255,255,255,0.25);
+  transform: scale(1.1);
+}
+.image-viewer-close-btn {
+  background: rgba(255,59,48,0.3);
+  border-color: rgba(255,59,48,0.4);
+}
+.image-viewer-close-btn:hover {
+  background: rgba(255,59,48,0.6);
+}
+
 /* 记事项复选框 */
 .note-checkbox {
   flex-shrink: 0;
@@ -2307,6 +2427,18 @@ body {
 
 .message.assistant .message-content {
   border-radius: 4px var(--radius-lg) var(--radius-lg) var(--radius-lg);
+}
+
+/* AI 回答完成提醒脉动动画（仅当窗口聚焦且在 AI 助手时使用） */
+@keyframes adpCompletedPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); }
+  20% { box-shadow: 0 0 0 8px rgba(0, 122, 255, 0.18); }
+  40% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); }
+  60% { box-shadow: 0 0 0 8px rgba(0, 122, 255, 0.12); }
+  80% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); }
+}
+.message.assistant.adp-completed-pulse .message-content {
+  animation: adpCompletedPulse 2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .message-content p {

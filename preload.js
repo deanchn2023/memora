@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   estimateDuration: (task) => ipcRenderer.invoke('estimate-duration', task),
   addToCalendar: (task) => ipcRenderer.invoke('add-to-calendar', task),
   showNotification: (title, body) => ipcRenderer.invoke('show-notification', title, body),
+  getWindowFocusState: () => ipcRenderer.invoke('window:get-focus-state'),
+  flashWindowAttention: () => ipcRenderer.invoke('window:flash-attention'),
+  focusWindow: () => ipcRenderer.invoke('window:focus'),
   getClipboardText: () => ipcRenderer.invoke('get-clipboard-text'),
   writeClipboardText: (text) => ipcRenderer.invoke('write-clipboard-text', text),
   
@@ -157,9 +160,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notebookAddNote: (note) => ipcRenderer.invoke('notebook-add-note', note),
   notebookSearch: (query) => ipcRenderer.invoke('notebook-search', query),
   notebookGetNotes: (category) => ipcRenderer.invoke('notebook-get-notes', category),
+  notebookGetImage: (imagePath) => ipcRenderer.invoke('notebook:get-image', imagePath),
   notebookGetNote: (id) => ipcRenderer.invoke('notebook-get-note', id),
   notebookUpdateNote: (id, updates) => ipcRenderer.invoke('notebook-update-note', id, updates),
   notebookDeleteNote: (id, reason) => ipcRenderer.invoke('notebook-delete-note', id, reason),
+  getUserDataPath: () => ipcRenderer.invoke('get-user-data-path'),
   notebookDeleteNotesByCategory: (category) => ipcRenderer.invoke('notebook-delete-notes-by-category', category),
   notebookGetStats: () => ipcRenderer.invoke('notebook-get-stats'),
   notebookGetCategories: () => ipcRenderer.invoke('notebook-get-categories'),
@@ -380,6 +385,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pull: (data) => ipcRenderer.invoke('sync:pull', data),
     resolve: (data) => ipcRenderer.invoke('sync:resolve', data),
     getStatus: () => ipcRenderer.invoke('sync:get-status'),
+    // 图片同步
+    uploadNoteImage: (localPath) => ipcRenderer.invoke('sync:upload-note-image', localPath),
+    downloadNoteImage: (imageId, savePath) => ipcRenderer.invoke('sync:download-note-image', imageId, savePath),
+    deleteNoteImage: (imageId) => ipcRenderer.invoke('sync:delete-note-image', imageId),
+    pullNoteImages: (deviceId, sinceRevision) => ipcRenderer.invoke('sync:pull-note-images', deviceId, sinceRevision),
+    batchNoteImageMeta: (imageIds) => ipcRenderer.invoke('sync:batch-note-image-meta', imageIds),
+    listNoteImages: (options) => ipcRenderer.invoke('sync:list-note-images', options),
+    bindNoteImage: (imageId, noteId) => ipcRenderer.invoke('sync:bind-note-image', imageId, noteId),
   },
   // 兼容旧调用方式（App.js 中使用 window.electronAPI.syncXxx）
   syncRegisterDevice: (data) => ipcRenderer.invoke('sync:register-device', data),
@@ -390,7 +403,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   syncPull: (data) => ipcRenderer.invoke('sync:pull', data),
   syncResolve: (data) => ipcRenderer.invoke('sync:resolve', data),
   syncGetStatus: () => ipcRenderer.invoke('sync:get-status'),
+  // 图片同步专属 API
+  syncUploadNoteImage: (localPath) => ipcRenderer.invoke('sync:upload-note-image', localPath),
+  syncDownloadNoteImage: (imageId, savePath) => ipcRenderer.invoke('sync:download-note-image', imageId, savePath),
+  syncDeleteNoteImage: (imageId) => ipcRenderer.invoke('sync:delete-note-image', imageId),
+  syncPullNoteImages: (deviceId, sinceRevision) => ipcRenderer.invoke('sync:pull-note-images', deviceId, sinceRevision),
+  syncBatchNoteImageMeta: (imageIds) => ipcRenderer.invoke('sync:batch-note-image-meta', imageIds),
+  syncListNoteImages: (options) => ipcRenderer.invoke('sync:list-note-images', options),
+  syncBindNoteImage: (imageId, noteId) => ipcRenderer.invoke('sync:bind-note-image', imageId, noteId),
+  // 助手会话专属 API
+  syncConversations: (options) => ipcRenderer.invoke('sync:conversations', options),
+  syncConversationDetail: (convId) => ipcRenderer.invoke('sync:conversation-detail', convId),
+  syncConversationMessages: (convId, options) => ipcRenderer.invoke('sync:conversation-messages', convId, options),
+  syncConversationAppendMessage: (convId, message) => ipcRenderer.invoke('sync:conversation-append-message', convId, message),
+  syncConversationUpdate: (convId, updates) => ipcRenderer.invoke('sync:conversation-update', convId, updates),
+  syncConversationDelete: (convId) => ipcRenderer.invoke('sync:conversation-delete', convId),
   onSyncStatusChanged: (callback) => {
     ipcRenderer.on('sync:status-changed', (event, data) => callback(data));
+  },
+  // 主进程触发的即时推送（如剪贴板图片保存后）
+  onSyncTriggerPush: (callback) => {
+    ipcRenderer.on('sync:trigger-push', (event, data) => callback(data));
   },
 });

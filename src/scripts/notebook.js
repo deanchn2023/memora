@@ -82,26 +82,42 @@ class Notebook {
   }
 
   addNote(note) {
-    // 全局 hash 去重：相同内容不重复添加（不限日期）
+    // 图片类笔记：用 imageHash 做像素级去重（比文本 contentHash 更精准）
+    if (note.category === 'image' && note.imageHash) {
+      if (this._isDuplicateImage(note.imageHash)) {
+        console.log('[Notebook] Duplicate image, skipping:', note.imageHash.substring(0, 8));
+        return null;
+      }
+    }
+
+    // 文本类笔记：全局 hash 去重（相同内容不重复添加）
     const contentHash = this._hashContent(note.content);
-    if (this._isDuplicate(contentHash)) {
+    if (note.category !== 'image' && this._isDuplicate(contentHash)) {
       console.log('[Notebook] Duplicate content, skipping:', contentHash.substring(0, 8));
       return null;
     }
 
     const newNote = {
-      id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
+      id: note.id || (Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9)),
       content: note.content,
       title: note.title || this.extractTitle(note.content),
       category: note.category || 'general',
       tags: note.tags || [],
       contentHash: contentHash,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: note.createdAt || new Date().toISOString(),
+      updatedAt: note.updatedAt || new Date().toISOString(),
       analyzed: note.analyzed || false,
       analysis: note.analysis || null,
       relatedTasks: note.relatedTasks || []
     };
+
+    // 图片专属字段（纯图片笔记 或 图文混合笔记）
+    if (note.category === 'image' || note.imagePath) {
+      newNote.imagePath = note.imagePath || null;
+      newNote.imageHash = note.imageHash || null;
+      newNote.imageWidth = note.imageWidth || null;
+      newNote.imageHeight = note.imageHeight || null;
+    }
     
     this.notes.unshift(newNote);
     this.saveNotes();
@@ -122,10 +138,17 @@ class Notebook {
   _isDuplicate(contentHash) {
     if (!contentHash) return false;
     return this.notes.some(note => {
-      // 比对 hash：优先使用存储的 contentHash，否则实时计算
       const noteHash = note.contentHash || this._hashContent(note.content);
       return noteHash === contentHash;
     });
+  }
+
+  /**
+   * 检查是否已存在相同 imageHash 的图片记事项（像素级去重）
+   */
+  _isDuplicateImage(imageHash) {
+    if (!imageHash) return false;
+    return this.notes.some(note => note.imageHash === imageHash);
   }
 
   extractTitle(content) {

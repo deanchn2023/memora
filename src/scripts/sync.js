@@ -23,7 +23,9 @@ const SyncEngine = {
     notes: [],
     knowledge_nodes: [],
     knowledge_edges: [],
-    clipboard_memories: []
+    clipboard_memories: [],
+    assistant_conversations: [],
+    assistant_messages: []
   },
   _conflicts: [],          // 未解决的冲突
   _initialized: false,
@@ -41,6 +43,16 @@ const SyncEngine = {
     this._lastSyncAt = settings.lastSyncAt || null;
     this._initialized = true;
     console.log('[Sync] Initialized, deviceId:', this._deviceId);
+
+    // 监听主进程的同步触发事件（如剪贴板图片保存后立即推送）
+    if (window.electronAPI?.onSyncTriggerPush) {
+      window.electronAPI.onSyncTriggerPush((data) => {
+        if (data?.dataType && data?.record) {
+          console.log('[Sync] Triggered push from main process:', data.dataType, data.record.id);
+          this.markDirty(data.dataType, data.record);
+        }
+      });
+    }
   },
 
   /**
@@ -106,7 +118,7 @@ const SyncEngine = {
       app_version: appVersion
     });
 
-    if (result && result.registered) {
+    if (result && (result.registered || result.ok)) {
       console.log('[Sync] Device registered, capabilities:', result.capabilities);
       const settings = this._getSettings();
       settings.capabilities = result.capabilities;
@@ -164,44 +176,83 @@ const SyncEngine = {
         throw new Error('Network error');
       }
 
-      // 4. 处理 pull 结果（写入本地）
-      if (result.pulled) {
-        this._applyPulledData(result.pulled);
+      if (!result.ok) {
+        throw new Error(result.error || result.reason || 'Sync failed');
       }
 
-      // 5. 处理冲突
-      if (result.conflicts && result.conflicts.length > 0) {
-        this._handleConflicts(result.conflicts);
+      // 4. 适配服务端响应格式
+      // 服务端返回 { ok, push: { ok, results: { tasks: { upserted, conflicted } } }, pull: { ok, results: { tasks: { records, deleted_ids, count, max_revision } } } }
+      const pushedSummary = {};
+      const pulledData = {};
+      const allConflicts = [];
+
+      // 解析 push 结果
+      if (result.push && result.push.results) {
+        for (const [type, typeResult] of Object.entries(result.push.results)) {
+          if (typeResult.upserted) pushedSummary[type] = typeResult.upserted.length;
+          if (typeResult.conflicted && typeResult.conflicted.length > 0) {
+            for (const c of typeResult.conflicted) {
+              allConflicts.push({ type, ...c });
+            }
+          }
+        }
       }
 
-      // 6. 处理权限拒绝
+      // 解析 pull 结果
+      if (result.pull && result.pull.results) {
+        for (const [type, typeResult] of Object.entries(result.pull.results)) {
+          if (typeResult.records && typeResult.records.length > 0) {
+            pulledData[type] = typeResult.records;
+          }
+        }
+      }
+
+      // 5. 处理 pull 结果（写入本地）
+      if (Object.keys(pulledData).length > 0) {
+        this._applyPulledData(pulledData);
+      }
+
+      // 6. 处理冲突
+      if (allConflicts.length > 0) {
+        this._handleConflicts(allConflicts);
+      }
+
+      // 7. 处理权限拒绝
       if (result.permission_denied && result.permission_denied.length > 0) {
         console.warn('[Sync] Permission denied:', result.permission_denied);
       }
 
-      // 7. 更新同步时间
+      // 8. 更新同步时间
       this._lastSyncAt = result.server_time || new Date().toISOString();
       const s = this._getSettings();
       s.lastSyncAt = this._lastSyncAt;
       this._saveSettings(s);
 
-      // 8. 清空待推送缓存
+      // 9. 清空待推送缓存
       this._clearPendingChanges();
 
-      // 9. 更新统计
+      // 9.5 增量拉取图片元数据 + 下载（后台异步，不阻塞同步主流程）
+      this._syncImagesAfterPull();
+
+      // 10. 更新统计（含分类型明细）
+      const totalPushed = Object.values(pushedSummary).reduce((a, b) => a + b, 0);
+      const pulledSummary = this._summarizePulled(pulledData);
+      const totalPulled = Object.values(pulledSummary).reduce((a, b) => a + b, 0);
       const stats = this._getStats();
       stats.totalSyncs = (stats.totalSyncs || 0) + 1;
       stats.lastSyncAt = this._lastSyncAt;
-      stats.lastPushedCount = Object.values(result.pushed || {}).reduce((a, b) => a + b, 0);
-      stats.lastPulledCount = this._countPulled(result.pulled);
+      stats.lastPushedCount = totalPushed;
+      stats.lastPulledCount = totalPulled;
+      stats.lastPushDetail = pushedSummary;
+      stats.lastPullDetail = pulledSummary;
       this._saveStats(stats);
 
-      this._emitStatus('idle', { pushed: stats.lastPushedCount, pulled: stats.lastPulledCount });
+      this._emitStatus('idle', { pushed: totalPushed, pulled: totalPulled, pushDetail: pushedSummary, pullDetail: pulledSummary });
 
-      console.log('[Sync] Full sync done: pushed', stats.lastPushedCount, ', pulled', stats.lastPulledCount,
+      console.log('[Sync] Full sync done: pushed', totalPushed, pushedSummary, ', pulled', totalPulled, pulledSummary,
                   ', conflicts', (result.conflicts || []).length);
 
-      return { ok: true, pushed: stats.lastPushedCount, pulled: stats.lastPulledCount, conflicts: (result.conflicts || []).length };
+      return { ok: true, pushed: totalPushed, pulled: totalPulled, conflicts: (result.conflicts || []).length, pushDetail: pushedSummary, pullDetail: pulledSummary };
     } catch (err) {
       console.error('[Sync] Full sync failed:', err.message);
       this._emitStatus('error', { error: err.message });
@@ -254,8 +305,17 @@ const SyncEngine = {
         data_types: dataTypes || this._getEnabledDataTypes()
       });
 
-      if (result && result.pulled) {
-        this._applyPulledData(result.pulled);
+      if (result && result.ok && result.results) {
+        // 适配服务端格式：pull 返回 { ok, results: { tasks: { records, ... } } }
+        const pulledData = {};
+        for (const [type, typeResult] of Object.entries(result.results)) {
+          if (typeResult.records && typeResult.records.length > 0) {
+            pulledData[type] = typeResult.records;
+          }
+        }
+        if (Object.keys(pulledData).length > 0) {
+          this._applyPulledData(pulledData);
+        }
         this._lastSyncAt = result.server_time || new Date().toISOString();
         const s = this._getSettings();
         s.lastSyncAt = this._lastSyncAt;
@@ -408,14 +468,51 @@ const SyncEngine = {
   },
 
   _toPushFormat(record) {
-    return {
+    // 将 camelCase 字段名映射为 snake_case，并序列化数组/对象字段
+    const fieldMap = {
+      dueDate: 'due_date',
+      estimatedDuration: 'estimated_duration',
+      actualDuration: 'actual_duration',
+      pomodoroSessions: 'pomodoro_sessions',
+      completedAt: 'completed_at',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+      calendarEventId: 'calendar_event_id',
+      originDeviceId: 'origin_device_id',
+      deletedAt: 'deleted_at',
+      rawText: 'raw_text',
+      memoryType: 'memory_type',
+      businessCategory: 'business_category',
+      sourceId: 'source_id',
+      targetId: 'target_id',
+      imagePath: 'image_path',
+      imageHash: 'image_hash',
+      imageWidth: 'image_width',
+      imageHeight: 'image_height',
+    };
+    // 服务端 TEXT 列字段（必须为字符串，不能传数组/对象）
+    const textFields = new Set([
+      'pomodoro_sessions', 'reminders', 'tags', 'extra',
+      'pomodoroSessions', // camelCase 兼容
+    ]);
+
+    const mapped = {
       id: record.id,
       base_revision: record.revision || 0,
-      // 复制所有业务字段
-      ...record,
-      // 确保 revision 相关字段正确
-      revision: undefined,  // 不发送 revision，服务端自己管理
     };
+
+    for (const [key, value] of Object.entries(record)) {
+      if (key === 'id' || key === 'revision' || value === undefined) continue;
+      const snakeKey = fieldMap[key] || key;
+      // 数组/对象字段必须序列化为 JSON 字符串
+      if (textFields.has(key) || textFields.has(snakeKey)) {
+        mapped[snakeKey] = (typeof value === 'string') ? value : JSON.stringify(value || (Array.isArray(record[key]) ? [] : {}));
+      } else {
+        mapped[snakeKey] = value;
+      }
+    }
+
+    return mapped;
   },
 
   _clearPendingChanges() {
@@ -464,10 +561,80 @@ const SyncEngine = {
       }
     }
 
+    // Notes — 图片下载 + 笔记写入（通过主进程 IPC）
+    if (pulled.notes && pulled.notes.length > 0) {
+      // 收集需要下载的服务端图片笔记
+      const imageNotesToDownload = pulled.notes.filter(n =>
+        n.imagePath && !n.imagePath.startsWith('images/') && !n.imagePath.startsWith('/')
+      );
+
+      if (imageNotesToDownload.length > 0) {
+        console.log('[Sync] Downloading', imageNotesToDownload.length, 'remote note images...');
+        this._downloadPendingNoteImages(imageNotesToDownload);
+      }
+
+      // 通过主进程 IPC 写入笔记到本地 notebook
+      this._applyPulledNotes(pulled.notes);
+      appliedCount += pulled.notes.filter(n => n.originDeviceId !== this._deviceId).length;
+    }
+
     // Notes, Knowledge 等：通过事件通知主进程写入
     // 简化实现：先发事件让 UI 刷新
     if (appliedCount > 0) {
       this._emitDataChanged();
+    }
+
+    // Assistant conversations — 合并到 App._chatSessions
+    if (pulled.assistant_conversations && pulled.assistant_conversations.length > 0) {
+      if (typeof App !== 'undefined' && App._chatSessions) {
+        const localIds = new Set(App._chatSessions.map(s => s.id));
+        for (const conv of pulled.assistant_conversations) {
+          if (conv.origin_device_id === this._deviceId) continue; // 防回声
+          if (conv.deleted_at) {
+            // 云端已删除：本地也删除
+            const idx = App._chatSessions.findIndex(s => s.id === conv.id);
+            if (idx >= 0) {
+              App._chatSessions.splice(idx, 1);
+              try { localStorage.removeItem('memora_session_msg_' + conv.id); } catch {}
+              appliedCount++;
+            }
+            continue;
+          }
+          if (!localIds.has(conv.id)) {
+            App._chatSessions.push({
+              id: conv.id,
+              title: conv.title || '新对话',
+              messageCount: conv.message_count || 0,
+              createdAt: conv.created_at || new Date().toISOString(),
+              updatedAt: conv.updated_at || new Date().toISOString(),
+              conversationId: conv.conversation_id || null,
+              _fromCloud: true,
+              _revision: conv.revision || 1,
+            });
+            appliedCount++;
+          } else {
+            // 已有：更新 revision 和 conversationId
+            const local = App._chatSessions.find(s => s.id === conv.id);
+            if (local && (conv.revision || 0) > (local._revision || 0)) {
+              if (conv.conversation_id && !local.conversationId) local.conversationId = conv.conversation_id;
+              local._revision = conv.revision;
+              if (conv.title && conv.title !== '新对话') local.title = conv.title;
+              if ((conv.message_count || 0) > (local.messageCount || 0)) local.messageCount = conv.message_count;
+              appliedCount++;
+            }
+          }
+        }
+        if (appliedCount > 0) {
+          App._saveChatSessions();
+          App._renderChatSessionList();
+        }
+      }
+    }
+
+    // Assistant messages — 不直接应用到 UI（切换会话时按需加载）
+    // 只记录统计
+    if (pulled.assistant_messages && pulled.assistant_messages.length > 0) {
+      appliedCount += pulled.assistant_messages.filter(m => m.origin_device_id !== this._deviceId).length;
     }
 
     return appliedCount;
@@ -511,6 +678,10 @@ const SyncEngine = {
           content: serverRecord.content ?? base.content ?? '',
           category: serverRecord.category ?? base.category ?? 'default',
           tags: this._safeParseJSON(serverRecord.tags, base.tags || []),
+          imagePath: serverRecord.image_path ?? base.imagePath ?? '',
+          imageHash: serverRecord.image_hash ?? base.imageHash ?? '',
+          imageWidth: serverRecord.image_width ?? base.imageWidth ?? 0,
+          imageHeight: serverRecord.image_height ?? base.imageHeight ?? 0,
           revision: serverRecord.revision ?? (base.revision || 0) + 1,
           originDeviceId: serverRecord.origin_device_id,
           createdAt: serverRecord.created_at ?? base.createdAt,
@@ -638,7 +809,9 @@ const SyncEngine = {
       notes: 'notes',
       knowledge_nodes: 'knowledge',
       knowledge_edges: 'knowledge',
-      clipboard_memories: 'clipboard'
+      clipboard_memories: 'clipboard',
+      assistant_conversations: 'conversations',
+      assistant_messages: 'conversations'
     };
     const key = scopeMap[dataType];
     return key ? (settings.scope[key] !== false) : true;
@@ -651,6 +824,10 @@ const SyncEngine = {
     if (settings.scope.notes) types.push('notes');
     if (settings.scope.knowledge) { types.push('knowledge_nodes'); types.push('knowledge_edges'); }
     if (settings.scope.clipboard) types.push('clipboard_memories');
+    if (settings.scope.conversations !== false) {
+      types.push('assistant_conversations');
+      types.push('assistant_messages');
+    }
     return types;
   },
 
@@ -665,6 +842,59 @@ const SyncEngine = {
       if (Array.isArray(arr)) count += arr.length;
     }
     return count;
+  },
+
+  /**
+   * 按类型汇总 pull 数据量
+   * @returns {Object} e.g. { tasks: 3, notes: 2, assistant_conversations: 1 }
+   */
+  _summarizePulled(pulled) {
+    if (!pulled) return {};
+    const summary = {};
+    for (const [type, arr] of Object.entries(pulled)) {
+      if (Array.isArray(arr) && arr.length > 0) {
+        summary[type] = arr.length;
+      }
+    }
+    return summary;
+  },
+
+  /**
+   * 格式化同步结果摘要（用于 toast 提示）
+   * @param {Object} pushDetail - e.g. { tasks: 2, notes: 1 }
+   * @param {Object} pullDetail - e.g. { tasks: 3, knowledge_nodes: 5 }
+   * @returns {string} e.g. "↑ 任务2 记事1 | ↓ 任务3 知识5"
+   */
+  formatSyncSummary(pushDetail, pullDetail) {
+    const TYPE_LABELS = {
+      tasks: '任务',
+      notes: '记事',
+      knowledge_nodes: '知识',
+      knowledge_edges: '知识',
+      clipboard_memories: '剪贴板',
+      assistant_conversations: '会话',
+      assistant_messages: '会话消息',
+      note_images: '图片'
+    };
+
+    const formatPart = (detail) => {
+      if (!detail || Object.keys(detail).length === 0) return '';
+      // 合并同类（knowledge_nodes + knowledge_edges → 知识）
+      const merged = {};
+      for (const [type, count] of Object.entries(detail)) {
+        const label = TYPE_LABELS[type] || type;
+        merged[label] = (merged[label] || 0) + count;
+      }
+      return Object.entries(merged).map(([label, count]) => `${label}${count}`).join(' ');
+    };
+
+    const pushStr = formatPart(pushDetail);
+    const pullStr = formatPart(pullDetail);
+
+    const parts = [];
+    if (pushStr) parts.push(`↑ ${pushStr}`);
+    if (pullStr) parts.push(`↓ ${pullStr}`);
+    return parts.length > 0 ? parts.join(' | ') : '无变更';
   },
 
   // ===== 事件系统 =====
@@ -781,7 +1011,427 @@ const SyncEngine = {
     if (!this._getSettings().enabled) return;
     console.log('[Sync] Syncing before close...');
     await this.fullSync();
-  }
+  },
+
+  // ===== 助手会话专属 API（便捷接口） =====
+
+  /**
+   * 获取云端会话列表
+   * GET /memora/sync/conversations?page=&limit=&search=
+   */
+  async getConversations(options = {}) {
+    try {
+      return await window.electronAPI.syncConversations(options);
+    } catch (e) {
+      console.error('[Sync] getConversations failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 获取单个会话详情
+   * GET /memora/sync/conversations/:id
+   */
+  async getConversation(convId) {
+    try {
+      return await window.electronAPI.syncConversationDetail(convId);
+    } catch (e) {
+      console.error('[Sync] getConversation failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 获取会话消息列表
+   * GET /memora/sync/conversations/:id/messages?page=&limit=
+   */
+  async getConversationMessages(convId, options = {}) {
+    try {
+      return await window.electronAPI.syncConversationMessages(convId, options);
+    } catch (e) {
+      console.error('[Sync] getConversationMessages failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 追加消息到会话（流式完成后整条保存）
+   * POST /memora/sync/conversations/:id/messages
+   */
+  async appendMessage(convId, message) {
+    try {
+      const result = await window.electronAPI.syncConversationAppendMessage(convId, message);
+      // 同时标记本地 pending push
+      if (result?.ok) {
+        this.markDirty('assistant_messages', {
+          id: message.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          conversation_id: convId,
+          role: message.role,
+          content: message.content,
+          status: message.status || 'completed',
+          message_index: message.message_index,
+          revision: result.conversation_revision || 1
+        });
+      }
+      return result;
+    } catch (e) {
+      console.error('[Sync] appendMessage failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 更新会话元数据
+   * PUT /memora/sync/conversations/:id
+   */
+  async updateConversation(convId, updates) {
+    try {
+      const result = await window.electronAPI.syncConversationUpdate(convId, updates);
+      if (result?.ok) {
+        this.markDirty('assistant_conversations', {
+          id: convId,
+          ...updates,
+          revision: result.revision || 1
+        });
+      }
+      return result;
+    } catch (e) {
+      console.error('[Sync] updateConversation failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 删除会话（软删除 + 级联消息）
+   * DELETE /memora/sync/conversations/:id
+   */
+  async deleteConversation(convId) {
+    try {
+      const result = await window.electronAPI.syncConversationDelete(convId);
+      if (result?.ok) {
+        this.markDeleted('assistant_conversations', { id: convId });
+      }
+      return result;
+    } catch (e) {
+      console.error('[Sync] deleteConversation failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 推送助手会话和消息到云端（标准 v3 push）
+   * 适合创建会话、发送消息、AI回复完成等场景
+   */
+  async pushConversationsAndMessages(conversations = [], messages = []) {
+    const changes = {};
+    if (conversations.length > 0) changes.assistant_conversations = conversations;
+    if (messages.length > 0) changes.assistant_messages = messages;
+    if (Object.keys(changes).length === 0) return { ok: true, pushed: 0 };
+
+    try {
+      const result = await this.push(changes);
+      return result;
+    } catch (e) {
+      console.error('[Sync] pushConversationsAndMessages failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  // ===== 图片同步 API（v3.1 新增）=====
+
+  /**
+   * 上传图片文件到服务端
+   * @param {string} localPath - 本地图片绝对路径
+   * @returns {Object} { ok, uploaded: [{ id, server_path, image_hash, width, height, ... }] }
+   */
+  async uploadNoteImage(localPath) {
+    try {
+      return await window.electronAPI.syncUploadNoteImage(localPath);
+    } catch (e) {
+      console.error('[Sync] uploadNoteImage failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 从服务端下载图片文件到本地
+   * @param {string} imageId - 图片 ID（img_xxx）
+   * @param {string} savePath - 本地保存绝对路径
+   * @returns {Object} { ok, size, path }
+   */
+  async downloadNoteImage(imageId, savePath) {
+    try {
+      return await window.electronAPI.syncDownloadNoteImage(imageId, savePath);
+    } catch (e) {
+      console.error('[Sync] downloadNoteImage failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 删除服务端图片
+   * @param {string} imageId - 图片 ID
+   */
+  async deleteNoteImage(imageId) {
+    try {
+      return await window.electronAPI.syncDeleteNoteImage(imageId);
+    } catch (e) {
+      console.error('[Sync] deleteNoteImage failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 增量拉取图片元数据（基于 revision）
+   * @param {number} sinceRevision - 上次拉取的最大 revision
+   * @returns {Object} { ok, images: [...], deleted_ids: [...], max_revision }
+   */
+  async syncPullImages(sinceRevision) {
+    try {
+      const rev = sinceRevision ?? this._getLastImageRevision();
+      return await window.electronAPI.syncPullNoteImages(this._deviceId, rev);
+    } catch (e) {
+      console.error('[Sync] syncPullImages failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
+
+  /**
+   * 批量下载待下载的图片文件
+   * 先 syncPullImages 获取元数据，再逐个下载
+   * @param {Array} notesWithServerImages - 含服务端 image_path 的笔记列表
+   */
+  async downloadPendingImages(notesWithServerImages) {
+    if (!notesWithServerImages || notesWithServerImages.length === 0) return;
+
+    for (const note of notesWithServerImages) {
+      try {
+        // 通过图片列表 API 按 note_id 查找图片 ID
+        const imgListResult = await window.electronAPI.syncListNoteImages({ note_id: note.id, limit: 1 });
+
+        if (imgListResult.ok && imgListResult.images?.length > 0) {
+          const imgMeta = imgListResult.images[0];
+          // 构造本地保存路径
+          const localFilename = `sync_${imgMeta.filename}`;
+          const localRelPath = `images/${localFilename}`;
+
+          // 先检查本地是否已存在
+          const exists = await this._checkLocalImageExists(localRelPath);
+          if (exists) {
+            // 更新笔记的 imagePath 指向本地路径
+            this._updateNoteImagePath(note.id, localRelPath);
+            continue;
+          }
+
+          // 下载图片到本地（通过主进程获取 userData 路径）
+          const savePath = await this._getLocalImageAbsPath(localRelPath);
+          const downloadResult = await window.electronAPI.syncDownloadNoteImage(imgMeta.id, savePath);
+
+          if (downloadResult.ok) {
+            this._updateNoteImagePath(note.id, localRelPath);
+            console.log('[Sync] Image downloaded for note', note.id);
+          }
+        }
+      } catch (e) {
+        console.warn('[Sync] Image download error for note', note.id, ':', e.message);
+      }
+    }
+  },
+
+  /**
+   * 完整流程：创建图片笔记（上传图片 → 标记同步）
+   * @param {string} localImagePath - 本地图片路径
+   * @param {string} title - 笔记标题
+   * @param {string} content - 笔记内容
+   * @returns {Object} { ok, note, uploadResult }
+   */
+  async createImageNote(localImagePath, title, content) {
+    // 1. 上传图片到服务端
+    const uploadResult = await this.uploadNoteImage(localImagePath);
+
+    if (!uploadResult.ok || !uploadResult.uploaded?.length) {
+      return { ok: false, error: uploadResult.error || '图片上传失败' };
+    }
+
+    const imgInfo = uploadResult.uploaded[0];
+
+    // 2. 创建笔记（通过 App 的 addNote 逻辑）
+    const note = {
+      title: title || '图片笔记',
+      content: content || '',
+      category: 'image',
+      imagePath: imgInfo.server_path,
+      imageHash: imgInfo.image_hash || '',
+      imageWidth: imgInfo.width || 0,
+      imageHeight: imgInfo.height || 0,
+    };
+
+    // 3. 标记同步
+    this.markDirty('notes', note);
+
+    return { ok: true, note, uploadResult };
+  },
+
+  /**
+   * 获取笔记的本地图片路径
+   * @param {string} noteId - 笔记 ID
+   * @returns {string|null} 本地图片相对路径
+   */
+  getNoteImagePath(noteId) {
+    // 从 notebook 获取笔记信息
+    if (typeof App !== 'undefined' && App._notebook) {
+      const note = App._notebook.getNoteById(noteId);
+      return note?.imagePath || null;
+    }
+    return null;
+  },
+
+  /**
+   * fullSync 后触发图片增量拉取 + 下载
+   * 在 fullSync 成功后自动调用
+   */
+  async _syncImagesAfterPull() {
+    try {
+      const sinceRevision = this._getLastImageRevision();
+      const result = await this.syncPullImages(sinceRevision);
+
+      if (result.ok && result.images?.length > 0) {
+        console.log('[Sync] Pulled', result.images.length, 'image metadata, downloading...');
+        await this.downloadPendingImages(result.images);
+
+        // 更新 image revision 游标
+        if (result.max_revision > 0) {
+          this._saveLastImageRevision(result.max_revision);
+        }
+      }
+
+      // 处理已删除的图片
+      if (result.ok && result.deleted_ids?.length > 0) {
+        for (const { id } of result.deleted_ids) {
+          console.log('[Sync] Server-deleted image:', id);
+        }
+      }
+    } catch (e) {
+      console.warn('[Sync] Post-sync image pull failed:', e.message);
+    }
+  },
+
+  /**
+   * 下载拉取笔记中的服务端图片（后台异步）
+   */
+  async _downloadPendingNoteImages(notes) {
+    // 后台异步执行，不阻塞同步主流程
+    setTimeout(async () => {
+      try {
+        await this.downloadPendingImages(notes);
+      } catch (e) {
+        console.warn('[Sync] Background image download failed:', e.message);
+      }
+    }, 500);
+  },
+
+  /**
+   * 通过主进程 IPC 将拉取的笔记写入本地 notebook
+   */
+  async _applyPulledNotes(pulledNotes) {
+    if (!pulledNotes || pulledNotes.length === 0) return;
+
+    for (const note of pulledNotes) {
+      // 防回声
+      if (note.originDeviceId === this._deviceId) continue;
+      if (note.deletedAt) continue;
+
+      try {
+        // 通过主进程 IPC 写入（addNote / updateNote）
+        const result = await window.electronAPI.notebookAddNote({
+          id: note.id,
+          title: note.title,
+          content: note.content,
+          category: note.category,
+          tags: note.tags,
+          imagePath: note.imagePath || '',
+          imageHash: note.imageHash || '',
+          imageWidth: note.imageWidth || 0,
+          imageHeight: note.imageHeight || 0,
+          revision: note.revision,
+          createdAt: note.createdAt,
+          updatedAt: note.updatedAt,
+        });
+
+        if (result) {
+          console.log('[Sync] Note applied:', note.id);
+        }
+      } catch (e) {
+        console.warn('[Sync] Failed to apply note:', note.id, e.message);
+      }
+    }
+  },
+
+  /**
+   * 更新笔记的 imagePath（图片下载后）
+   */
+  _updateNoteImagePath(noteId, localRelPath) {
+    if (typeof App !== 'undefined' && App._notebook) {
+      try {
+        App._notebook.updateNote(noteId, { imagePath: localRelPath });
+      } catch (e) {
+        console.warn('[Sync] Failed to update note image path:', noteId, e.message);
+      }
+    }
+  },
+
+  /**
+   * 检查本地图片是否已存在
+   */
+  async _checkLocalImageExists(localRelPath) {
+    try {
+      const result = await window.electronAPI.notebookGetImage(localRelPath);
+      return result?.success === true;
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * 获取本地图片绝对路径
+   */
+  async _getLocalImageAbsPath(localRelPath) {
+    // 通过主进程获取 userData 路径并拼接
+    try {
+      const userDataPath = await window.electronAPI.getUserDataPath?.();
+      if (userDataPath) {
+        const absPath = userDataPath + '/notebook/' + localRelPath;
+        return absPath.replace(/\/+/g, '/');
+      }
+    } catch {}
+    // fallback：返回相对路径，由主进程处理
+    return localRelPath;
+  },
+
+  // ===== revision 游标管理 =====
+
+  _getLastImageRevision() {
+    try {
+      const raw = localStorage.getItem('memora_sync_last_image_revision');
+      return raw ? parseInt(raw) : 0;
+    } catch { return 0; }
+  },
+
+  _saveLastImageRevision(revision) {
+    localStorage.setItem('memora_sync_last_image_revision', String(revision));
+  },
+
+  /**
+   * 拉取助手会话和消息（标准 v3 pull）
+   */
+  async pullConversationsAndMessages(sinceRevision) {
+    try {
+      return await this.pull(['assistant_conversations', 'assistant_messages'], sinceRevision);
+    } catch (e) {
+      console.error('[Sync] pullConversationsAndMessages failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  },
 };
 
 window.SyncEngine = SyncEngine;

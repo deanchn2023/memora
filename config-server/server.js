@@ -1440,8 +1440,16 @@ function runMigrations() {
 
 runMigrations();
 
-// ===== 数据同步路由（v3 revision 乐观锁） =====
+// ===== 数据同步路由（v3.1 revision 乐观锁 + 图片同步） =====
 const syncRoutes = require('./sync-routes')(db);
+
+// 图片文件静态服务（在 sync 路由之前，使下载可直接通过 URL 访问）
+const noteImagesDir = path.join(__dirname, 'uploads', 'note-images');
+if (!fs.existsSync(noteImagesDir)) fs.mkdirSync(noteImagesDir, { recursive: true });
+app.use('/memora/uploads/note-images', express.static(noteImagesDir, {
+  maxAge: '1d',
+  fallthrough: true
+}));
 // capabilities 是公开端点，不需要认证
 app.get('/memora/sync/capabilities', (req, res) => {
   const { platform } = req.query;
@@ -1514,6 +1522,15 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  GET  /memora/sync/status`);
   console.log(`  DELETE /memora/sync/data`);
   console.log(`  GET  /memora/sync/capabilities`);
+  console.log(`  --- 图片同步 v3.1 ---`);
+  console.log(`  POST /memora/sync/notes/images/upload`);
+  console.log(`  GET  /memora/sync/notes/images/:id/download`);
+  console.log(`  GET  /memora/sync/notes/images/:id`);
+  console.log(`  GET  /memora/sync/notes/images`);
+  console.log(`  POST /memora/sync/notes/images/batch-download`);
+  console.log(`  PUT  /memora/sync/notes/images/:id/bind`);
+  console.log(`  DELETE /memora/sync/notes/images/:id`);
+  console.log(`  POST /memora/sync/notes/images/sync-pull`);
   console.log(`  --- 管理端 ---`);
   console.log(`  POST /memora/admin/notifications`);
   console.log(`  GET  /memora/admin/notifications`);

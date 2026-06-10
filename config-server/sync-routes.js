@@ -1,11 +1,16 @@
 /**
- * Memora 数据同步 API 路由 v3
+ * Memora 数据同步 API 路由 v3.1
  * 基于 revision 乐观锁的增量双向同步
  * 
  * 核心：设备注册、push/pull/full sync、冲突解决、权限矩阵、幂等性、审计
+ * v3.1: 新增图片同步 API（上传/下载/绑定/删除/sync-pull）
  */
 
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const multer = require('multer');
 
 // ===== 权限矩阵 =====
 const PLATFORM_CAPABILITIES = {
@@ -57,7 +62,7 @@ const DATA_TYPE_FIELDS = {
   tasks: ['title', 'description', 'status', 'priority', 'due_date', 'source', 'raw_text',
     'estimated_duration', 'actual_duration', 'pomodoro_sessions', 'reminders',
     'calendar_event_id', 'completed_at', 'extra', 'deleted_at'],
-  notes: ['title', 'content', 'category', 'tags', 'color', 'pinned', 'deleted_at'],
+  notes: ['title', 'content', 'category', 'tags', 'color', 'pinned', 'image_path', 'image_hash', 'image_width', 'image_height', 'deleted_at'],
   knowledge_nodes: ['name', 'type', 'domain', 'health', 'extra', 'deleted_at'],
   knowledge_edges: ['source_id', 'target_id', 'type', 'weight', 'extra', 'deleted_at'],
   clipboard_memories: ['content', 'memory_type', 'business_category', 'confidence', 'source', 'deleted_at']
@@ -67,6 +72,110 @@ const DATA_TYPE_FIELDS = {
 const DEVICE_ID_REGEX = /^[a-zA-Z0-9_-]{2,64}$/;
 
 module.exports = function(db) {
+
+  // ===== 图片文件存储配置 =====
+  const NOTE_IMAGES_DIR = path.join(__dirname, 'uploads', 'note-images');
+  if (!fs.existsSync(NOTE_IMAGES_DIR)) fs.mkdirSync(NOTE_IMAGES_DIR, { recursive: true });
+
+  // 图片上传 multer 配置（磁盘存储 + 按用户子目录）
+  const noteImageStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const userDir = path.join(NOTE_IMAGES_DIR, req.userId || 'unknown');
+      if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+      cb(null, userDir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '.png';
+      const safeName = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+      cb(null, safeName);
+    }
+  });
+
+  const noteImageUpload = multer({
+    storage: noteImageStorage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 单文件最大 10MB
+    fileFilter: (req, file, cb) => {
+      const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'];
+      if (allowed.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`不支持的图片格式: ${file.mimetype}`), false);
+      }
+    }
+  });
+
+  /**
+   * 解析图片尺寸（直接读取文件头，无需外部依赖）
+   * 支持 PNG / JPEG / GIF / WebP / BMP
+   */
+  function getImageDimensions(filePath) {
+    try {
+      const buf = fs.readFileSync(filePath);
+      if (buf.length < 12) return { width: 0, height: 0 };
+
+      // PNG: 宽高在 [16..19] 和 [20..23] (big-endian)
+      if (buf[0] === 0x89 && buf[1] === 0x50) {
+        return {
+          width: buf.readUInt32BE(16),
+          height: buf.readUInt32BE(20)
+        };
+      }
+
+      // JPEG: 查找 SOF0/SOF2 marker (0xFFC0/0xFFC2)
+      if (buf[0] === 0xFF && buf[1] === 0xD8) {
+        let offset = 2;
+        while (offset < buf.length - 9) {
+          if (buf[offset] !== 0xFF) break;
+          const marker = buf[offset + 1];
+          if (marker === 0xC0 || marker === 0xC2) {
+            return {
+              height: buf.readUInt16BE(offset + 5),
+              width: buf.readUInt16BE(offset + 7)
+            };
+          }
+          const segLen = buf.readUInt16BE(offset + 2);
+          offset += 2 + segLen;
+        }
+      }
+
+      // GIF: 宽高在 [6..7] 和 [8..9] (little-endian)
+      if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+        return {
+          width: buf.readUInt16LE(6),
+          height: buf.readUInt16LE(8)
+        };
+      }
+
+      // BMP: 宽高在 [18..21] 和 [22..25] (little-endian)
+      if (buf[0] === 0x42 && buf[1] === 0x4D) {
+        return {
+          width: buf.readUInt32LE(18),
+          height: Math.abs(buf.readInt32LE(22))
+        };
+      }
+
+      // WebP: RIFF header + VP8/VP8L
+      if (buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+        if (buf.readUInt32LE(12) === 0x38504956) { // VP8
+          return {
+            width: (buf.readUInt16LE(26) & 0x3FFF),
+            height: ((buf.readUInt32LE(26) >> 14) & 0x3FFF)
+          };
+        }
+        if (buf.readUInt32LE(12) === 0x4C385056) { // VP8L
+          const bits = buf.readUInt32LE(21);
+          return {
+            width: (bits & 0x3FFF) + 1,
+            height: ((bits >> 14) & 0x3FFF) + 1
+          };
+        }
+      }
+
+      return { width: 0, height: 0 };
+    } catch {
+      return { width: 0, height: 0 };
+    }
+  }
 
   // ===== 初始化同步相关数据表 =====
   db.exec(`
@@ -126,6 +235,10 @@ module.exports = function(db) {
       tags TEXT DEFAULT '[]',
       color TEXT DEFAULT '',
       pinned INTEGER DEFAULT 0,
+      image_path TEXT DEFAULT '',
+      image_hash TEXT DEFAULT '',
+      image_width INTEGER DEFAULT 0,
+      image_height INTEGER DEFAULT 0,
       origin_device_id TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
@@ -233,7 +346,47 @@ module.exports = function(db) {
     CREATE INDEX IF NOT EXISTS idx_sync_ops_record ON sync_operations(data_type, record_id);
     CREATE INDEX IF NOT EXISTS idx_idempotent_expires ON idempotent_requests(expires_at);
     CREATE INDEX IF NOT EXISTS idx_sync_logs_user ON sync_logs(user_id);
+
+    -- note_images 表（图片文件元数据）
+    CREATE TABLE IF NOT EXISTS note_images (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      note_id TEXT DEFAULT '',
+      filename TEXT NOT NULL,
+      original_name TEXT DEFAULT '',
+      server_path TEXT NOT NULL,
+      file_size INTEGER DEFAULT 0,
+      mime_type TEXT DEFAULT 'image/png',
+      image_hash TEXT DEFAULT '',
+      width INTEGER DEFAULT 0,
+      height INTEGER DEFAULT 0,
+      origin_device_id TEXT DEFAULT '',
+      revision INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      deleted_at TEXT
+    );
+
+    -- note_images 索引
+    CREATE INDEX IF NOT EXISTS idx_noteimg_user ON note_images(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_noteimg_note ON note_images(user_id, note_id);
+    CREATE INDEX IF NOT EXISTS idx_noteimg_hash ON note_images(user_id, image_hash);
   `);
+
+  // ===== 数据库迁移：为已有表添加新字段 =====
+  const MIGRATIONS = [
+    { table: 'user_notes', column: 'image_path', type: 'TEXT DEFAULT ""' },
+    { table: 'user_notes', column: 'image_hash', type: 'TEXT DEFAULT ""' },
+    { table: 'user_notes', column: 'image_width', type: 'INTEGER DEFAULT 0' },
+    { table: 'user_notes', column: 'image_height', type: 'INTEGER DEFAULT 0' }
+  ];
+  for (const m of MIGRATIONS) {
+    try {
+      db.exec(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}`);
+    } catch (e) {
+      // 列已存在则忽略（SQLite ALTER TABLE 不支持 IF NOT EXISTS）
+    }
+  }
 
   // ===== 幂等性检查 =====
   function checkIdempotency(requestId, userId) {
@@ -861,6 +1014,315 @@ module.exports = function(db) {
     } else {
       res.json({ platforms: Object.keys(PLATFORM_CAPABILITIES), capabilities: PLATFORM_CAPABILITIES });
     }
+  });
+
+  // ===== 图片同步 API（v3.1 新增）=====
+
+  // POST /notes/images/upload — 上传图片（multipart/form-data）
+  router.post('/notes/images/upload', noteImageUpload.array('images', 5), (req, res) => {
+    const userId = req.userId;
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ ok: false, error: '未提供图片文件' });
+    }
+
+    const uploaded = [];
+    const errors = [];
+
+    for (const file of files) {
+      try {
+        const imageId = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const { width, height } = getImageDimensions(file.path);
+        const serverPath = `${userId}/${file.filename}`;
+
+        // 计算 SHA256
+        const fileBuffer = fs.readFileSync(file.path);
+        const imageHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+        const now = new Date().toISOString();
+
+        db.prepare(`
+          INSERT INTO note_images (id, user_id, note_id, filename, original_name, server_path, file_size, mime_type, image_hash, width, height, origin_device_id, revision, created_at, updated_at)
+          VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        `).run(
+          imageId, userId, file.filename,
+          file.originalname || '', serverPath,
+          file.size, file.mimetype || 'image/png',
+          imageHash, width, height,
+          req.body?.device_id || '',
+          now, now
+        );
+
+        uploaded.push({
+          id: imageId,
+          filename: file.filename,
+          original_name: file.originalname || '',
+          server_path: serverPath,
+          download_url: `/memora/sync/notes/images/${imageId}/download`,
+          file_size: file.size,
+          mime_type: file.mimetype || 'image/png',
+          image_hash: imageHash,
+          width,
+          height
+        });
+      } catch (err) {
+        console.error('[Sync] Image upload error:', err.message);
+        // 清理已上传的文件
+        if (file.path && fs.existsSync(file.path)) {
+          try { fs.unlinkSync(file.path); } catch {}
+        }
+        errors.push({ filename: file.originalname, error: err.message });
+      }
+    }
+
+    res.json({ ok: true, uploaded, errors: errors.length > 0 ? errors : undefined, count: uploaded.length });
+  });
+
+  // GET /notes/images/:imageId/download — 下载图片文件
+  router.get('/notes/images/:imageId/download', (req, res) => {
+    const { imageId } = req.params;
+    const userId = req.userId;
+
+    const image = db.prepare('SELECT * FROM note_images WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(imageId, userId);
+    if (!image) {
+      return res.status(404).json({ ok: false, error: '图片不存在' });
+    }
+
+    const filePath = path.join(NOTE_IMAGES_DIR, image.server_path);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ ok: false, error: '图片文件丢失' });
+    }
+
+    res.setHeader('Content-Type', image.mime_type || 'image/png');
+    res.setHeader('Content-Disposition', `inline; filename="${image.original_name || image.filename}"`);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+  });
+
+  // GET /notes/images/:imageId — 获取图片元数据
+  router.get('/notes/images/:imageId', (req, res) => {
+    const { imageId } = req.params;
+    const userId = req.userId;
+
+    const image = db.prepare('SELECT * FROM note_images WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(imageId, userId);
+    if (!image) {
+      return res.status(404).json({ ok: false, error: '图片不存在' });
+    }
+
+    res.json({
+      ok: true,
+      image: {
+        id: image.id,
+        user_id: image.user_id,
+        note_id: image.note_id,
+        filename: image.filename,
+        original_name: image.original_name,
+        server_path: image.server_path,
+        file_size: image.file_size,
+        mime_type: image.mime_type,
+        image_hash: image.image_hash,
+        width: image.width,
+        height: image.height,
+        revision: image.revision,
+        created_at: image.created_at,
+        download_url: `/memora/sync/notes/images/${image.id}/download`
+      }
+    });
+  });
+
+  // GET /notes/images — 图片列表（分页+筛选）
+  router.get('/notes/images', (req, res) => {
+    const userId = req.userId;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const noteId = req.query.note_id;
+    const offset = (page - 1) * limit;
+
+    let countQuery = 'SELECT COUNT(*) as total FROM note_images WHERE user_id = ? AND deleted_at IS NULL';
+    let listQuery = 'SELECT * FROM note_images WHERE user_id = ? AND deleted_at IS NULL';
+    const params = [userId];
+
+    if (noteId) {
+      countQuery += ' AND note_id = ?';
+      listQuery += ' AND note_id = ?';
+      params.push(noteId);
+    }
+
+    listQuery += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+
+    const total = db.prepare(countQuery).get(...params).total;
+    const images = db.prepare(listQuery).all(...params, limit, offset);
+
+    res.json({
+      ok: true,
+      total,
+      page,
+      limit,
+      images: images.map(img => ({
+        id: img.id,
+        note_id: img.note_id,
+        filename: img.filename,
+        server_path: img.server_path,
+        download_url: `/memora/sync/notes/images/${img.id}/download`,
+        file_size: img.file_size,
+        image_hash: img.image_hash,
+        width: img.width,
+        height: img.height,
+        mime_type: img.mime_type,
+        revision: img.revision,
+        created_at: img.created_at,
+        updated_at: img.updated_at
+      }))
+    });
+  });
+
+  // POST /notes/images/batch-download — 批量获取图片元数据
+  router.post('/notes/images/batch-download', (req, res) => {
+    const userId = req.userId;
+    const { image_ids } = req.body;
+
+    if (!Array.isArray(image_ids) || image_ids.length === 0) {
+      return res.status(400).json({ ok: false, error: 'image_ids 必填且不能为空' });
+    }
+    if (image_ids.length > 50) {
+      return res.status(400).json({ ok: false, error: '单次最多查询 50 个图片' });
+    }
+
+    const images = db.prepare(
+      `SELECT * FROM note_images WHERE user_id = ? AND id IN (${image_ids.map(() => '?').join(',')}) AND deleted_at IS NULL`
+    ).all(userId, ...image_ids);
+
+    res.json({
+      ok: true,
+      images: images.map(img => ({
+        id: img.id,
+        note_id: img.note_id,
+        server_path: img.server_path,
+        download_url: `/memora/sync/notes/images/${img.id}/download`,
+        file_size: img.file_size,
+        image_hash: img.image_hash,
+        width: img.width,
+        height: img.height,
+        mime_type: img.mime_type,
+        revision: img.revision,
+        created_at: img.created_at,
+        updated_at: img.updated_at
+      }))
+    });
+  });
+
+  // PUT /notes/images/:imageId/bind — 绑定图片到笔记
+  router.put('/notes/images/:imageId/bind', (req, res) => {
+    const { imageId } = req.params;
+    const { note_id } = req.body;
+    const userId = req.userId;
+
+    if (!note_id) {
+      return res.status(400).json({ ok: false, error: 'note_id 必填' });
+    }
+
+    const image = db.prepare('SELECT * FROM note_images WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(imageId, userId);
+    if (!image) {
+      return res.status(404).json({ ok: false, error: '图片不存在' });
+    }
+
+    const now = new Date().toISOString();
+    const newRevision = image.revision + 1;
+
+    // 更新 note_images 的 note_id
+    db.prepare('UPDATE note_images SET note_id = ?, revision = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(note_id, newRevision, now, imageId, userId);
+
+    // 同步更新 user_notes 的 image_* 字段
+    db.prepare(`
+      UPDATE user_notes SET
+        category = 'image',
+        image_path = ?,
+        image_hash = ?,
+        image_width = ?,
+        image_height = ?,
+        updated_at = ?
+      WHERE id = ? AND user_id = ?
+    `).run(image.server_path, image.image_hash, image.width, image.height, now, note_id, userId);
+
+    res.json({ ok: true, revision: newRevision });
+  });
+
+  // DELETE /notes/images/:imageId — 删除图片（软删除+删文件）
+  router.delete('/notes/images/:imageId', (req, res) => {
+    const { imageId } = req.params;
+    const userId = req.userId;
+
+    const image = db.prepare('SELECT * FROM note_images WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(imageId, userId);
+    if (!image) {
+      return res.status(404).json({ ok: false, error: '图片不存在' });
+    }
+
+    const now = new Date().toISOString();
+
+    // 软删除元数据
+    db.prepare('UPDATE note_images SET deleted_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(now, now, imageId, userId);
+
+    // 删除物理文件
+    const filePath = path.join(NOTE_IMAGES_DIR, image.server_path);
+    if (fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch (e) {
+        console.warn('[Sync] Failed to delete image file:', filePath, e.message);
+      }
+    }
+
+    res.json({ ok: true, deleted: true });
+  });
+
+  // POST /notes/images/sync-pull — 增量拉取图片元数据
+  router.post('/notes/images/sync-pull', (req, res) => {
+    const { device_id, since_revision } = req.body;
+    const userId = req.userId;
+
+    if (!device_id) {
+      return res.status(400).json({ ok: false, error: 'device_id 必填' });
+    }
+
+    const sinceRev = parseInt(since_revision) || 0;
+
+    // 拉取新增/更新的图片
+    const images = db.prepare(
+      'SELECT * FROM note_images WHERE user_id = ? AND revision > ? AND deleted_at IS NULL ORDER BY revision ASC LIMIT 200'
+    ).all(userId, sinceRev);
+
+    // 拉取已删除的图片
+    const deletedRows = db.prepare(
+      'SELECT id, revision FROM note_images WHERE user_id = ? AND revision > ? AND deleted_at IS NOT NULL ORDER BY revision ASC LIMIT 200'
+    ).all(userId, sinceRev);
+
+    // 获取最大 revision
+    const maxRevRow = db.prepare('SELECT MAX(revision) as max_rev FROM note_images WHERE user_id = ?').get(userId);
+
+    res.json({
+      ok: true,
+      images: images.map(img => ({
+        id: img.id,
+        note_id: img.note_id,
+        filename: img.filename,
+        server_path: img.server_path,
+        file_size: img.file_size,
+        mime_type: img.mime_type,
+        image_hash: img.image_hash,
+        width: img.width,
+        height: img.height,
+        revision: img.revision,
+        download_url: `/memora/sync/notes/images/${img.id}/download`,
+        created_at: img.created_at,
+        updated_at: img.updated_at
+      })),
+      deleted_ids: deletedRows.map(d => ({ id: d.id, revision: d.revision })),
+      count: images.length,
+      max_revision: maxRevRow?.max_rev || 0
+    });
   });
 
   return router;

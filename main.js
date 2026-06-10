@@ -14,6 +14,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const FormData = require('form-data');
 
 // 剪贴板智能监控系统
 const { startClipboardWatcher, stopClipboardWatcher, getScheduler } = require('./clipboard');
@@ -25,6 +26,7 @@ let clipboardWatcher;
 let lastClipboardText = '';
 let isAnalyzing = false; // 防止并发分析
 let processedClipboardHashes = new Set();
+let processedImageHashes = new Set();  // 剪贴板图片像素级 SHA-256 去重
 const MAX_CLIPBOARD_HASHES = 500; // 限制哈希记录数量防止内存膨胀
 
 // 🔧 辅助函数：同时输出到主进程终端和前端 DevTools
@@ -159,8 +161,9 @@ const DEFAULT_BASE_URL = 'https://api.deepseek.com';
 const DEFAULT_MODEL = 'deepseek-v4-flash';
 
 // 大用量 LLM 默认配置（高并发场景：剪贴板分析、记忆提取等高频调用）
-const DEFAULT_HIGHVOL_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
-const DEFAULT_HIGHVOL_MODEL = 'glm-4-flash';
+// 默认与小用量一致用 DeepSeek（GLM 不稳定时切换）
+const DEFAULT_HIGHVOL_BASE_URL = 'https://api.deepseek.com';
+const DEFAULT_HIGHVOL_MODEL = 'deepseek-v4-flash';
 
 // 默认限制（使用内置Key时）
 const DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY = 10;
@@ -201,22 +204,22 @@ let configPollTimer = null;  // 配置定期同步计时器
 const DEFAULT_AUTH_SERVERS = {
   beta: {
     name: 'Beta 版本（测试）',
-    authUrl: 'http://121.5.164.126:3450',    // config-server（v2.0 自建认证）
-    configUrl: 'http://121.5.164.126:3450',   // 配置服务
-    toolkitUrl: 'http://121.5.164.126:3010',  // ADPToolkit 资源服务器（文档/案例/Demo）
-    loginPath: '/auth/login',                  // 登录路径
-    loginField: 'email',                       // 使用 email 登录
-    configPath: '/config',                     // 配置路径
-    validatePath: '/auth/validate'             // 验证路径
+    authUrl: 'http://121.5.164.126:3010',    // ADPToolkit（统一认证）
+    configUrl: 'http://121.5.164.126:3450',   // Config Server（配置+同步）
+    toolkitUrl: 'http://121.5.164.126:3010',  // ADPToolkit 资源服务器
+    loginPath: '/api/auth/login',              // ADPToolkit 登录路径
+    loginField: 'username',                    // ADPToolkit 用 username 登录
+    configPath: '/memora/config',              // 配置路径
+    validatePath: '/api/auth/me'               // ADPToolkit 验证路径
   },
   production: {
     name: '正式版本',
     authUrl: 'http://21.91.29.59:3000',       // ADPToolkit（username 登录）
     configUrl: 'http://121.5.164.126:3450',   // 配置仍走 config-server
-    toolkitUrl: 'http://21.91.29.59:3000',    // ADPToolkit 资源服务器（与认证同一地址）
+    toolkitUrl: 'http://21.91.29.59:3000',    // ADPToolkit 资源服务器
     loginPath: '/api/auth/login',              // ADPToolkit 登录路径
     loginField: 'username',                    // 使用 username 登录
-    configPath: '/memora/config',              // v2.1 配置路径
+    configPath: '/memora/config',              // 配置路径
     validatePath: '/api/auth/me'               // ADPToolkit 验证路径
   }
 };
@@ -232,7 +235,19 @@ function loadCustomServerUrls() {
       const parsed = JSON.parse(custom);
       for (const env of ['beta', 'production']) {
         if (parsed[env]) {
-          if (parsed[env].authUrl) AUTH_SERVERS[env].authUrl = parsed[env].authUrl;
+          if (parsed[env].authUrl) {
+            AUTH_SERVERS[env].authUrl = parsed[env].authUrl;
+            // 同步调整登录路径：ADPToolkit 用 /api/auth/login，config-server 用 /auth/login
+            if (parsed[env].authUrl.includes(':3010') || parsed[env].authUrl.includes(':3000')) {
+              AUTH_SERVERS[env].loginPath = '/api/auth/login';
+              AUTH_SERVERS[env].validatePath = '/api/auth/me';
+              AUTH_SERVERS[env].loginField = 'username';
+            } else if (parsed[env].authUrl.includes(':3450')) {
+              AUTH_SERVERS[env].loginPath = '/auth/login';
+              AUTH_SERVERS[env].validatePath = '/auth/validate';
+              AUTH_SERVERS[env].loginField = 'email';
+            }
+          }
           if (parsed[env].configUrl) AUTH_SERVERS[env].configUrl = parsed[env].configUrl;
           if (parsed[env].toolkitUrl) AUTH_SERVERS[env].toolkitUrl = parsed[env].toolkitUrl;
         }
@@ -1203,6 +1218,13 @@ function createWindow() {
   
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
+  // ===== 粘贴图片检测：Ctrl+V / Cmd+V 时，如果剪贴板是纯图片（无文本），自动保存到记事本 =====
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'v' && (input.control || input.meta)) {
+      handlePasteImage();
+    }
+  });
+
   // 渲染进程崩溃恢复
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.error('[App] Renderer process gone:', details.reason, details.exitCode);
@@ -1314,7 +1336,9 @@ function initClipboardWatcher() {
     notebook,
     getSettingFn: getSetting,
     processedHashes: processedClipboardHashes,
-    maxHashes: MAX_CLIPBOARD_HASHES
+    maxHashes: MAX_CLIPBOARD_HASHES,
+    processedImageHashes
+    // saveImageFn 不再需要：图片保存改为粘贴触发，由 handlePasteImage() 调用 saveClipboardImage()
   });
 
   // 保存引用以便清理
@@ -1323,6 +1347,214 @@ function initClipboardWatcher() {
   console.log('[Clipboard] ✅ Smart scheduler started (buffer + dynamic freq + state detect)');
   console.log('[Clipboard] 💡 诊断命令: 在 DevTools 控制台运行 await window.electronAPI.clipboardDiagnostic()');
   console.log('[Clipboard] 💡 强制分析: 在 DevTools 控制台运行 await window.electronAPI.clipboardForceAnalyze()');
+}
+
+/**
+ * 粘贴触发的图片保存
+ * 当用户在 Memora 中按 Ctrl+V / Cmd+V 时：
+ * - 剪贴板是纯图片（无文本）→ 保存图片到记事本
+ * - 剪贴板有文本（包括图文混合）→ 不处理，让文本走正常流程
+ */
+function handlePasteImage() {
+  try {
+    // 1. 先检查剪贴板是否有文本（有文本 = 图文混合或纯文本 → 按文本处理，不保存图片）
+    const text = clipboard.readText();
+    if (text && text.trim().length > 0) {
+      return; // 有文本内容，让文本走正常剪贴板检测流程
+    }
+
+    // 2. 检查剪贴板是否有图片
+    const image = clipboard.readImage();
+    if (!image || image.isEmpty()) {
+      return;
+    }
+
+    // 3. 计算图片 hash 去重
+    const pngBuffer = image.toPNG();
+    const crypto = require('crypto');
+    const imageHash = crypto.createHash('sha256').update(pngBuffer).digest('hex');
+
+    const scheduler = getScheduler();
+    if (scheduler && scheduler.hasProcessedImage(imageHash)) {
+      console.log('[PasteImage] 🔁 图片已保存过，跳过');
+      return;
+    }
+
+    // 4. 保存图片到记事本
+    const size = image.getSize();
+    console.log(`[PasteImage] 🖼️ 检测到粘贴图片: ${size.width}x${size.height}`);
+
+    // 标记去重
+    if (scheduler) {
+      scheduler.markImageProcessed(imageHash);
+    }
+
+    saveClipboardImage(pngBuffer, imageHash, { width: size.width, height: size.height });
+  } catch (e) {
+    console.error('[PasteImage] 粘贴图片处理异常:', e.message);
+  }
+}
+
+/**
+ * 修复被错误设为服务端路径的 imagePath
+ * 之前的 bug：上传成功后把本地笔记的 imagePath 改成了服务端路径（如 u-admin-001/xxx.png），
+ * 导致 notebookGetImage 无法找到本地文件。此函数扫描所有笔记，将服务端路径还原为本地路径。
+ */
+function _fixCorruptedImagePaths() {
+  if (!notebook || !Array.isArray(notebook.notes)) return;
+  const imagesDir = path.join(app.getPath('userData'), 'notebook', 'images');
+  let fixed = 0;
+
+  for (const note of notebook.notes) {
+    if (!note.imagePath || !isServerImagePath(note.imagePath)) continue;
+
+    // 服务端路径格式: u-admin-001/timestamp_hash.png
+    // 本地缓存路径: images/sync_timestamp_hash.png
+    const localFilename = serverPathToLocalFilename(note.imagePath);
+    const syncCachePath = path.join(imagesDir, localFilename);
+
+    if (fs.existsSync(syncCachePath)) {
+      // 已下载到本地缓存，使用缓存路径
+      note.imagePath = `images/${localFilename}`;
+      fixed++;
+    } else {
+      // 没有缓存，查找同名文件（服务端文件名可能匹配本地原始文件）
+      const serverFilename = note.imagePath.split('/').pop();
+      const possibleLocalFiles = fs.existsSync(imagesDir)
+        ? fs.readdirSync(imagesDir).filter(f => f === serverFilename)
+        : [];
+      if (possibleLocalFiles.length > 0) {
+        note.imagePath = `images/${possibleLocalFiles[0]}`;
+        fixed++;
+      }
+      // 如果还是找不到，保持服务端路径（下次 sync 会尝试下载）
+    }
+  }
+
+  if (fixed > 0) {
+    notebook.saveNotes();
+    console.log('[Notebook] Fixed', fixed, 'corrupted image paths (server → local)');
+  }
+}
+
+/**
+ * 剪贴板图片保存到记事本
+ * 由 handlePasteImage() 和 fullSync 重试调用
+ * @param {Buffer} pngBuffer - PNG 图片二进制数据
+ * @param {string} imageHash - 基于像素内容的 SHA-256 hash
+ * @param {{width: number, height: number}} meta - 图片尺寸
+ */
+async function saveClipboardImage(pngBuffer, imageHash, meta) {
+  try {
+    if (!notebook) {
+      console.warn('[ClipboardImage] Notebook not initialized, skip');
+      return;
+    }
+
+    // 1. 确保图片目录存在
+    const imagesDir = path.join(app.getPath('userData'), 'notebook', 'images');
+    if (!fs.existsSync(imagesDir)) {
+      fs.mkdirSync(imagesDir, { recursive: true });
+    }
+
+    // 2. 保存图片文件（用 hash 作文件名，天然去重——同 hash 同文件不重复写）
+    const fileName = `${imageHash.substring(0, 16)}_${meta.width}x${meta.height}.png`;
+    const filePath = path.join(imagesDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, pngBuffer);
+      console.log('[ClipboardImage] Saved:', fileName, `(${(pngBuffer.length / 1024).toFixed(1)}KB)`);
+    } else {
+      console.log('[ClipboardImage] File exists, skip write:', fileName);
+    }
+
+    // 3. 尝试立即上传图片到服务端（不等 fullSync，避免笔记元数据先于图片推送）
+    const localImagePath = `images/${fileName}`; // 本地路径，始终不变
+    let serverImagePath = null; // 服务端路径（上传成功后才有值）
+    let serverImageHash = imageHash;
+    let serverImageWidth = meta.width;
+    let serverImageHeight = meta.height;
+    let imageUploadedToServer = false; // 标记图片是否已成功上传到服务端
+
+    if (authState.isLoggedIn && authState.token) {
+      try {
+        const uploadResult = await uploadNoteImage(filePath);
+        if (uploadResult.ok && uploadResult.uploaded?.length > 0) {
+          const imgInfo = uploadResult.uploaded[0];
+          serverImagePath = imgInfo.server_path;
+          serverImageHash = imgInfo.image_hash || imageHash;
+          serverImageWidth = imgInfo.width || meta.width;
+          serverImageHeight = imgInfo.height || meta.height;
+          imageUploadedToServer = true;
+          console.log('[ClipboardImage] ✅ Image uploaded immediately →', imgInfo.server_path);
+        } else {
+          console.warn('[ClipboardImage] ⚠️ Image upload failed, will retry on next fullSync:', uploadResult.error);
+        }
+      } catch (uploadErr) {
+        console.warn('[ClipboardImage] ⚠️ Image upload error, will retry on next fullSync:', uploadErr.message);
+      }
+    } else {
+      console.log('[ClipboardImage] ℹ️ Not logged in, image will be uploaded on next fullSync');
+    }
+
+    // 4. 创建记事本条目（imagePath 始终用本地路径，确保本地显示正常）
+    const note = notebook.addNote({
+      content: `[图片] ${meta.width}x${meta.height} | ${new Date().toLocaleString('zh-CN')}`,
+      title: `剪贴板图片 ${meta.width}×${meta.height}`,
+      category: 'image',
+      tags: ['clipboard-image', 'auto-saved'],
+      imagePath: localImagePath,        // 始终用本地路径（images/xxx.png），确保本地显示正常
+      imageHash: serverImageHash,
+      imageWidth: serverImageWidth,
+      imageHeight: serverImageHeight,
+      analyzed: true,              // 图片不需要 AI 分析
+      analysis: {
+        status: '已自动保存',
+        source: 'clipboard_image',
+        imageHash: imageHash.substring(0, 8)
+      }
+    });
+
+    if (note) {
+      console.log('[ClipboardImage] ✅ Note created:', note.id, '| hash:', imageHash.substring(0, 8), '| local:', localImagePath, '| server:', serverImagePath || 'not uploaded');
+      // 通知前端有新图片笔记
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('new-note-added', {
+          source: 'clipboard-image',
+          title: note.title,
+          imagePath: localImagePath          // 前端显示用本地路径
+        });
+      }
+
+      // 5. 触发同步推送（始终推送笔记元数据，imagePath 用服务端路径（已上传）或本地路径（待上传））
+      try {
+        mainWindow.webContents.send('sync:trigger-push', {
+          dataType: 'notes',
+          record: {
+            id: note.id,
+            title: note.title,
+            content: note.content,
+            category: note.category,
+            tags: note.tags,
+            imagePath: serverImagePath || localImagePath,  // 同步用服务端路径（优先）或本地路径
+            imageHash: serverImageHash,
+            imageWidth: serverImageWidth,
+            imageHeight: serverImageHeight,
+            createdAt: note.createdAt,
+            updatedAt: note.updatedAt
+          }
+        });
+        if (!imageUploadedToServer) {
+          console.log('[ClipboardImage] ⏳ Note pushed with local image_path, will update to server path on next fullSync.');
+        }
+      } catch (syncErr) {
+        console.warn('[ClipboardImage] Sync trigger failed:', syncErr.message);
+      }
+    } else {
+      console.log('[ClipboardImage] 🔁 Duplicate image note, skip (hash:', imageHash.substring(0, 8) + ')');
+    }
+  } catch (e) {
+    console.error('[ClipboardImage] Save failed:', e.message);
+  }
 }
 
 // 检查剪切板内容是否已处理过
@@ -1743,6 +1975,7 @@ async function analyzeClipboardText(text) {
             recommendationIntent: result.recommendation_intent || null
           }
         };
+
         // 关联标记
         if (associationResult.action === 'related' && associationResult.targetId) {
           noteData.relatedTo = associationResult.targetId;
@@ -2079,14 +2312,36 @@ end tell
 }
 
 function showNotification(title, body) {
+  console.log('[Notification] show:', title, '|', body, '| isSupported:', Notification.isSupported());
   if (Notification.isSupported()) {
-    const notification = new Notification({
-      title: title,
-      body: body,
-      icon: getResourcePath('resources/icon.png'),
-      sound: 'default'
-    });
-    notification.show();
+    try {
+      const notification = new Notification({
+        title: title,
+        body: body,
+        icon: getResourcePath('resources/icon.png'),
+        sound: 'default',
+        silent: false
+      });
+      // 用户点击系统通知 → 自动聚焦应用窗口
+      notification.on('click', () => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        } catch (e) {
+          console.warn('[Notification] focus on click failed:', e.message);
+        }
+      });
+      notification.on('show', () => console.log('[Notification] shown'));
+      notification.on('failed', (e, err) => console.warn('[Notification] FAILED:', err));
+      notification.show();
+    } catch (e) {
+      console.error('[Notification] create failed:', e.message);
+    }
+  } else {
+    console.warn('[Notification] not supported on this platform');
   }
 }
 
@@ -2365,6 +2620,58 @@ ipcMain.handle('add-to-calendar', async (event, task) => {
 
 ipcMain.handle('show-notification', async (event, title, body) => {
   showNotification(title, body);
+  return { success: true };
+});
+
+// 查询窗口是否聚焦/可见（用于 AI 完成提醒决策）
+ipcMain.handle('window:get-focus-state', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { focused: false, visible: false, minimized: false, appFocused: false };
+  }
+  // 对 macOS 特别处理：app.isFocused() 比 window.isFocused() 更可靠
+  // 当应用本身没有聚焦（用户切到其他 App），是真的"切走"了
+  let appFocused = true;
+  try {
+    if (process.platform === 'darwin' && app.isHidden) {
+      appFocused = !app.isHidden();
+    }
+    // 检查应用级 focused 状态
+    const focusedWindow = require('electron').BrowserWindow.getFocusedWindow();
+    appFocused = !!focusedWindow;
+  } catch {}
+  return {
+    focused: mainWindow.isFocused(),
+    visible: mainWindow.isVisible(),
+    minimized: mainWindow.isMinimized(),
+    appFocused: appFocused
+  };
+});
+
+// 闪烁应用图标 / Dock 弹跳（点击系统通知后立即聚焦窗口）
+ipcMain.handle('window:flash-attention', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+  try {
+    if (process.platform === 'darwin') {
+      // macOS: dock bounce
+      app.dock?.bounce?.('informational');
+    } else if (process.platform === 'win32') {
+      // Windows: 任务栏闪烁
+      mainWindow.flashFrame(true);
+      setTimeout(() => mainWindow?.flashFrame?.(false), 5000);
+    }
+    return { success: true };
+  } catch (e) {
+    console.warn('[Window] flash-attention failed:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+// 用户点击系统通知 → 聚焦窗口
+ipcMain.handle('window:focus', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
   return { success: true };
 });
 
@@ -3031,81 +3338,120 @@ async function autoLogin() {
 
 // 登录（支持双环境）
 ipcMain.handle('auth:login', async (event, { email, password, env, rememberMe }) => {
+  // 设置环境
+  authState.env = env || 'beta';
+  const server = getAuthServer();
+
+  // 根据环境构建登录请求
+  const loginBody = server.loginField === 'username'
+    ? { username: email, password }  // ADPToolkit 用 username
+    : { email, password };           // Config Server 自建认证用 email
+
+  const loginUrl = `${server.authUrl}${server.loginPath}`;
+  console.log('[Auth] Login attempt:', {
+    env: authState.env,
+    fullUrl: loginUrl,
+    loginField: server.loginField,
+    username: loginBody.username || loginBody.email
+  });
+
+  // 登录请求（带超时）
+  let res;
   try {
-    // 设置环境
-    authState.env = env || 'beta';
-    const server = getAuthServer();
-
-    // 根据环境构建登录请求
-    const loginBody = server.loginField === 'username'
-      ? { username: email, password }  // 正式环境用 username
-      : { email, password };           // Beta 环境用 email
-
-    const res = await fetch(`${server.authUrl}${server.loginPath}`, {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    res = await fetch(loginUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(loginBody)
+      body: JSON.stringify(loginBody),
+      signal: controller.signal
     });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      return { success: false, error: data.message || data.error || '登录失败' };
-    }
-
-    // 保存认证状态到内存
-    authState.isLoggedIn = true;
-    authState.token = data.token;
-    authState.user = data.user;
-    authState.forceLocalConfig = false;  // 新登录默认使用云端配置
-
-    // 持久化 token 和环境
-    setSetting('auth_token', data.token);
-    setSetting('auth_user', JSON.stringify(data.user));
-    setSetting('auth_env', authState.env);
-    setSetting('auth_force_local', '0');
-    setSetting('auth_remember_me', rememberMe !== false ? '1' : '0');  // 记住登录状态
-
-    // 拉取服务器配置到内存
-    await fetchRemoteConfig();
-
-    // 通知渲染进程
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('auth:changed', { isLoggedIn: true, user: data.user, env: authState.env });
-      // 同时发送配置更新事件
-      mainWindow.webContents.send('config:updated', {
-        api: remoteConfig?.api || null,
-        adp: remoteConfig?.adp || null,
-        forceLocalConfig: authState.forceLocalConfig
-      });
-    }
-
-    console.log('[Auth] Login success:', data.user?.email || data.user?.username, 'env:', authState.env);
-    // 上报登录活动
-    await reportLoginActivity(!!remoteConfig);
-    // 拉取服务端通知并显示
-    const serverNotifs = await fetchServerNotifications();
-    if (serverNotifs.length > 0) {
-      const unread = serverNotifs.filter(n => !n.read);
-      if (unread.length > 0) {
-        showNotification('忆境 Memora', `你有 ${unread.length} 条未读通知`);
-      }
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('notifications:updated', { notifications: serverNotifs, unreadCount: unread.length });
-      }
-    }
-    // 启动通知轮询
-    startNotificationPolling();
-    // 检查更新
-    const updateInfo = await checkForUpdate();
-    if (updateInfo.has_update && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update:available', updateInfo);
-    }
-    return { success: true, user: data.user, env: authState.env };
-  } catch (err) {
-    console.error('[Auth] Login error:', err);
-    return { success: false, error: '网络错误，请检查连接' };
+    clearTimeout(timeoutId);
+  } catch (fetchErr) {
+    console.error('[Auth] Login fetch error:', fetchErr.message, '| code:', fetchErr.code, '| cause:', fetchErr.cause?.message);
+    const errMsg = fetchErr.name === 'AbortError' ? '连接超时，请检查网络'
+      : fetchErr.code === 'ECONNREFUSED' ? '连接被拒绝，服务器可能未启动'
+      : fetchErr.code === 'ENOTFOUND' ? '域名解析失败'
+      : fetchErr.code === 'ETIMEDOUT' || fetchErr.code === 'UND_ERR_CONNECT_TIMEOUT' ? '连接超时'
+      : fetchErr.message?.includes('fetch failed') ? `网络连接失败 (${fetchErr.cause?.message || fetchErr.code || 'unknown'})`
+      : `网络错误: ${fetchErr.message}`;
+    return { success: false, error: errMsg };
   }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (jsonErr) {
+    console.error('[Auth] Login response JSON parse error:', jsonErr.message, '| HTTP status:', res.status);
+    return { success: false, error: `服务器响应异常 (HTTP ${res.status})` };
+  }
+
+  if (!res.ok) {
+    console.error('[Auth] Login failed: HTTP', res.status, data);
+    return { success: false, error: data.message || data.error || `登录失败 (HTTP ${res.status})` };
+  }
+
+  // 登录成功 —— 保存状态
+  authState.isLoggedIn = true;
+  authState.token = data.token;
+  authState.user = data.user;
+  authState.forceLocalConfig = false;
+
+  setSetting('auth_token', data.token);
+  setSetting('auth_user', JSON.stringify(data.user));
+  setSetting('auth_env', authState.env);
+  setSetting('auth_force_local', '0');
+  setSetting('auth_remember_me', rememberMe !== false ? '1' : '0');
+
+  console.log('[Auth] Login success:', data.user?.username || data.user?.email, 'env:', authState.env);
+
+  // 后续操作独立 try-catch，不阻塞登录结果
+  (async () => {
+    try {
+      await fetchRemoteConfig();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('config:updated', {
+          api: remoteConfig?.api || null,
+          adp: remoteConfig?.adp || null,
+          forceLocalConfig: authState.forceLocalConfig
+        });
+      }
+    } catch (e) { console.error('[Auth] Post-login fetchRemoteConfig error:', e.message); }
+
+    try {
+      await reportLoginActivity(!!remoteConfig);
+    } catch (e) { console.error('[Auth] Post-login reportLoginActivity error:', e.message); }
+
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('auth:changed', { isLoggedIn: true, user: data.user, env: authState.env });
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const serverNotifs = await fetchServerNotifications();
+      if (serverNotifs.length > 0) {
+        const unread = serverNotifs.filter(n => !n.read);
+        if (unread.length > 0) {
+          showNotification('忆境 Memora', `你有 ${unread.length} 条未读通知`);
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('notifications:updated', { notifications: serverNotifs, unreadCount: unread.length });
+        }
+      }
+    } catch (e) { console.error('[Auth] Post-login fetchServerNotifications error:', e.message); }
+
+    try { startNotificationPolling(); } catch (e) { /* ignore */ }
+
+    try {
+      const updateInfo = await checkForUpdate();
+      if (updateInfo.has_update && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update:available', updateInfo);
+      }
+    } catch (e) { console.error('[Auth] Post-login checkForUpdate error:', e.message); }
+  })();
+
+  return { success: true, user: data.user, env: authState.env };
 });
 
 // 退出登录
@@ -3270,6 +3616,53 @@ ipcMain.handle('notifications:mark-all-read', async () => {
 
 const SYNC_API_BASE = '/memora/sync';
 
+// 服务端 TEXT 列字段：客户端发送时若为数组/对象必须序列化为 JSON 字符串
+// 否则 sqlite 写入会报错导致 HTTP 500
+const SYNC_TEXT_FIELDS = new Set([
+  'pomodoro_sessions', 'reminders', 'tags', 'extra',
+  'attachments', 'metadata', 'context'
+]);
+
+/**
+ * 兜底序列化：递归扫描 push body，将 TEXT 字段的非字符串值转为 JSON 字符串
+ * 同时去除 undefined 字段（JSON.stringify 会丢但显式去掉更安全）
+ */
+function sanitizeSyncPayload(body) {
+  if (!body || typeof body !== 'object') return body;
+  // 仅处理 changes 段（push/full 的数据载荷）
+  if (body.changes && typeof body.changes === 'object') {
+    for (const [type, items] of Object.entries(body.changes)) {
+      if (!Array.isArray(items)) continue;
+      body.changes[type] = items.map(item => {
+        if (!item || typeof item !== 'object') return item;
+        const cleaned = {};
+        for (const [k, v] of Object.entries(item)) {
+          if (v === undefined) continue;
+          // TEXT 字段强制字符串
+          if (SYNC_TEXT_FIELDS.has(k) && v !== null && typeof v !== 'string') {
+            try {
+              cleaned[k] = JSON.stringify(v);
+            } catch {
+              cleaned[k] = String(v);
+            }
+          } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+            // 其他对象字段也兜底序列化（除了已知的纯标量字段）
+            // 但保留 base_revision、id 等基础字段不变
+            cleaned[k] = JSON.stringify(v);
+          } else if (Array.isArray(v)) {
+            // 任何未知的数组字段也序列化（防止服务端 TEXT 字段未列入白名单）
+            cleaned[k] = JSON.stringify(v);
+          } else {
+            cleaned[k] = v;
+          }
+        }
+        return cleaned;
+      });
+    }
+  }
+  return body;
+}
+
 async function syncApiRequest(path, options = {}) {
   if (!authState.isLoggedIn || !authState.token) {
     return { ok: false, error: 'Not authenticated' };
@@ -3278,6 +3671,9 @@ async function syncApiRequest(path, options = {}) {
   const baseUrl = server.configUrl || server.authUrl;
   const url = `${baseUrl}${SYNC_API_BASE}${path}`;
 
+  // 兜底：对发送数据做字段安全处理，防止 TEXT 列收到数组/对象
+  const safeBody = options.body ? sanitizeSyncPayload(options.body) : undefined;
+
   try {
     const res = await fetch(url, {
       method: options.method || 'POST',
@@ -3285,7 +3681,7 @@ async function syncApiRequest(path, options = {}) {
         'Authorization': `Bearer ${authState.token}`,
         'Content-Type': 'application/json'
       },
-      body: options.body ? JSON.stringify(options.body) : undefined
+      body: safeBody ? JSON.stringify(safeBody) : undefined
     });
 
     if (res.status === 401) {
@@ -3300,8 +3696,14 @@ async function syncApiRequest(path, options = {}) {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.error('[Sync] API error:', res.status, text);
-      return { ok: false, error: `HTTP ${res.status}`, status: res.status };
+      console.error('[Sync] API error:', res.status, text.substring(0, 500));
+      // 尝试解析服务端错误消息
+      let serverMsg = `HTTP ${res.status}`;
+      try {
+        const errJson = JSON.parse(text);
+        if (errJson.error || errJson.message) serverMsg = errJson.error || errJson.message;
+      } catch {}
+      return { ok: false, error: serverMsg, status: res.status };
     }
 
     return await res.json();
@@ -3309,6 +3711,200 @@ async function syncApiRequest(path, options = {}) {
     console.error('[Sync] Network error:', err.message);
     return { ok: false, error: err.message };
   }
+}
+
+// ===== 图片同步辅助函数 =====
+
+/**
+ * 上传图片文件到服务端
+ * 使用 https/http 模块替代 fetch，确保 form-data 流式上传兼容性
+ * @param {string} localPath - 本地图片绝对路径
+ * @returns {Object} { ok, uploaded: [{ id, server_path, image_hash, width, height, ... }] }
+ */
+async function uploadNoteImage(localPath) {
+  if (!authState.isLoggedIn || !authState.token) {
+    return { ok: false, error: 'Not authenticated' };
+  }
+  if (!fs.existsSync(localPath)) {
+    return { ok: false, error: 'File not found: ' + localPath };
+  }
+
+  const server = getAuthServer();
+  const baseUrl = server.configUrl || server.authUrl;
+  const url = `${baseUrl}${SYNC_API_BASE}/notes/images/upload`;
+
+  try {
+    // 直接使用 http 模块上传（Node.js fetch 不兼容 form-data npm 包的 stream body，
+    // 导致 "Unexpected end of form" 500 错误，所以不走 fetch）
+    const result = await _uploadNoteImageViaHttp(url, localPath, authState.token);
+
+    if (result && result.ok && result.uploaded?.length > 0) {
+      console.log('[Sync] Image uploaded:', result.uploaded.map(i => i.server_path));
+    } else {
+      console.warn('[Sync] Image upload response unexpected:', JSON.stringify(result)?.substring(0, 200));
+    }
+    return result;
+  } catch (err) {
+    console.error('[Sync] Image upload error:', err.message, err.stack?.split('\n')[1]);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 使用 http/https 模块上传图片（fetch 降级方案）
+ */
+function _uploadNoteImageViaHttp(url, localPath, token) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const httpModule = parsedUrl.protocol === 'https:' ? require('https') : require('http');
+
+    const form = new FormData();
+    form.append('images', fs.createReadStream(localPath));
+
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        ...form.getHeaders()
+      }
+    };
+
+    const req = httpModule.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          if (res.statusCode >= 400) {
+            console.error('[Sync] Image upload HTTP fallback error:', res.statusCode, data.substring(0, 300));
+            resolve({ ok: false, error: `HTTP ${res.statusCode}` });
+            return;
+          }
+          const result = JSON.parse(data);
+          resolve(result);
+        } catch (e) {
+          reject(new Error('Parse response failed: ' + e.message));
+        }
+      });
+    });
+
+    req.on('error', (e) => {
+      reject(new Error('HTTP request failed: ' + e.message));
+    });
+
+    // 设置超时 30 秒
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('Upload timeout (30s)'));
+    });
+
+    form.pipe(req);
+  });
+}
+
+/**
+ * 从服务端下载图片文件
+ * @param {string} imageId - 图片 ID（img_xxx）
+ * @param {string} savePath - 本地保存绝对路径
+ * @returns {Object} { ok, size, path }
+ */
+async function downloadNoteImage(imageId, savePath) {
+  if (!authState.isLoggedIn || !authState.token) {
+    return { ok: false, error: 'Not authenticated' };
+  }
+
+  const server = getAuthServer();
+  const baseUrl = server.configUrl || server.authUrl;
+  const url = `${baseUrl}${SYNC_API_BASE}/notes/images/${imageId}/download`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${authState.token}` }
+    });
+
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    // 确保目录存在
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.writeFileSync(savePath, buffer);
+    console.log('[Sync] Image downloaded:', imageId, `(${(buffer.length / 1024).toFixed(1)}KB)`);
+    return { ok: true, size: buffer.length, path: savePath };
+  } catch (err) {
+    console.error('[Sync] Image download error:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 删除服务端图片
+ * @param {string} imageId - 图片 ID
+ */
+async function deleteNoteImage(imageId) {
+  if (!authState.isLoggedIn || !authState.token) {
+    return { ok: false, error: 'Not authenticated' };
+  }
+
+  try {
+    return await syncApiRequest(`/notes/images/${imageId}`, { method: 'DELETE' });
+  } catch (err) {
+    console.error('[Sync] Image delete error:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 拉取图片元数据（增量）
+ * @param {string} deviceId
+ * @param {number} sinceRevision
+ */
+async function pullNoteImageMeta(deviceId, sinceRevision = 0) {
+  return await syncApiRequest('/notes/images/sync-pull', {
+    body: { device_id: deviceId, since_revision: sinceRevision }
+  });
+}
+
+/**
+ * 批量获取图片元数据
+ * @param {string[]} imageIds
+ */
+async function batchGetNoteImageMeta(imageIds) {
+  if (!imageIds || imageIds.length === 0) return { ok: true, images: [] };
+  return await syncApiRequest('/notes/images/batch-download', {
+    body: { image_ids: imageIds.slice(0, 50) }
+  });
+}
+
+/**
+ * 判断 image_path 是否为服务端路径（非本地路径）
+ * 服务端路径格式：{userId}/{filename}，不以 images/ 开头
+ * 本地路径格式：images/{filename}
+ */
+function isServerImagePath(imagePath) {
+  return imagePath && !imagePath.startsWith('images/') && !imagePath.startsWith('/');
+}
+
+/**
+ * 获取本地图片存储目录
+ */
+function getNotebookImagesDir() {
+  return path.join(app.getPath('userData'), 'notebook', 'images');
+}
+
+/**
+ * 从服务端 image_path 解析出本地应保存的文件名
+ * server_path: "user_001/1718012345678_a1b2c3d4.png" → local filename
+ */
+function serverPathToLocalFilename(serverPath) {
+  if (!serverPath) return null;
+  // 用服务端路径的文件名部分，加前缀区分来源
+  const parts = serverPath.split('/');
+  const filename = parts[parts.length - 1];
+  return `sync_${filename}`;
 }
 
 // 注册设备
@@ -3331,170 +3927,437 @@ ipcMain.handle('sync:deactivate-device', async (event, data) => {
 ipcMain.handle('sync:full', async (event, data) => {
   console.log('[Sync] Full sync, device:', data.device_id, ', since:', data.since);
 
+  // 增量过滤辅助：根据 since 时间过滤本地变更
+  // - since 为 epoch（首次同步）→ 返回全部
+  // - 有 since → 只返回 updated_at > since 或 revision=0（新建未推送）的记录
+  // - 没有 updated_at 的记录默认包含（避免漏传）
+  const FIRST_SYNC_THRESHOLD_MS = 365 * 24 * 60 * 60 * 1000; // since 距今超过 1 年视为首次
+  const sinceMs = data.since ? new Date(data.since).getTime() : 0;
+  const isFirstSync = !sinceMs || (Date.now() - sinceMs > FIRST_SYNC_THRESHOLD_MS);
+  function filterIncremental(items, getUpdatedAt, getRevision) {
+    if (isFirstSync) return items;
+    return items.filter(item => {
+      const rev = getRevision ? getRevision(item) : (item.revision || 0);
+      if (rev === 0) return true; // 新建未推送过的必须传
+      const ua = getUpdatedAt ? getUpdatedAt(item) : (item.updated_at || item.updatedAt);
+      if (!ua) return true; // 无时间戳的保险起见传
+      return new Date(ua).getTime() > sinceMs;
+    });
+  }
+  console.log('[Sync] Incremental mode:', !isFirstSync, '(since:', data.since, ')');
+
   // 补充渲染进程无法直接获取的数据（notes/knowledge/tasks 从数据库补充）
   console.log('[Sync] Data source check: db exists=', !!db, 'db.data=', !!db?.data, 'tasks count=', db?.data?.tasks?.length || 0, 'changes keys=', Object.keys(data.changes || {}));
+
+  // Tasks（独立 try-catch）
   try {
-    // Tasks（从本地数据库补充，渲染进程 Store 可能遗漏）
-    if (data.changes && !data.changes.tasks && db && db.data && db.data.tasks) {
-      try {
-        const dbTasks = db.data.tasks || [];
-        const since = data.since ? new Date(data.since).getTime() : 0;
-        const changedTasks = dbTasks.filter(t => {
-          const updated = new Date(t.updatedAt || t.createdAt || t.dueDate || 0).getTime();
-          return updated > since;
-        });
-        if (changedTasks.length > 0) {
-          data.changes.tasks = changedTasks.map(t => ({
-            id: t.id,
-            base_revision: t.revision || 0,
-            title: t.title,
-            description: t.description || '',
-            status: t.status || 'pending',
-            priority: t.priority || 'medium',
+    if (data.changes && !data.changes.tasks && db && db.data && Array.isArray(db.data.tasks) && db.data.tasks.length > 0) {
+      const dbTasks = db.data.tasks;
+      // 增量过滤：仅上传 updated_at > since 或 revision=0 的 tasks
+      const changedTasks = filterIncremental(dbTasks, t => t.updatedAt || t.createdAt, t => t.revision);
+      console.log('[Sync] Tasks total:', dbTasks.length, '→ changed:', changedTasks.length);
+      if (changedTasks.length > 0) {
+        data.changes.tasks = changedTasks.map(t => ({
+          id: t.id,
+          base_revision: t.revision || 0,
+          title: t.title || '',
+          description: t.description || '',
+          status: t.status || 'pending',
+          priority: t.priority || 'medium',
+          due_date: t.dueDate || null,
+          estimated_duration: t.estimatedDuration || null,
+          actual_duration: t.actualDuration || null,
+          pomodoro_sessions: t.pomodoroSessions ? (typeof t.pomodoroSessions === 'string' ? t.pomodoroSessions : JSON.stringify(t.pomodoroSessions)) : null,
+          reminders: t.reminders ? (typeof t.reminders === 'string' ? t.reminders : JSON.stringify(t.reminders)) : null,
+          completed_at: t.completedAt || null,
+          extra: JSON.stringify({
             category: t.category || '',
-            tags: JSON.stringify(t.tags || []),
-            due_date: t.dueDate || null,
-            created_at: t.createdAt || null,
-            updated_at: t.updatedAt || t.createdAt || null
-          }));
-          console.log('[Sync] Supplemented', changedTasks.length, 'tasks from local DB');
-        }
-      } catch (e) {
-        console.warn('[Sync] Failed to collect tasks from local DB:', e.message);
+            tags: t.tags || [],
+            source: t.source || '',
+            rawText: t.rawText || '',
+            calendarEventId: t.calendarEventId || ''
+          }),
+          created_at: t.createdAt || null,
+          updated_at: t.updatedAt || t.createdAt || null
+        }));
+        console.log('[Sync] Supplemented', changedTasks.length, 'tasks from local DB');
       }
     }
+  } catch (e) {
+    console.warn('[Sync] Failed to collect tasks from local DB:', e.message);
+  }
 
-    // Notes
+  // Notes（独立 try-catch，使用 notebook.notes 而非不存在的 search 方法）
+  try {
     if (notebook && data.changes && !data.changes.notes) {
-      const allNotes = notebook.search('');
-      console.log('[Sync] Notes: total=', allNotes.length, ', notebook available');
-      const since = data.since ? new Date(data.since).getTime() : 0;
-      const changedNotes = allNotes.filter(n =>
-        new Date(n.updatedAt || n.createdAt || 0).getTime() > since
-      );
+      const allNotes = Array.isArray(notebook.notes) ? notebook.notes : [];
+      // 增量过滤
+      const changedNotes = filterIncremental(allNotes, n => n.updatedAt || n.createdAt, n => n.revision);
+      console.log('[Sync] Notes total:', allNotes.length, '→ changed:', changedNotes.length);
       if (changedNotes.length > 0) {
-        data.changes.notes = changedNotes.map(n => ({
+        data.changes.notes = changedNotes
+          .filter(n => {
+            // 过滤无效图片笔记：category=image 但无 imagePath → 降级为 general 或跳过
+            if (n.category === 'image' && !n.imagePath) {
+              console.warn('[Sync] Skipping invalid image note (no imagePath):', n.id, n.title);
+              return false;
+            }
+            return true;
+          })
+          .map(n => ({
           id: n.id,
           base_revision: n.revision || 0,
           title: n.title || '',
           content: n.content || '',
           category: n.category || 'default',
           tags: JSON.stringify(n.tags || []),
+          image_path: n.imagePath || '',
+          image_hash: n.imageHash || '',
+          image_width: n.imageWidth || 0,
+          image_height: n.imageHeight || 0,
           created_at: n.createdAt,
           updated_at: n.updatedAt || n.createdAt
         }));
-      }
-    }
-
-    // Knowledge nodes
-    if (db && data.changes && !data.changes.knowledge_nodes) {
-      try {
-        const nodes = db.graphGetNodes({});
-        const since = data.since ? new Date(data.since).getTime() : 0;
-        const changedNodes = nodes.filter(n =>
-          new Date(n.updated_at || n.created_at || 0).getTime() > since
-        );
-        if (changedNodes.length > 0) {
-          data.changes.knowledge_nodes = changedNodes.map(n => ({
-            id: n.id,
-            base_revision: n.revision || 0,
-            name: n.name,
-            type: n.type,
-            domain: n.domain,
-            health: n.health,
-            extra: n.extra || '{}',
-            created_at: n.created_at,
-            updated_at: n.updated_at
-          }));
-        }
-      } catch (e) {
-        console.warn('[Sync] Failed to collect knowledge_nodes:', e.message);
-      }
-    }
-
-    // Knowledge edges
-    if (db && data.changes && !data.changes.knowledge_edges) {
-      try {
-        const edges = db.graphGetEdges({});
-        const since = data.since ? new Date(data.since).getTime() : 0;
-        const changedEdges = edges.filter(e =>
-          new Date(e.updated_at || e.created_at || 0).getTime() > since
-        );
-        if (changedEdges.length > 0) {
-          data.changes.knowledge_edges = changedEdges.map(e => ({
-            id: e.id,
-            base_revision: e.revision || 0,
-            source_id: e.source_id,
-            target_id: e.target_id,
-            type: e.type,
-            created_at: e.created_at,
-            updated_at: e.updated_at
-          }));
-        }
-      } catch (e) {
-        console.warn('[Sync] Failed to collect knowledge_edges:', e.message);
-      }
-    }
-
-    // Clipboard memories
-    if (memoryStore && data.changes && !data.changes.clipboard_memories) {
-      try {
-        const memories = memoryStore.search({ type: 'instant', limit: 1000 });
-        const since = data.since ? new Date(data.since).getTime() : 0;
-        const changedMemories = memories.filter(m =>
-          new Date(m.created_at || 0).getTime() > since
-        );
-        if (changedMemories.length > 0) {
-          data.changes.clipboard_memories = changedMemories.map(m => ({
-            id: m.id,
-            base_revision: m.revision || 0,
-            content: m.content,
-            memory_type: m.type,
-            business_category: m.business_category,
-            confidence: m.confidence,
-            source: m.source || 'clipboard',
-            created_at: m.created_at
-          }));
-        }
-      } catch (e) {
-        console.warn('[Sync] Failed to collect clipboard_memories:', e.message);
+        console.log('[Sync] Supplemented', changedNotes.length, 'notes (incremental)');
       }
     }
   } catch (e) {
-    console.warn('[Sync] Failed to supplement data:', e.message);
+    console.warn('[Sync] Failed to collect notes:', e.message);
+  }
+
+  // Knowledge nodes（独立 try-catch，兼容不同 API）
+  try {
+    if (db && data.changes && !data.changes.knowledge_nodes) {
+      let nodes = [];
+      // 兼容不同的 DB API
+      if (typeof db.graphGetNodes === 'function') {
+        nodes = db.graphGetNodes({});
+      } else if (db.data && Array.isArray(db.data.knowledge_nodes)) {
+        nodes = db.data.knowledge_nodes;
+      }
+      // 增量过滤
+      const changedNodes = filterIncremental(nodes, n => n.updated_at || n.created_at, n => n.revision);
+      console.log('[Sync] Knowledge nodes total:', nodes.length, '→ changed:', changedNodes.length);
+      if (changedNodes.length > 0) {
+        data.changes.knowledge_nodes = changedNodes.map(n => ({
+          id: n.id,
+          base_revision: n.revision || 0,
+          name: n.name,
+          type: n.type,
+          domain: n.domain,
+          health: n.health,
+          extra: typeof n.extra === 'string' ? n.extra : JSON.stringify(n.extra || {}),
+          created_at: n.created_at,
+          updated_at: n.updated_at
+        }));
+        console.log('[Sync] Supplemented', changedNodes.length, 'knowledge_nodes (incremental)');
+      }
+    }
+  } catch (e) {
+    console.warn('[Sync] Failed to collect knowledge_nodes:', e.message);
+  }
+
+  // Knowledge edges（独立 try-catch，兼容不同 API）
+  try {
+    if (db && data.changes && !data.changes.knowledge_edges) {
+      let edges = [];
+      if (typeof db.graphGetEdges === 'function') {
+        edges = db.graphGetEdges({});
+      } else if (db.data && Array.isArray(db.data.knowledge_edges)) {
+        edges = db.data.knowledge_edges;
+      }
+      // 增量过滤
+      const changedEdges = filterIncremental(edges, e => e.updated_at || e.created_at, e => e.revision);
+      console.log('[Sync] Knowledge edges total:', edges.length, '→ changed:', changedEdges.length);
+      if (changedEdges.length > 0) {
+        data.changes.knowledge_edges = changedEdges.map(e => ({
+          id: e.id,
+          base_revision: e.revision || 0,
+          source_id: e.source_id,
+          target_id: e.target_id,
+          type: e.type,
+          created_at: e.created_at,
+          updated_at: e.updated_at
+        }));
+        console.log('[Sync] Supplemented', changedEdges.length, 'knowledge_edges (incremental)');
+      }
+    }
+  } catch (e) {
+    console.warn('[Sync] Failed to collect knowledge_edges:', e.message);
+  }
+
+  // Clipboard memories（独立 try-catch，兼容不同 API）
+  try {
+    if (memoryStore && data.changes && !data.changes.clipboard_memories) {
+      let memories = [];
+      if (typeof memoryStore.search === 'function') {
+        memories = memoryStore.search({ type: 'instant', limit: 1000 });
+      } else if (Array.isArray(memoryStore.memories)) {
+        memories = memoryStore.memories;
+      } else if (memoryStore.data && Array.isArray(memoryStore.data.memories)) {
+        memories = memoryStore.data.memories;
+      }
+      // 增量过滤（剪贴板用 created_at 时间戳）
+      const changedMemories = filterIncremental(memories, m => m.updated_at || m.created_at, m => m.revision);
+      console.log('[Sync] Clipboard memories total:', memories.length, '→ changed:', changedMemories.length);
+      if (changedMemories.length > 0) {
+        data.changes.clipboard_memories = changedMemories.map(m => ({
+          id: m.id,
+          base_revision: m.revision || 0,
+          content: m.content,
+          memory_type: m.type,
+          business_category: m.business_category,
+          confidence: m.confidence,
+          source: m.source || 'clipboard',
+          created_at: m.created_at
+        }));
+        console.log('[Sync] Supplemented', changedMemories.length, 'clipboard_memories (incremental)');
+      }
+    }
+  } catch (e) {
+    console.warn('[Sync] Failed to collect clipboard_memories:', e.message);
   }
 
   const changesSummary = Object.entries(data.changes || {}).map(([k, v]) => `${k}:${v?.length || 0}`).join(', ');
   console.log('[Sync] Sending full sync request, changes:', changesSummary || 'empty');
-  const result = await syncApiRequest('/full', { body: data });
+
+  // ===== 图片上传：扫描所有未上传的本地图片笔记 =====
+  // 不仅仅是 changes 中的笔记，还要扫描 notebook 中所有 imagePath 仍为本地路径的笔记
+  // 因为图片上传可能之前失败了（如服务端 note_images 表不存在时），需要重试
+  if (notebook) {
+    const allNotes = Array.isArray(notebook.notes) ? notebook.notes : [];
+    const imageNotesToUpload = allNotes.filter(n =>
+      (n.category === 'image' || n.imagePath) &&
+      n.imagePath &&
+      !isServerImagePath(n.imagePath)
+    );
+
+    if (imageNotesToUpload.length > 0) {
+      console.log('[Sync] Found', imageNotesToUpload.length, 'notes with local images to upload...');
+      console.log('[Sync] Image notes:', imageNotesToUpload.map(n => ({ id: n.id, path: n.imagePath, size: n.imageWidth + 'x' + n.imageHeight })));
+
+      for (const note of imageNotesToUpload) {
+        try {
+          const localAbsPath = path.join(app.getPath('userData'), 'notebook', note.imagePath);
+          if (!fs.existsSync(localAbsPath)) {
+            console.warn('[Sync] Image file not found locally, skip upload:', note.imagePath, '→ expected at:', localAbsPath);
+            // 本地文件丢失时，仍然推送笔记元数据（不含图片，但笔记本身是有价值的）
+            continue;
+          }
+
+          const fileStat = fs.statSync(localAbsPath);
+          console.log('[Sync] Uploading image for note', note.id, '| file:', note.imagePath, '| size:', (fileStat.size / 1024).toFixed(1), 'KB');
+
+          const uploadResult = await uploadNoteImage(localAbsPath);
+          if (uploadResult.ok && uploadResult.uploaded?.length > 0) {
+            const imgInfo = uploadResult.uploaded[0];
+            // 注意：不更新本地笔记的 imagePath！本地笔记始终用本地路径（images/xxx.png）
+            // 仅更新宽高等元数据
+            notebook.updateNote(note.id, {
+              imageHash: imgInfo.image_hash || note.imageHash,
+              imageWidth: imgInfo.width || note.imageWidth,
+              imageHeight: imgInfo.height || note.imageHeight,
+            });
+            console.log('[Sync] ✅ Image uploaded for note', note.id, '→', imgInfo.server_path, '(local note keeps local path)');
+
+            // 同时确保这条笔记的变更被推送到服务端（更新 image_path 字段）
+            if (data.changes.notes) {
+              const existingIdx = data.changes.notes.findIndex(n => n.id === note.id);
+              if (existingIdx >= 0) {
+                data.changes.notes[existingIdx].image_path = imgInfo.server_path;
+                data.changes.notes[existingIdx].image_hash = imgInfo.image_hash || '';
+                data.changes.notes[existingIdx].image_width = imgInfo.width || 0;
+                data.changes.notes[existingIdx].image_height = imgInfo.height || 0;
+              }
+            } else {
+              // 没有在 changes 中：强制添加这条笔记的变更
+              if (!data.changes.notes) data.changes.notes = [];
+              data.changes.notes.push({
+                id: note.id,
+                base_revision: note.revision || 0,
+                title: note.title || '',
+                content: note.content || '',
+                category: note.category || 'default',
+                tags: JSON.stringify(note.tags || []),
+                image_path: imgInfo.server_path,
+                image_hash: imgInfo.image_hash || '',
+                image_width: imgInfo.width || 0,
+                image_height: imgInfo.height || 0,
+                created_at: note.createdAt,
+                updated_at: new Date().toISOString()
+              });
+            }
+          } else {
+            console.warn('[Sync] ⚠️ Image upload failed for note', note.id, ':', uploadResult.error);
+            // 图片上传失败时：仍然推送笔记元数据（带本地 image_path），下次 fullSync 会重试上传并更新
+          }
+        } catch (e) {
+          console.warn('[Sync] ⚠️ Image upload error for note', note.id, ':', e.message);
+          // 异常时也推送笔记元数据
+        }
+      }
+    }
+  }
+
+  // 如果设备未注册，先自动注册
+  if (data.device_id) {
+    try {
+      const regResult = await syncApiRequest('/device/register', {
+        body: {
+          device_id: data.device_id,
+          platform: data.platform || 'electron',
+          device_name: `PC (${process.platform})`,
+          app_version: APP_VERSION
+        }
+      });
+      if (regResult && (regResult.registered || regResult.ok)) {
+        console.log('[Sync] Auto-registered device:', data.device_id);
+      }
+    } catch (e) {
+      console.warn('[Sync] Auto-register device failed (may already exist):', e.message);
+    }
+  }
+
+  let result = await syncApiRequest('/full', { body: data });
+
+  // 如果因设备未注册失败，注册后重试
+  if (result && result.error && (result.error.includes('设备未注册') || result.error.includes('not registered') || result.status === 403)) {
+    console.log('[Sync] Device not registered, registering and retrying...');
+    try {
+      await syncApiRequest('/device/register', {
+        body: {
+          device_id: data.device_id,
+          platform: data.platform || 'electron',
+          device_name: `PC (${process.platform})`,
+          app_version: APP_VERSION
+        }
+      });
+      result = await syncApiRequest('/full', { body: data });
+    } catch (e) {
+      console.warn('[Sync] Retry after register failed:', e.message);
+    }
+  }
+
+  // 适配服务端响应格式：result.pull.results.notes.records 而非 result.pulled.notes
+  const pulledResults = result?.pull?.results || result?.pulled || {};
 
   // 同步成功后，将 pull 下来的 notes/knowledge 写入本地
-  if (result && result.pulled) {
+  if (result && result.ok && pulledResults) {
     try {
       // Notes
-      if (result.pulled.notes && result.pulled.notes.length > 0 && notebook) {
-        for (const note of result.pulled.notes) {
+      const pulledNotes = pulledResults.notes?.records || pulledResults.notes || [];
+      if (pulledNotes.length > 0 && notebook) {
+        // ===== 图片下载：收集需要下载的服务端图片 =====
+        const imageNotesToDownload = pulledNotes.filter(n =>
+          n.image_path && isServerImagePath(n.image_path)
+        );
+
+        if (imageNotesToDownload.length > 0) {
+          console.log('[Sync] Downloading', imageNotesToDownload.length, 'remote images...');
+          const imagesDir = getNotebookImagesDir();
+
+          // 先批量获取图片元数据，拿到 imageId → download_url 映射
+          // 从 image_path 无法直接得到 imageId，需要通过 sync-pull 或 batch-download
+          // 更简单的方案：直接用 image_path 中的文件名在服务端查找
+          // 但最可靠的是通过 note_images 表的 sync-pull 获取元数据
+
+          // 方案：逐个通过 image_path 构造下载 URL
+          // 服务端 image_path 格式: {userId}/{filename}
+          // 可以通过 GET /notes/images?note_id=xxx 获取图片 ID
+
+          for (const note of imageNotesToDownload) {
+            try {
+              // 检查本地是否已有该图片（通过 hash 判断）
+              const localFilename = serverPathToLocalFilename(note.image_path);
+              const localAbsPath = path.join(imagesDir, localFilename);
+
+              if (fs.existsSync(localAbsPath)) {
+                // 本地已有，跳过下载
+                // 更新笔记的 imagePath 指向本地路径
+                note.image_path = `images/${localFilename}`;
+                continue;
+              }
+
+              // 需要通过服务端 API 获取图片 ID 才能下载
+              // 方案1: 通过图片列表 API 按 note_id 查找
+              const imgListResult = await syncApiRequest(`/notes/images?note_id=${note.id}&limit=1`, { method: 'GET' });
+
+              if (imgListResult.ok && imgListResult.images?.length > 0) {
+                const imgMeta = imgListResult.images[0];
+                const downloadResult = await downloadNoteImage(imgMeta.id, localAbsPath);
+
+                if (downloadResult.ok) {
+                  // 下载成功，将笔记的 image_path 更新为本地路径
+                  note.image_path = `images/${localFilename}`;
+                  console.log('[Sync] Image downloaded for note', note.id);
+                } else {
+                  console.warn('[Sync] Image download failed for note', note.id, ':', downloadResult.error);
+                }
+              } else {
+                console.warn('[Sync] No image metadata found for note', note.id);
+              }
+            } catch (e) {
+              console.warn('[Sync] Image download error for note', note.id, ':', e.message);
+            }
+          }
+        }
+
+        // 写入笔记到本地
+        for (const note of pulledNotes) {
           if (note.origin_device_id === data.device_id) continue;  // 防回声
           if (note.deleted_at) continue;  // 已删除
           try {
-            const existing = notebook.getNote(note.id);
+            const existing = notebook.getNoteById(note.id);
             if (!existing) {
+              // 解析 imagePath：如果服务端路径已下载到本地缓存，用本地路径
+              let addImagePath = note.image_path || '';
+              if (addImagePath && isServerImagePath(addImagePath)) {
+                const localFilename = serverPathToLocalFilename(addImagePath);
+                const localCachePath = path.join(app.getPath('userData'), 'notebook', 'images', localFilename);
+                if (fs.existsSync(localCachePath)) {
+                  addImagePath = `images/${localFilename}`;
+                }
+              }
               notebook.addNote({
                 id: note.id,
                 title: note.title,
                 content: note.content,
                 category: note.category,
                 tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []),
+                imagePath: addImagePath,
+                imageHash: note.image_hash || '',
+                imageWidth: note.image_width || 0,
+                imageHeight: note.image_height || 0,
                 revision: note.revision,
                 createdAt: note.created_at,
                 updatedAt: note.updated_at
               });
             } else if ((note.revision || 0) > (existing.revision || 0)) {
+              // imagePath 优先级：1.本地已有且文件存在的本地路径 2.已下载到本地的服务端路径 3.服务端路径
+              let resolvedImagePath = note.image_path || existing.imagePath || '';
+              if (existing.imagePath && !isServerImagePath(existing.imagePath)) {
+                // 本地已有有效的本地路径，保留它（确保本地显示正常）
+                const existingLocalAbs = path.join(app.getPath('userData'), 'notebook', existing.imagePath);
+                if (fs.existsSync(existingLocalAbs)) {
+                  resolvedImagePath = existing.imagePath;
+                }
+              } else if (note.image_path && isServerImagePath(note.image_path)) {
+                // 服务端路径 → 检查是否已下载到本地缓存
+                const localFilename = serverPathToLocalFilename(note.image_path);
+                const localCachePath = path.join(app.getPath('userData'), 'notebook', 'images', localFilename);
+                if (fs.existsSync(localCachePath)) {
+                  resolvedImagePath = `images/${localFilename}`;
+                }
+              }
               notebook.updateNote(note.id, {
                 title: note.title,
                 content: note.content,
                 category: note.category,
                 tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []),
+                imagePath: resolvedImagePath,
+                imageHash: note.image_hash || existing.imageHash || '',
+                imageWidth: note.image_width || existing.imageWidth || 0,
+                imageHeight: note.image_height || existing.imageHeight || 0,
                 revision: note.revision,
                 updatedAt: note.updated_at
               });
@@ -3506,8 +4369,9 @@ ipcMain.handle('sync:full', async (event, data) => {
       }
 
       // Knowledge nodes
-      if (result.pulled.knowledge_nodes && result.pulled.knowledge_nodes.length > 0 && db) {
-        for (const node of result.pulled.nodes || result.pulled.knowledge_nodes) {
+      const pulledNodes = pulledResults.knowledge_nodes?.records || pulledResults.nodes || pulledResults.knowledge_nodes || [];
+      if (pulledNodes.length > 0 && db) {
+        for (const node of pulledNodes) {
           if (node.origin_device_id === data.device_id) continue;
           if (node.deleted_at) continue;
           try {
@@ -3525,8 +4389,56 @@ ipcMain.handle('sync:full', async (event, data) => {
   return result;
 });
 
-// 推送
+// 推送（含图片上传：先尝试上传本地图片，成功则更新 image_path；失败也推送元数据，等 fullSync 重试）
 ipcMain.handle('sync:push', async (event, data) => {
+  // ===== 图片上传：扫描 changes.notes 中的图片笔记，上传本地图片 =====
+  if (data.changes?.notes?.length > 0 && notebook) {
+    const imageNotes = data.changes.notes.filter(n =>
+      (n.category === 'image' || n.image_path) && n.image_path && !isServerImagePath(n.image_path)
+    );
+
+    if (imageNotes.length > 0) {
+      console.log('[Sync:push] Found', imageNotes.length, 'notes with local images to upload before push...');
+
+      for (const note of imageNotes) {
+        try {
+          // image_path 是本地相对路径如 images/xxx.png → 拼接绝对路径
+          const localAbsPath = path.join(app.getPath('userData'), 'notebook', note.image_path);
+          if (!fs.existsSync(localAbsPath)) {
+            console.warn('[Sync:push] Local image file missing, still pushing note metadata:', note.id, note.image_path);
+            continue;
+          }
+
+          console.log('[Sync:push] Uploading image for note', note.id, '|', note.image_path);
+          const uploadResult = await uploadNoteImage(localAbsPath);
+
+          if (uploadResult.ok && uploadResult.uploaded?.length > 0) {
+            const imgInfo = uploadResult.uploaded[0];
+            // 更新 changes 中的 image_path 为服务端路径（推送到服务端用）
+            note.image_path = imgInfo.server_path;
+            note.image_hash = imgInfo.image_hash || note.image_hash || '';
+            note.image_width = imgInfo.width || note.image_width || 0;
+            note.image_height = imgInfo.height || note.image_height || 0;
+            // 注意：不更新本地笔记的 imagePath！本地笔记始终用本地路径（images/xxx.png）
+            // 仅更新宽高等元数据（imageHash 等如果服务端返回了更准确的值）
+            notebook.updateNote(note.id, {
+              imageHash: imgInfo.image_hash || note.image_hash,
+              imageWidth: imgInfo.width || note.image_width,
+              imageHeight: imgInfo.height || note.image_height,
+            });
+            console.log('[Sync:push] ✅ Image uploaded →', imgInfo.server_path, '(local note keeps local path)');
+          } else {
+            // 上传失败：仍然推送笔记元数据（带本地 image_path），fullSync 时会重试上传并更新
+            console.warn('[Sync:push] ⚠️ Image upload failed, pushing note metadata anyway. Will retry on fullSync:', note.id, uploadResult.error);
+          }
+        } catch (e) {
+          // 异常：仍然推送笔记元数据
+          console.warn('[Sync:push] ⚠️ Image upload error, pushing note metadata anyway:', note.id, e.message);
+        }
+      }
+    }
+  }
+
   return await syncApiRequest('/push', { body: data });
 });
 
@@ -3543,6 +4455,114 @@ ipcMain.handle('sync:resolve', async (event, data) => {
 // 获取同步状态
 ipcMain.handle('sync:get-status', async () => {
   return await syncApiRequest('/status', { method: 'GET' });
+});
+
+// ===== 图片同步专属 API =====
+
+// 上传图片文件
+ipcMain.handle('sync:upload-note-image', async (event, localPath) => {
+  return await uploadNoteImage(localPath);
+});
+
+// 下载图片文件
+ipcMain.handle('sync:download-note-image', async (event, imageId, savePath) => {
+  return await downloadNoteImage(imageId, savePath);
+});
+
+// 删除服务端图片
+ipcMain.handle('sync:delete-note-image', async (event, imageId) => {
+  return await deleteNoteImage(imageId);
+});
+
+// 拉取图片元数据
+ipcMain.handle('sync:pull-note-images', async (event, deviceId, sinceRevision) => {
+  return await pullNoteImageMeta(deviceId, sinceRevision || 0);
+});
+
+// 批量获取图片元数据
+ipcMain.handle('sync:batch-note-image-meta', async (event, imageIds) => {
+  return await batchGetNoteImageMeta(imageIds);
+});
+
+// 获取图片列表
+ipcMain.handle('sync:list-note-images', async (event, options = {}) => {
+  const params = new URLSearchParams();
+  if (options.page) params.set('page', options.page);
+  if (options.limit) params.set('limit', options.limit);
+  if (options.note_id) params.set('note_id', options.note_id);
+  const qs = params.toString();
+  return await syncApiRequest(`/notes/images${qs ? '?' + qs : ''}`, { method: 'GET' });
+});
+
+// 绑定图片到笔记
+ipcMain.handle('sync:bind-note-image', async (event, imageId, noteId) => {
+  return await syncApiRequest(`/notes/images/${imageId}/bind`, {
+    method: 'PUT',
+    body: { note_id: noteId }
+  });
+});
+
+// ===== 助手会话专属 API =====
+
+// GET /memora/sync/conversations — 会话列表
+ipcMain.handle('sync:conversations', async (event, options = {}) => {
+  const params = new URLSearchParams();
+  if (options.page) params.set('page', options.page);
+  if (options.limit) params.set('limit', options.limit);
+  if (options.search) params.set('search', options.search);
+  const qs = params.toString();
+  return await syncApiRequest(`/conversations${qs ? '?' + qs : ''}`, { method: 'GET' });
+});
+
+// GET /memora/sync/conversations/:id — 会话详情
+ipcMain.handle('sync:conversation-detail', async (event, convId) => {
+  if (!convId) return { ok: false, error: 'convId required' };
+  return await syncApiRequest(`/conversations/${encodeURIComponent(convId)}`, { method: 'GET' });
+});
+
+// GET /memora/sync/conversations/:id/messages — 消息列表
+ipcMain.handle('sync:conversation-messages', async (event, convId, options = {}) => {
+  if (!convId) return { ok: false, error: 'convId required' };
+  const params = new URLSearchParams();
+  if (options.page) params.set('page', options.page);
+  if (options.limit) params.set('limit', options.limit);
+  const qs = params.toString();
+  return await syncApiRequest(`/conversations/${encodeURIComponent(convId)}/messages${qs ? '?' + qs : ''}`, { method: 'GET' });
+});
+
+// POST /memora/sync/conversations/:id/messages — 追加消息
+ipcMain.handle('sync:conversation-append-message', async (event, convId, message) => {
+  if (!convId || !message) return { ok: false, error: 'convId and message required' };
+  const deviceId = getDeviceFingerprint();
+  return await syncApiRequest(`/conversations/${encodeURIComponent(convId)}/messages`, {
+    method: 'POST',
+    body: {
+      device_id: deviceId,
+      ...message
+    }
+  });
+});
+
+// PUT /memora/sync/conversations/:id — 更新会话元数据
+ipcMain.handle('sync:conversation-update', async (event, convId, updates) => {
+  if (!convId) return { ok: false, error: 'convId required' };
+  const deviceId = getDeviceFingerprint();
+  return await syncApiRequest(`/conversations/${encodeURIComponent(convId)}`, {
+    method: 'PUT',
+    body: {
+      device_id: deviceId,
+      ...updates
+    }
+  });
+});
+
+// DELETE /memora/sync/conversations/:id — 删除会话
+ipcMain.handle('sync:conversation-delete', async (event, convId) => {
+  if (!convId) return { ok: false, error: 'convId required' };
+  const deviceId = getDeviceFingerprint();
+  return await syncApiRequest(`/conversations/${encodeURIComponent(convId)}?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'DELETE'
+  });
 });
 
 // ===== 版本更新 =====
@@ -3711,6 +4731,15 @@ ipcMain.handle('config:sync', async () => {
 let activeChatADPController = null;
 let currentADPConversationId = null; // 持久化会话ID，同一对话内复用
 
+// 修复 ADP URL：config-server 可能只返回域名无路径，自动补全 ADP V2 端点
+function normalizeADPUrl(url) {
+  if (!url) return 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  if (!url.includes('/adp/v2/chat') && !url.includes('/v1/qbot/chat')) {
+    return url.replace(/\/+$/, '') + '/adp/v2/chat';
+  }
+  return url;
+}
+
 function generateConversationId() {
   return Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
 }
@@ -3765,7 +4794,10 @@ ipcMain.handle('send-adp-message', async (event, data) => {
     configSource = 'default';
   }
   
-  console.log('[ADP Chat] send-adp-message called, configSource:', configSource, 'attachments:', attachments.length);
+  // 修复：config-server 可能只返回域名无路径，自动补全 ADP V2 端点路径
+  url = normalizeADPUrl(url);
+  
+  console.log('[ADP Chat] send-adp-message called, configSource:', configSource, 'url:', url, 'appKey:', appKey?.substring(0, 8) + '...', 'attachments:', attachments.length);
   
   // 记录当前使用的 appKey 用于审计（脱敏）
   const _adpChatAppKey = appKey;
@@ -4001,7 +5033,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   };
   
   try {
-    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    const httpUrl = normalizeADPUrl(url).replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
     const controller = new AbortController();
     activeChatADPController = controller;
@@ -4650,6 +5682,38 @@ ipcMain.handle('notebook-get-notes', async (event, category) => {
   return { notes: notebook.getNotesByCategory(category) };
 });
 
+// 读取记事本图片（返回 base64 data URL，前端直接用 <img src=...>）
+ipcMain.handle('notebook:get-image', async (event, imagePath) => {
+  try {
+    if (!imagePath || imagePath.includes('..')) return { success: false, error: 'Invalid path' };
+
+    // 服务端路径格式: "user_xxx/filename.png" → 尝试读取本地缓存 images/sync_filename.png
+    let localImagePath = imagePath;
+    if (isServerImagePath(imagePath)) {
+      const localFilename = serverPathToLocalFilename(imagePath);
+      localImagePath = `images/${localFilename}`;
+
+      // 如果本地缓存不存在，尝试下载
+      const fullLocalPath = path.join(app.getPath('userData'), 'notebook', localImagePath);
+      if (!fs.existsSync(fullLocalPath)) {
+        // 尝试从服务端下载（需要 imageId，通过 image_path 无法直接获取）
+        // 记录警告，让下次 sync 时下载
+        console.warn('[Notebook] Image not cached locally, will download on next sync:', imagePath);
+        return { success: false, error: 'Image not cached, sync first', isServerPath: true };
+      }
+    }
+
+    const fullPath = path.join(app.getPath('userData'), 'notebook', localImagePath);
+    if (!fs.existsSync(fullPath)) return { success: false, error: 'File not found' };
+    const buffer = fs.readFileSync(fullPath);
+    const base64 = buffer.toString('base64');
+    const dataUrl = `data:image/png;base64,${base64}`;
+    return { success: true, dataUrl, size: buffer.length };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 ipcMain.handle('notebook-get-note', async (event, id) => {
   if (!notebook) return { note: null };
   const note = notebook.getNoteById(id);
@@ -4703,6 +5767,32 @@ ipcMain.handle('notebook-delete-note', async (event, id, reason) => {
     });
     console.log('[Feedback] Note deleted - recorded as negative example');
   }
+
+  // 图片笔记：同时删除服务端图片
+  if (note && (note.category === 'image' || note.imagePath)) {
+    try {
+      if (isServerImagePath(note.imagePath)) {
+        // 服务端路径，需要通过 API 查找图片 ID 并删除
+        const imgListResult = await syncApiRequest(`/notes/images?note_id=${id}&limit=1`, { method: 'GET' });
+        if (imgListResult.ok && imgListResult.images?.length > 0) {
+          const imgId = imgListResult.images[0].id;
+          await deleteNoteImage(imgId);
+          console.log('[Sync] Server image deleted for note', id, 'imageId:', imgId);
+        }
+      }
+      // 删除本地图片文件
+      if (note.imagePath) {
+        const localAbsPath = path.join(app.getPath('userData'), 'notebook', note.imagePath);
+        if (fs.existsSync(localAbsPath)) {
+          fs.unlinkSync(localAbsPath);
+          console.log('[Sync] Local image deleted:', note.imagePath);
+        }
+      }
+    } catch (e) {
+      console.warn('[Sync] Failed to delete image for note', id, ':', e.message);
+    }
+  }
+
   const result = notebook.deleteNote(id);
   return { success: result !== null };
 });
@@ -4711,6 +5801,11 @@ ipcMain.handle('notebook-delete-notes-by-category', async (event, category) => {
   if (!notebook) return { success: false };
   const deletedCount = notebook.deleteNotesByCategory(category);
   return { success: true, deletedCount };
+});
+
+// 获取 userData 路径（供渲染进程构造本地文件路径）
+ipcMain.handle('get-user-data-path', async () => {
+  return app.getPath('userData');
 });
 
 ipcMain.handle('notebook-get-stats', async () => {
@@ -5432,7 +6527,7 @@ async function _callADPForGraph(prompt) {
       StreamingThrottle: 5
     };
 
-    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    const httpUrl = normalizeADPUrl(url).replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
     const response = await fetch(httpUrl, {
       method: 'POST',
@@ -5869,7 +6964,15 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
   console.log('[App] Starting 忆境 Memora...');
-  
+
+  // 设置应用名（影响 macOS 系统通知显示的标题归属）
+  app.setName('忆境 Memora');
+  // Windows 通知需要 AppUserModelId
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.memora.app');
+  }
+  console.log('[App] Notification supported:', Notification.isSupported());
+
   // 加载持久化设置（auth_token, custom_server_urls 等）
   loadSettings();
   console.log('[Settings] Loaded from disk');
@@ -5904,7 +7007,10 @@ app.whenReady().then(() => {
   // 初始化记事本系统
   notebook = new Notebook();
   console.log('[Notebook] Notebook initialized');
-  
+
+  // 启动时修复被错误设为服务端路径的 imagePath（上传成功后本地笔记 imagePath 不应改为服务端路径）
+  _fixCorruptedImagePaths();
+
   // 初始化知识萃取系统
   const { KnowledgeStore } = require('./src/scripts/knowledgeStore');
   knowledgeStore = new KnowledgeStore();
@@ -7414,7 +8520,7 @@ function getClusteringADPConfig() {
   if (!clusteringAppKey || clusteringAppKey.trim() === '') {
     clusteringAppKey = DEFAULT_ADP_CLUSTERING_APP_KEY;
   }
-  return { clusteringAppKey: clusteringAppKey.trim(), url };
+  return { clusteringAppKey: clusteringAppKey.trim(), url: normalizeADPUrl(url) };
 }
 
 // 单批 AI 调用 + 解析（使用 ADP SSE 接口）
@@ -7450,7 +8556,7 @@ async function processClusteringBatch(batchAtoms, existingClusters, promptTempla
   const startTime = Date.now();
 
   try {
-    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    const httpUrl = normalizeADPUrl(url).replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
     console.log('[Knowledge] Clustering via ADP, url:', httpUrl, 'appKey:', clusteringAppKey.substring(0, 10) + '...');
 
     const response = await fetch(httpUrl, {
@@ -8117,7 +9223,7 @@ async function triggerKnowledgeRecommendation(text, intent) {
       StreamingThrottle: 5
     };
 
-    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    const httpUrl = normalizeADPUrl(url).replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
     console.log('[Knowledge] Calling ADP for recommendation, url:', httpUrl, 'appKey source:', appKeySource, 'appKey:', appKey.substring(0, 10) + '...', 'query:', query.substring(0, 60));
 
@@ -8312,7 +9418,7 @@ ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversati
 
   try {
     const https = require('https');
-    const httpUrl = url.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    const httpUrl = normalizeADPUrl(url).replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
     const response = await fetch(httpUrl, {
       method: 'POST',
@@ -10259,6 +11365,7 @@ ipcMain.handle('multimodal:generate-book', async (event, options) => {
 知识库数据：
 ${JSON.stringify(summary)}`;
 
+    const config = getInsightADPConfig('activation');
     const result = await callADPForInsight(config, bookPrompt, JSON.stringify(summary), 'book_generation');
 
     console.log('[Multimodal] Generate book AI result:', {
@@ -10437,7 +11544,7 @@ ipcMain.handle('multimodal:import-buffer', async (event, options) => {
 // === v2.3 洞察辅助函数（原有） ===
 
 function getInsightADPConfig(type) {
-  const adpUrl = getSetting('adp_url') || (remoteConfig?.adp?.url) || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  const adpUrl = normalizeADPUrl(getSetting('adp_url') || (remoteConfig?.adp?.url) || 'https://wss.lke.cloud.tencent.com/adp/v2/chat');
 
   let appKey;
   switch (type) {

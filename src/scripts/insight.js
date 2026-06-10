@@ -1784,12 +1784,14 @@ const Insight = {
   },
 
   async _processAsset(id) {
-    if (!confirm('确定使用 AI 处理此资产？将自动生成标题、描述和标签。')) return;
+    // Electron 屏蔽原生 confirm，改用 toast + 直接处理
+    this._showToast('AI 正在处理中...请稍候', 'info');
     try {
       const result = await this._safeCall(
         () => window.electronAPI?.multimodalProcess?.(id),
-        { success: false, error: '处理失败' }
+        { success: false, error: '处理失败（无响应）' }
       );
+      console.log('[Insight] _processAsset result:', result);
       if (result?.success) {
         this._showToast('AI 处理完成', 'success');
         this.loadMultimodal();
@@ -1797,12 +1799,15 @@ const Insight = {
         this._showToast(result?.error || '处理失败', 'error');
       }
     } catch (err) {
+      console.error('[Insight] _processAsset error:', err);
       this._showToast('AI 处理失败：' + err.message, 'error');
     }
   },
 
   async _deleteAsset(id) {
-    if (!confirm('确定删除此资产？文件将一并删除。')) return;
+    // Electron 屏蔽原生 confirm，改用自定义确认弹窗
+    const ok = await this._customConfirm('确定删除此资产？文件将一并删除。');
+    if (!ok) return;
     try {
       await window.electronAPI?.multimodalDelete?.(id);
       this._showToast('资产已删除', 'success');
@@ -1810,6 +1815,27 @@ const Insight = {
     } catch (err) {
       this._showToast('删除失败：' + err.message, 'error');
     }
+  },
+
+  // 自定义确认弹窗（替代被 Electron 屏蔽的原生 confirm）
+  _customConfirm(message) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:99999;';
+      overlay.innerHTML = `
+        <div style="background:#fff;border-radius:16px;padding:24px;max-width:400px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,0.2);">
+          <div style="font-size:15px;line-height:1.6;color:#1d1d1f;margin-bottom:20px;">${this._escapeHtml(message)}</div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button class="cc-cancel" style="padding:8px 18px;border-radius:8px;border:1px solid #d2d2d7;background:#fff;cursor:pointer;font-size:14px;">取消</button>
+            <button class="cc-ok" style="padding:8px 18px;border-radius:8px;border:none;background:#FF3B30;color:#fff;cursor:pointer;font-size:14px;">确认删除</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const cleanup = (val) => { overlay.remove(); resolve(val); };
+      overlay.querySelector('.cc-ok').onclick = () => cleanup(true);
+      overlay.querySelector('.cc-cancel').onclick = () => cleanup(false);
+      overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+    });
   },
 
   _formatTimeAgo(dateStr) {

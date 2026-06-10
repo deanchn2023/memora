@@ -11,6 +11,7 @@
     "build:dir": "electron-builder --mac --dir"
   },
   "dependencies": {
+    "form-data": "^4.0.5",
     "sql.js": "^1.14.1",
     "uuid": "^9.0.0",
     "ws": "^8.21.0"

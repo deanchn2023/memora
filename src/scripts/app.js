@@ -372,9 +372,9 @@ const App = {
         if (emailLabel) emailLabel.textContent = '用户名';
         if (emailInput) emailInput.placeholder = '输入用户名';
       } else {
-        if (hint) hint.textContent = '测试环境：config-server';
-        if (emailLabel) emailLabel.textContent = '邮箱';
-        if (emailInput) emailInput.placeholder = '输入邮箱';
+        if (hint) hint.textContent = '测试环境：ADPToolkit';
+        if (emailLabel) emailLabel.textContent = '用户名';
+        if (emailInput) emailInput.placeholder = '输入用户名';
       }
     });
     document.getElementById('resetPromptBtn')?.addEventListener('click', () => this.resetAIPrompt());
@@ -391,9 +391,20 @@ const App = {
     // 云同步
     document.getElementById('cloudSyncToggle')?.addEventListener('change', (e) => this._toggleCloudSync(e.target.checked));
     document.getElementById('syncNowBtn')?.addEventListener('click', () => this._syncNow());
+
+    // AI 完成提醒开关
+    const chatNotifyToggle = document.getElementById('chatNotifyToggle');
+    if (chatNotifyToggle) {
+      const stored = localStorage.getItem('memora_chat_notify_enabled');
+      chatNotifyToggle.checked = stored !== 'false'; // 默认 true
+      chatNotifyToggle.addEventListener('change', (e) => {
+        localStorage.setItem('memora_chat_notify_enabled', e.target.checked ? 'true' : 'false');
+        this.showToast(e.target.checked ? '🔔 AI 完成提醒已开启' : '🔕 AI 完成提醒已关闭', 'success');
+      });
+    }
     document.getElementById('syncStatusBtn')?.addEventListener('click', () => this._toggleSyncStatus());
     // 同步范围变更
-    ['syncTasks', 'syncNotes', 'syncKnowledge', 'syncClipboard'].forEach(id => {
+    ['syncTasks', 'syncNotes', 'syncKnowledge', 'syncClipboard', 'syncConversations'].forEach(id => {
       document.getElementById(id)?.addEventListener('change', () => this._saveSyncScope());
     });
     // 同步频率变更
@@ -452,7 +463,11 @@ const App = {
         if (data.has_update) this._showUpdateModal(data);
       });
     }
-    document.getElementById('sendAIMessageBtn')?.addEventListener('click', () => this.sendAIMessage());
+    document.getElementById('sendAIMessageBtn')?.addEventListener('click', () => {
+      // 用户首次交互时初始化/解锁 AudioContext（规避 autoplay policy）
+      this._unlockAudioContext();
+      this.sendAIMessage();
+    });
     const chatInput = document.getElementById('aiChatInput');
     // IME 组合状态追踪
     let isComposing = false;
@@ -466,6 +481,7 @@ const App = {
         if (e.ctrlKey || e.metaKey) return;
         // 普通回车发送
         e.preventDefault();
+        this._unlockAudioContext();
         this.sendAIMessage();
       }
     });
@@ -630,8 +646,11 @@ const App = {
       if (!noteItem) return;
       
       const noteId = noteItem.dataset.id;
-      console.log('[App] Notebook item clicked, noteId:', noteId);
-      
+
+      // 点击图片缩略图/预览图区域：不 toggle 预览，仅靠双击打开查看器
+      if (e.target.closest('.note-image-thumb') || e.target.closest('.note-preview-image')) {
+        return;
+      }
 
       // 如果点击的是分类标签，弹出分类修改
       const categorySpan = e.target.closest('.note-category-clickable');
@@ -676,8 +695,28 @@ const App = {
       }
     });
     
-    // 双击预览内容区域进入编辑模式
+    // 双击：图片笔记 → 全屏查看；文本笔记 → 编辑模式
     document.getElementById('notebookList')?.addEventListener('dblclick', (e) => {
+      // 双击图片缩略图/预览图：全屏查看（无论笔记类型）
+      const imageEl = e.target.closest('.note-image-thumb') || e.target.closest('.note-preview-image');
+      if (imageEl) {
+        const noteItem = e.target.closest('.note-item');
+        if (noteItem && noteItem.querySelector('[data-image-path]')) {
+          e.stopPropagation();
+          e.preventDefault();
+          this.openImageModal(noteItem.dataset.id);
+          return;
+        }
+      }
+      // 双击纯图片笔记项：全屏查看
+      const noteItem = e.target.closest('.note-item');
+      if (noteItem && noteItem.dataset.category === 'image') {
+        e.stopPropagation();
+        e.preventDefault();
+        this.openImageModal(noteItem.dataset.id);
+        return;
+      }
+      // 双击文本预览内容：进入编辑模式
       const previewContent = e.target.closest('.note-preview-content');
       if (previewContent) {
         e.stopPropagation();
@@ -906,15 +945,15 @@ const App = {
   },
 
   async handleOrgLogin() {
-    const email = document.getElementById('loginEmail').value.trim();
+    const username = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
     const env = document.getElementById('loginEnv')?.value || 'beta';
     const rememberMe = document.getElementById('loginRememberMe')?.checked !== false;
     const errorEl = document.getElementById('loginError');
     const btn = document.getElementById('orgLoginBtn');
 
-    if (!email || !password) {
-      errorEl.textContent = '请输入账号和密码';
+    if (!username || !password) {
+      errorEl.textContent = '请输入用户名和密码';
       errorEl.classList.remove('hidden');
       return;
     }
@@ -924,7 +963,7 @@ const App = {
     btn.textContent = '登录中...';
 
     try {
-      const result = await window.electronAPI.authLogin(email, password, env, rememberMe);
+      const result = await window.electronAPI.authLogin(username, password, env, rememberMe);
 
       if (result.success) {
         this._updateOrgUI({ isLoggedIn: true, user: result.user, env: result.env, forceLocalConfig: false });
@@ -936,7 +975,7 @@ const App = {
 
         // 系统通知
         if (window.electronAPI?.showNotification) {
-          window.electronAPI.showNotification('忆境 Memora', `欢迎回来，${result.user?.name || result.user?.email || ''}！`);
+          window.electronAPI.showNotification('忆境 Memora', `欢迎回来，${result.user?.name || result.user?.username || ''}！`);
         }
 
         // 刷新 API 和 ADP 配置显示
@@ -947,7 +986,7 @@ const App = {
         errorEl.classList.remove('hidden');
       }
     } catch (err) {
-      errorEl.textContent = '网络错误，请检查连接';
+      errorEl.textContent = `网络错误: ${err.message || '请检查连接'}`;
       errorEl.classList.remove('hidden');
     } finally {
       btn.disabled = false;
@@ -1460,6 +1499,9 @@ const App = {
 
     // 功能卡片点击切换快捷问题
     this._initFeatureCards();
+
+    // 同步：拉取云端最新会话列表
+    this._syncPullConversations();
     
     // 延迟聚焦输入框，确保视图渲染完成
     setTimeout(() => {
@@ -1715,6 +1757,17 @@ const App = {
             <div class="adp-progress-steps" id="adpProgressSteps"></div>
           </div>`;
 
+        // 发送前最后一次保险：把当前激活会话的 convId 同步到主进程，避免任何状态漂移
+        const activeSession = this._activeSessionId
+          ? this._chatSessions.find(s => s.id === this._activeSessionId)
+          : null;
+        if (activeSession?.conversationId) {
+          await window.electronAPI?.setADPConversationId?.(activeSession.conversationId);
+          console.log('[Chat] Pre-send: synced convId to main:', activeSession.conversationId);
+        } else {
+          console.log('[Chat] Pre-send: no convId yet, will be generated on main side');
+        }
+
         // 启动流式请求 — 传递结构化数据（message + attachments）
         result = await window.electronAPI.sendADPMessage({
           message: message,
@@ -1733,10 +1786,14 @@ const App = {
           this._adpCurrentBubble = null;
           this._adpRenderPending = false;
           this._adpConfigSource = result.configSource || '';
-          // 保存 conversationId 到当前会话，用于切换对话时恢复
+          // 保存 conversationId 到当前会话，用于切换对话时恢复（必须立即持久化）
           if (result.conversationId && this._activeSessionId) {
             const session = this._chatSessions.find(s => s.id === this._activeSessionId);
-            if (session) session.conversationId = result.conversationId;
+            if (session && session.conversationId !== result.conversationId) {
+              session.conversationId = result.conversationId;
+              this._saveChatSessions(); // 立即写入 localStorage 防止重启丢失
+              console.log('[Chat] Saved convId for session', this._activeSessionId, ':', result.conversationId);
+            }
           }
           this._adpTimerStart = Date.now();
           this._adpTimerInterval = setInterval(() => {
@@ -2561,6 +2618,195 @@ const App = {
 
     // 流式完成后保存会话消息
     this._saveCurrentSessionMessages();
+
+    // 同步：推送完整对话（user + assistant 消息）到云端
+    this._syncPushCurrentConversation(messageContent);
+
+    // ===== AI 完成提醒（耗时长 + 用户已切走时） =====
+    if (!aborted) {
+      const elapsedMs = this._adpTimerStart ? (Date.now() - this._adpTimerStart) : 0;
+      this._notifyADPCompleted(messageContent, elapsedMs);
+    }
+    this._adpTimerStart = null;
+  },
+
+  /**
+   * AI 回答完成提醒
+   * - 耗时 < 5s 不提醒
+   * - 窗口失焦/最小化 → 系统通知 + Dock 弹跳 + 提示音
+   * - 窗口聚焦但 AI 助手不可见 → 应用内 toast + 提示音
+   * - 窗口聚焦且在 AI 助手 → 气泡呼吸动画
+   */
+  async _notifyADPCompleted(messageContent, elapsedMs) {
+    try {
+      // 用户开关：默认开启
+      const enabled = localStorage.getItem('memora_chat_notify_enabled');
+      if (enabled === 'false') {
+        console.log('[Notify] skip: disabled by user');
+        return;
+      }
+
+      // 阈值：低于 3s 的回答不打扰（耗时短没必要提醒）
+      const MIN_NOTIFY_MS = 3000;
+      if (elapsedMs < MIN_NOTIFY_MS) {
+        console.log('[Notify] skip: elapsed too short', elapsedMs, 'ms (<', MIN_NOTIFY_MS, ')');
+        return;
+      }
+
+      // 提取摘要（前 50 字）
+      let preview = '';
+      try {
+        const textEl = messageContent.querySelector('.adp-response-text, .message-text, p');
+        preview = (textEl?.textContent || messageContent.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 50);
+        if (preview.length === 50) preview += '...';
+      } catch {}
+
+      const elapsedSec = Math.round(elapsedMs / 1000);
+      const title = `🤖 AI 回答完成（耗时 ${elapsedSec}s）`;
+      const body = preview || '点击查看 AI 的回答';
+
+      // 检查窗口聚焦状态
+      let focusState = { focused: true, visible: true, minimized: false };
+      try {
+        const result = await window.electronAPI?.getWindowFocusState?.();
+        if (result) focusState = result;
+      } catch (e) {
+        console.warn('[Notify] getWindowFocusState failed:', e.message);
+      }
+
+      // 检查 AI 助手 Tab 是否可见
+      const isOnAIAssistant = this._isAIAssistantVisible();
+      const windowAway = !focusState.focused || focusState.minimized;
+
+      console.log('[Notify] decision:', {
+        elapsedMs,
+        focused: focusState.focused,
+        minimized: focusState.minimized,
+        windowAway,
+        isOnAIAssistant
+      });
+
+      if (windowAway) {
+        // 场景 1：用户切走窗口 → 系统通知 + 应用图标提醒 + 声音
+        console.log('[Notify] Scene 1: window away, send system notification');
+        try {
+          await window.electronAPI?.showNotification?.(title, body);
+          await window.electronAPI?.flashWindowAttention?.();
+        } catch (e) {
+          console.warn('[Notify] system notification failed:', e.message);
+        }
+        this._playChatNotifySound();
+      } else if (!isOnAIAssistant) {
+        // 场景 2：在应用内但不在 AI 助手 → toast + 声音
+        console.log('[Notify] Scene 2: app focused but not on AI assistant, show toast');
+        this.showToast(`💬 ${title}：${preview || '已回答'}`, 'info');
+        this._playChatNotifySound();
+      } else {
+        // 场景 3：在 AI 助手 → 气泡呼吸动画 + 轻声"叮"
+        console.log('[Notify] Scene 3: on AI assistant, pulse animation');
+        this._pulseADPMessage(messageContent);
+        this._playChatNotifySound(true); // 静音模式
+      }
+    } catch (err) {
+      console.warn('[Notify] ADP completed notify failed:', err.message);
+    }
+  },
+
+  /**
+   * 测试入口（DevTools Console 中执行 App._testNotify() 即可触发）
+   */
+  _testNotify() {
+    const fakeContent = document.createElement('div');
+    fakeContent.innerHTML = '<p>这是一条测试消息，用于验证 AI 完成提醒功能是否正常工作</p>';
+    return this._notifyADPCompleted(fakeContent, 8000);
+  },
+
+  /** 判断 AI 助手 Tab 是否当前可见 */
+  _isAIAssistantVisible() {
+    try {
+      // AI 助手主容器：#aiAssistantView（class .ai-assistant-view）
+      const aiPage = document.getElementById('aiAssistantView') ||
+                     document.querySelector('.ai-assistant-view') ||
+                     document.querySelector('.ai-chat-container');
+      if (!aiPage) return false;
+      // 主视图通过 .hidden 类隐藏
+      if (aiPage.classList.contains('hidden')) return false;
+      const style = window.getComputedStyle(aiPage);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      const rect = aiPage.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    } catch {
+      return false;
+    }
+  },
+
+  /** 在用户交互时解锁 AudioContext（规避浏览器 autoplay policy）*/
+  _unlockAudioContext() {
+    try {
+      if (!this._notifyAudioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        this._notifyAudioCtx = new Ctx();
+      }
+      if (this._notifyAudioCtx.state === 'suspended') {
+        this._notifyAudioCtx.resume().then(() => {
+          console.log('[Notify] AudioContext resumed by user interaction');
+        }).catch(() => {});
+      }
+    } catch {}
+  },
+
+  /** Web Audio 生成"叮"声（无需音频文件）
+   * @param {boolean} soft 轻量模式（音量减半，用于场景 3）
+   */
+  _playChatNotifySound(soft = false) {
+    try {
+      // 复用 AudioContext，避免泄漏
+      if (!this._notifyAudioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) {
+          console.warn('[Notify] AudioContext not supported');
+          return;
+        }
+        this._notifyAudioCtx = new Ctx();
+      }
+      const ctx = this._notifyAudioCtx;
+      // AudioContext 在某些浏览器中默认 suspended，需要 resume
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      const peakGain = soft ? 0.08 : 0.18;
+      // 双音叮咚（C5 → E5）
+      const playTone = (freq, startTime, duration) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(peakGain, startTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+      const now = ctx.currentTime;
+      playTone(523.25, now, 0.18);          // C5
+      playTone(659.25, now + 0.12, 0.22);   // E5
+      console.log('[Notify] Sound played (soft:', soft, ')');
+    } catch (e) {
+      console.warn('[Notify] play sound failed:', e.message);
+    }
+  },
+
+  /** AI 消息气泡呼吸提醒动画（场景 3） */
+  _pulseADPMessage(messageContent) {
+    try {
+      const bubble = messageContent.closest('.message.assistant') || messageContent;
+      if (!bubble) return;
+      bubble.classList.add('adp-completed-pulse');
+      setTimeout(() => bubble.classList.remove('adp-completed-pulse'), 2000);
+    } catch {}
   },
 
   _addErrorToADP(messageContent, errMsg) {
@@ -3203,6 +3449,24 @@ const App = {
       if (data) {
         this._chatSessions = JSON.parse(data);
       }
+      // 恢复上次激活的会话（用 localStorage 替代之前的 sessionStorage）
+      const lastActiveId = localStorage.getItem('memora_active_session') ||
+                           sessionStorage.getItem('memora_active_session');
+      if (lastActiveId && this._chatSessions.find(s => s.id === lastActiveId)) {
+        this._activeSessionId = lastActiveId;
+        // 同步到主进程
+        const session = this._chatSessions.find(s => s.id === lastActiveId);
+        if (session?.conversationId) {
+          window.electronAPI?.setADPConversationId?.(session.conversationId);
+          console.log('[Chat] Restored active session', lastActiveId, 'with convId:', session.conversationId);
+        }
+      } else if (this._chatSessions.length > 0) {
+        // 没有激活记录，默认选第一个（最新的）
+        this._activeSessionId = this._chatSessions[0].id;
+        if (this._chatSessions[0].conversationId) {
+          window.electronAPI?.setADPConversationId?.(this._chatSessions[0].conversationId);
+        }
+      }
     } catch (e) {
       console.error('[Chat] Failed to load sessions:', e);
       this._chatSessions = [];
@@ -3218,6 +3482,9 @@ const App = {
         messageCount: s.messageCount || 0,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt || s.createdAt,
+        conversationId: s.conversationId || null, // 必须持久化 ADP 会话 ID 才能保持上下文
+        _fromCloud: s._fromCloud || false,        // 来自云端的会话标记
+        _revision: s._revision || 0,              // 云端同步 revision
       }));
       localStorage.setItem('memora_chat_sessions', JSON.stringify(toSave));
     } catch (e) {
@@ -3275,6 +3542,9 @@ const App = {
     this._saveChatSessions();
     this._renderChatSessionList();
 
+    // 同步：推送新会话到云端
+    this._syncPushConversation(session);
+
     // 清空聊天区域（保留功能卡片和快捷问题）
     const chatMessages = document.getElementById('chatMessages');
     const featureCards = chatMessages.querySelector('.feature-cards');
@@ -3296,8 +3566,8 @@ const App = {
     `);
 
     this._initFeatureCards();
-    // 保存空白对话到 sessionStorage
-    sessionStorage.setItem('memora_active_session', sessionId);
+    // 持久化激活会话（localStorage 重启不丢）
+    localStorage.setItem('memora_active_session', sessionId);
   },
 
   switchChatSession(sessionId) {
@@ -3320,16 +3590,28 @@ const App = {
       this._saveChatSessions();
     }
     this._renderChatSessionList();
-    sessionStorage.setItem('memora_active_session', sessionId);
+    localStorage.setItem('memora_active_session', sessionId);
 
     // 恢复目标会话的消息
-    this._restoreSessionMessages(sessionId);
+    const session = this._chatSessions.find(s => s.id === sessionId);
+
+    // 如果本地没有该会话的消息 HTML（来自云端的会话），从云端加载
+    const hasLocalMessages = localStorage.getItem('memora_session_msg_' + sessionId);
+    if (!hasLocalMessages && session?._fromCloud) {
+      this._syncLoadCloudMessages(sessionId);
+    } else {
+      this._restoreSessionMessages(sessionId);
+    }
 
     // 通知主进程切换到该会话的 ConversationId
-    const session = this._chatSessions.find(s => s.id === sessionId);
     if (session && session.conversationId) {
-      // 主进程需要提供设置特定 convId 的能力
+      // 已有 convId：恢复到该会话
       window.electronAPI?.setADPConversationId?.(session.conversationId);
+      console.log('[Chat] Switched to session', sessionId, 'with convId:', session.conversationId);
+    } else {
+      // 兜底：切到未发过消息的会话时，必须清空主进程，避免串台
+      window.electronAPI?.setADPConversationId?.(null);
+      console.log('[Chat] Switched to fresh session', sessionId, ', cleared main convId');
     }
   },
 
@@ -3337,8 +3619,12 @@ const App = {
     const idx = this._chatSessions.findIndex(s => s.id === sessionId);
     if (idx === -1) return;
 
-    // 删除 sessionStorage 中保存的消息
-    sessionStorage.removeItem('memora_session_msg_' + sessionId);
+    // 同步：云端软删除
+    this._syncDeleteConversation(sessionId);
+
+    // 删除 localStorage / sessionStorage 中保存的消息
+    try { localStorage.removeItem('memora_session_msg_' + sessionId); } catch {}
+    try { sessionStorage.removeItem('memora_session_msg_' + sessionId); } catch {}
 
     this._chatSessions.splice(idx, 1);
     this._saveChatSessions();
@@ -3380,11 +3666,30 @@ const App = {
       }
     }
 
-    // 保存消息 HTML 到 sessionStorage（比 localStorage 更适合大文本）
+    // 保存消息 HTML 到 localStorage（持久化，应用重启后仍可见）
+    // 单条会话最大 2MB，超出时只保留最后 N 条消息
+    const STORAGE_KEY = 'memora_session_msg_' + this._activeSessionId;
+    const MAX_BYTES = 2 * 1024 * 1024; // 2MB
+    let html = htmlParts.join('');
     try {
-      sessionStorage.setItem('memora_session_msg_' + this._activeSessionId, htmlParts.join(''));
+      if (html.length > MAX_BYTES) {
+        // 只保留最后 50 条消息
+        const lastN = Math.min(50, htmlParts.length);
+        html = htmlParts.slice(-lastN).join('');
+        console.warn('[Chat] Session messages too large, kept last', lastN, 'messages');
+      }
+      localStorage.setItem(STORAGE_KEY, html);
+      // 兼容旧数据：清理 sessionStorage 同名 key
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
     } catch (e) {
-      console.warn('[Chat] sessionStorage quota exceeded, skipping save');
+      console.warn('[Chat] localStorage quota exceeded:', e.message);
+      // 降级：尝试只保留最后 20 条
+      try {
+        const lastN = Math.min(20, htmlParts.length);
+        localStorage.setItem(STORAGE_KEY, htmlParts.slice(-lastN).join(''));
+      } catch (e2) {
+        console.error('[Chat] Failed to save even truncated messages:', e2.message);
+      }
     }
 
     this._saveChatSessions();
@@ -3398,8 +3703,18 @@ const App = {
     const featureCards = chatMessages.querySelector('.feature-cards');
     const quickQuestions = chatMessages.querySelector('.quick-questions');
 
-    // 读取保存的消息
-    const savedHtml = sessionStorage.getItem('memora_session_msg_' + sessionId);
+    // 读取保存的消息（优先 localStorage，向下兼容 sessionStorage 旧数据）
+    const STORAGE_KEY = 'memora_session_msg_' + sessionId;
+    let savedHtml = localStorage.getItem(STORAGE_KEY);
+    if (!savedHtml) {
+      try {
+        savedHtml = sessionStorage.getItem(STORAGE_KEY);
+        // 迁移到 localStorage
+        if (savedHtml) {
+          try { localStorage.setItem(STORAGE_KEY, savedHtml); } catch {}
+        }
+      } catch {}
+    }
 
     chatMessages.innerHTML = '';
 
@@ -4381,48 +4696,198 @@ ${JSON.stringify(reportData, null, 2)}`;
     const noteList = document.getElementById('notebookList');
     
     if (result.notes && result.notes.length > 0) {
-      noteList.innerHTML = result.notes.map(note => `
-        <div class="note-item" data-id="${note.id}" data-category="${note.category}" data-content-length="${note.content.length}" draggable="true">
+      noteList.innerHTML = result.notes.map(note => {
+        // 图片检测：纯图片笔记 或 图文混合笔记
+        const isPureImage = note.category === 'image';
+        const hasImage = !!note.imagePath;
+        const imageThumbnail = hasImage
+          ? `<div class="note-image-thumb" data-image-path="${this.escapeHtml(note.imagePath)}" title="双击查看大图">
+               <div class="note-image-placeholder">🖼️ 加载中...</div>
+             </div>`
+          : '';
+        // 图文混合笔记：同时显示文本和图片标记
+        const contentPreview = isPureImage
+          ? `<p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}</p>`
+          : `<p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>`;
+        // 预览区：图文混合时同时展示文本和图片
+        const notePreview = isPureImage
+          ? `<div class="note-preview hidden" id="note-preview-${note.id}">
+               <div class="note-preview-image" data-image-path="${this.escapeHtml(note.imagePath)}"></div>
+               <div class="note-preview-hint">双击图片可放大</div>
+             </div>`
+          : hasImage
+          ? `<div class="note-preview hidden" id="note-preview-${note.id}">
+               <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
+               <div class="note-preview-image" data-image-path="${this.escapeHtml(note.imagePath)}"></div>
+               <div class="note-preview-hint">点击复制文本 | 双击图片可放大</div>
+             </div>`
+          : `<div class="note-preview hidden" id="note-preview-${note.id}">
+               <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
+               <div class="note-preview-hint">点击复制 | 双击编辑</div>
+             </div>`;
+        // 纯图片笔记隐藏"转为待办"和"提炼记忆"按钮
+        const imageActions = isPureImage
+          ? `<button class="note-btn note-btn-download" data-action="download" title="下载图片">📥</button>
+             <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>`
+          : `<button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
+             <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
+             <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
+             <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>`;
+
+        return `
+        <div class="note-item ${isPureImage ? 'note-item-image' : ''} ${hasImage ? 'note-item-has-image' : ''}" data-id="${note.id}" data-category="${note.category}" data-content-length="${note.content.length}" draggable="true">
           <input type="checkbox" class="note-checkbox" data-note-id="${note.id}">
           <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
           <div class="note-body">
+            ${imageThumbnail}
             <div class="note-header">
               <h3 class="note-title">${this.escapeHtml(note.title)}</h3>
               <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
             </div>
-            <p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>
-            <div class="note-preview hidden" id="note-preview-${note.id}">
-              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
-              <div class="note-preview-hint">点击复制 | 双击编辑</div>
-            </div>
+            ${contentPreview}
+            ${notePreview}
             <div class="note-footer">
               <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
               ${this.getAnalysisStatusTag(note)}
               <div class="note-actions">
-                <button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
-                <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
-                <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
-                <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>
+                ${imageActions}
               </div>
             </div>
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
       this.bindNoteDragEvents();
       this.bindNoteCheckboxEvents();
+      // 异步加载图片缩略图
+      this._loadNoteImageThumbnails(noteList);
     } else {
       noteList.innerHTML = `<div class="empty-state">${window.i18n?.t('notebook.empty') || '暂无笔记'}</div>`;
       this.hideNotebookBatchBar();
     }
   },
   
+  // 异步加载图片笔记缩略图（避免阻塞列表渲染）
+  async _loadNoteImageThumbnails(container) {
+    const thumbs = container.querySelectorAll('.note-image-thumb[data-image-path]');
+    for (const thumb of thumbs) {
+      try {
+        const imagePath = thumb.dataset.imagePath;
+        const result = await window.electronAPI?.notebookGetImage?.(imagePath);
+        if (result?.success && result.dataUrl) {
+          thumb.innerHTML = `<img src="${result.dataUrl}" alt="剪贴板图片" style="max-width:100%;max-height:200px;border-radius:8px;cursor:pointer;">`;
+        } else {
+          thumb.innerHTML = `<div class="note-image-placeholder">🖼️ 图片加载失败</div>`;
+        }
+      } catch (e) {
+        thumb.innerHTML = `<div class="note-image-placeholder">🖼️ 加载失败</div>`;
+      }
+    }
+    // 展开预览时也加载大图
+    const previews = container.querySelectorAll('.note-preview-image[data-image-path]');
+    for (const preview of previews) {
+      try {
+        const imagePath = preview.dataset.imagePath;
+        const result = await window.electronAPI?.notebookGetImage?.(imagePath);
+        if (result?.success && result.dataUrl) {
+          preview.innerHTML = `<img src="${result.dataUrl}" alt="剪贴板图片" style="max-width:100%;border-radius:8px;">`;
+        }
+      } catch {}
+    }
+  },
+
   // 切换笔记预览展开/收起
   toggleNotePreview(noteId) {
     const preview = document.getElementById(`note-preview-${noteId}`);
     if (preview) {
       preview.classList.toggle('hidden');
     }
+  },
+
+  // 全屏查看图片笔记
+  async openImageModal(noteId) {
+    const note = this._findNoteById(noteId);
+    if (!note || !note.imagePath) return;
+
+    let overlay = document.getElementById('imageViewerOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'imageViewerOverlay';
+      overlay.className = 'image-viewer-overlay';
+      overlay.innerHTML = `
+        <div class="image-viewer-backdrop"></div>
+        <div class="image-viewer-container">
+          <img id="imageViewerImg" class="image-viewer-img" alt="图片预览">
+          <div class="image-viewer-toolbar">
+            <span id="imageViewerTitle" class="image-viewer-title"></span>
+            <div class="image-viewer-actions">
+              <button class="image-viewer-btn" id="imageViewerZoomIn" title="放大">🔍+</button>
+              <button class="image-viewer-btn" id="imageViewerZoomOut" title="缩小">🔍-</button>
+              <button class="image-viewer-btn" id="imageViewerReset" title="还原">↺</button>
+              <button class="image-viewer-btn image-viewer-close-btn" id="imageViewerClose" title="关闭">✕</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      // 事件绑定（只绑定一次）
+      overlay.querySelector('.image-viewer-backdrop').addEventListener('click', () => this.closeImageModal());
+      overlay.querySelector('#imageViewerClose').addEventListener('click', () => this.closeImageModal());
+      overlay.querySelector('#imageViewerZoomIn').addEventListener('click', () => {
+        const img = document.getElementById('imageViewerImg');
+        img.style.transform = `scale(${Math.min(parseFloat(img.style.transform?.replace('scale(','').replace(')','') || 1) * 1.25, 5)})`;
+      });
+      overlay.querySelector('#imageViewerZoomOut').addEventListener('click', () => {
+        const img = document.getElementById('imageViewerImg');
+        img.style.transform = `scale(${Math.max(parseFloat(img.style.transform?.replace('scale(','').replace(')','') || 1) * 0.8, 0.25)})`;
+      });
+      overlay.querySelector('#imageViewerReset').addEventListener('click', () => {
+        document.getElementById('imageViewerImg').style.transform = 'scale(1)';
+      });
+      // ESC 关闭
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && overlay && !overlay.classList.contains('hidden')) {
+          this.closeImageModal();
+        }
+      });
+    }
+
+    // 加载图片
+    const imgEl = document.getElementById('imageViewerImg');
+    imgEl.style.transform = 'scale(1)';
+    imgEl.src = '';
+    document.getElementById('imageViewerTitle').textContent = note.title || '图片预览';
+
+    try {
+      const result = await window.electronAPI?.notebookGetImage?.(note.imagePath);
+      if (result?.success && result.dataUrl) {
+        imgEl.src = result.dataUrl;
+      } else {
+        imgEl.src = '';
+        document.getElementById('imageViewerTitle').textContent = '图片加载失败';
+      }
+    } catch {
+      document.getElementById('imageViewerTitle').textContent = '图片加载失败';
+    }
+
+    overlay.classList.remove('hidden');
+  },
+
+  closeImageModal() {
+    const overlay = document.getElementById('imageViewerOverlay');
+    if (overlay) overlay.classList.add('hidden');
+  },
+
+  _findNoteById(noteId) {
+    // 从当前显示的笔记列表 DOM 中获取笔记数据
+    const noteItem = document.querySelector(`.note-item[data-id="${noteId}"]`);
+    if (!noteItem) return null;
+    return {
+      id: noteItem.dataset.id,
+      category: noteItem.dataset.category,
+      imagePath: noteItem.querySelector('[data-image-path]')?.dataset.imagePath,
+      title: noteItem.querySelector('.note-title')?.textContent
+    };
   },
 
   getAnalysisStatusTag(note) {
@@ -4458,6 +4923,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     if (i18nText && i18nText !== i18nKey) return i18nText;
     // 回退硬编码
     const defaultLabels = {
+      image: '🖼️ 图片',
       meeting: '会议记录',
       feedback: '问题反馈',
       task: '待办任务',
@@ -4471,6 +4937,7 @@ ${JSON.stringify(reportData, null, 2)}`;
   getAllCategories() {
     const i = window.i18n;
     const defaults = [
+      { key: 'image', label: '🖼️ 图片' },
       { key: 'meeting', label: i?.t('notebook.category.meeting') || '会议记录' },
       { key: 'feedback', label: i?.t('notebook.category.feedback') || '问题反馈' },
       { key: 'task', label: i?.t('notebook.category.task') || '待办任务' },
@@ -7597,6 +8064,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     document.getElementById('syncNotes').checked = settings.scope.notes !== false;
     document.getElementById('syncKnowledge').checked = settings.scope.knowledge !== false;
     document.getElementById('syncClipboard').checked = settings.scope.clipboard !== false;
+    document.getElementById('syncConversations').checked = settings.scope.conversations !== false;
 
     // 同步频率
     const freqRadio = document.querySelector(`input[name="syncFrequency"][value="${settings.frequency || 'realtime'}"]`);
@@ -7689,7 +8157,8 @@ ${JSON.stringify(reportData, null, 2)}`;
     try {
       const result = await SyncEngine.fullSync();
       if (result.ok) {
-        this.showToast(`同步完成：上传 ${result.pushed} 条，下载 ${result.pulled} 条`, 'success');
+        const summary = SyncEngine.formatSyncSummary(result.pushDetail, result.pullDetail);
+        this.showToast(`同步完成：${summary}`, 'success');
         this._refreshSyncStatus();
         // 刷新日历/任务视图
         this.refreshCalendarView?.();
@@ -7727,7 +8196,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       tasks: document.getElementById('syncTasks')?.checked ?? true,
       notes: document.getElementById('syncNotes')?.checked ?? true,
       knowledge: document.getElementById('syncKnowledge')?.checked ?? true,
-      clipboard: document.getElementById('syncClipboard')?.checked ?? true
+      clipboard: document.getElementById('syncClipboard')?.checked ?? true,
+      conversations: document.getElementById('syncConversations')?.checked ?? true
     };
     this._saveSyncSettings(settings);
     // 同步到 SyncEngine
@@ -8005,7 +8475,228 @@ ${JSON.stringify(reportData, null, 2)}`;
   _setTooltip(selector, key) {
     const el = document.querySelector(selector);
     if (el) el.dataset.tooltip = window.i18n.t(key);
-  }
+  },
+
+  // ============ 助手会话同步 ============
+
+  /**
+   * 推送会话元数据到云端（标准 v3 push）
+   */
+  async _syncPushConversation(session) {
+    if (!window.SyncEngine?.isSyncing?.() === undefined) return; // SyncEngine 未加载
+    try {
+      const deviceId = window.SyncEngine.getDeviceInfo()?.deviceId;
+      if (!deviceId) return;
+      const conv = {
+        id: session.id,
+        _base_revision: session._revision || 0,
+        title: session.title || '新对话',
+        message_count: session.messageCount || 0,
+        source: session.source || 'manual',
+        agent_mode: this._aiAssistantMode || 'agent',
+        conversation_id: session.conversationId || '',
+        is_pinned: session.is_pinned || 0,
+        archived: session.archived || 0,
+      };
+      await window.SyncEngine.pushConversationsAndMessages([conv], []);
+    } catch (e) {
+      console.warn('[ChatSync] pushConversation failed:', e.message);
+    }
+  },
+
+  /**
+   * 推送当前对话的完整消息到云端
+   * 在 AI 流式完成后调用，把 user + assistant 消息一起推送
+   */
+  async _syncPushCurrentConversation(assistantContent) {
+    if (!window.SyncEngine) return;
+    try {
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (!session) return;
+
+      const deviceId = window.SyncEngine.getDeviceInfo()?.deviceId;
+      if (!deviceId) return;
+
+      // 从 DOM 收集消息（比 localStorage HTML 更结构化）
+      const chatMessages = document.getElementById('chatMessages');
+      const msgElements = chatMessages?.querySelectorAll('.message') || [];
+      const messages = [];
+      let msgIndex = 0;
+
+      msgElements.forEach(el => {
+        const isUser = el.classList.contains('user');
+        const isAssistant = el.classList.contains('assistant');
+        if (!isUser && !isAssistant) return;
+
+        const contentEl = el.querySelector('.message-content');
+        if (!contentEl) return;
+
+        const role = isUser ? 'user' : 'assistant';
+        const content = contentEl.querySelector('p')?.textContent?.trim() || contentEl.textContent?.trim() || '';
+
+        // 跳过初始欢迎消息（没有实际内容）
+        if (role === 'assistant' && content.includes('你好！我是你的AI助手')) return;
+
+        const msg = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${msgIndex}`,
+          _base_revision: 0,
+          conversation_id: session.id,
+          role,
+          content: content.substring(0, 100000), // 100KB 上限
+          message_index: msgIndex,
+          status: 'completed',
+          content_type: 'text',
+        };
+
+        // assistant 消息附加元数据
+        if (role === 'assistant' && msgIndex === (messages.length)) {
+          msg.content_type = 'markdown';
+          msg.model = this._adpConfigSource?.includes('deepseek') ? 'deepseek-v4-flash' :
+                      this._adpConfigSource?.includes('hunyuan') ? 'hunyuan-turbos' : '';
+          if (this._adpTimerStart) {
+            msg.elapsed_ms = Date.now() - this._adpTimerStart;
+          }
+        }
+
+        messages.push(msg);
+        msgIndex++;
+      });
+
+      if (messages.length === 0) return;
+
+      // 更新会话 message_count
+      const convUpdate = {
+        id: session.id,
+        _base_revision: session._revision || 0,
+        message_count: messages.length,
+        conversation_id: session.conversationId || '',
+      };
+
+      // 如果标题还是"新对话"，用第一条用户消息更新
+      if (session.title === '新对话') {
+        const firstUserMsg = messages.find(m => m.role === 'user');
+        if (firstUserMsg) {
+          convUpdate.title = firstUserMsg.content.substring(0, 30);
+        }
+      }
+
+      await window.SyncEngine.pushConversationsAndMessages([convUpdate], messages);
+      console.log('[ChatSync] Pushed', messages.length, 'messages for conversation', session.id);
+    } catch (e) {
+      console.warn('[ChatSync] pushCurrentConversation failed:', e.message);
+    }
+  },
+
+  /**
+   * 云端删除会话
+   */
+  async _syncDeleteConversation(sessionId) {
+    if (!window.SyncEngine) return;
+    try {
+      await window.SyncEngine.deleteConversation(sessionId);
+      console.log('[ChatSync] Deleted conversation', sessionId, 'from cloud');
+    } catch (e) {
+      console.warn('[ChatSync] deleteConversation failed:', e.message);
+    }
+  },
+
+  /**
+   * 从云端拉取会话列表并合并到本地
+   * 在切换到 AI 助手视图时调用
+   */
+  async _syncPullConversations() {
+    if (!window.SyncEngine) return;
+    try {
+      const result = await window.SyncEngine.getConversations({ limit: 50 });
+      if (!result?.ok || !result.conversations) return;
+
+      const cloudConvs = result.conversations;
+      const localIds = new Set(this._chatSessions.map(s => s.id));
+
+      // 合并：云端有本地没有的 → 添加到本地
+      let added = 0;
+      for (const cloud of cloudConvs) {
+        if (!localIds.has(cloud.id)) {
+          // 不直接恢复 HTML，只在列表显示
+          this._chatSessions.push({
+            id: cloud.id,
+            title: cloud.title || '新对话',
+            messageCount: cloud.message_count || 0,
+            createdAt: cloud.created_at || new Date().toISOString(),
+            updatedAt: cloud.updated_at || new Date().toISOString(),
+            conversationId: cloud.conversation_id || null,
+            _fromCloud: true,  // 标记来自云端
+            _revision: cloud.revision || 1,
+          });
+          added++;
+        } else {
+          // 本地已有：更新 conversationId（跨端复用 ADP 上下文）
+          const local = this._chatSessions.find(s => s.id === cloud.id);
+          if (local && cloud.conversation_id && !local.conversationId) {
+            local.conversationId = cloud.conversation_id;
+            local._revision = cloud.revision || local._revision;
+          }
+          // 云端消息数比本地多 → 更新 messageCount
+          if (local && (cloud.message_count || 0) > (local.messageCount || 0)) {
+            local.messageCount = cloud.message_count;
+          }
+        }
+      }
+
+      if (added > 0) {
+        this._saveChatSessions();
+        this._renderChatSessionList();
+        console.log('[ChatSync] Merged', added, 'cloud conversations');
+      }
+    } catch (e) {
+      console.warn('[ChatSync] pullConversations failed:', e.message);
+    }
+  },
+
+  /**
+   * 从云端加载会话消息（切换到云端会话时调用）
+   * 渲染 Markdown 格式的消息到聊天界面
+   */
+  async _syncLoadCloudMessages(sessionId) {
+    if (!window.SyncEngine) return;
+    try {
+      const result = await window.SyncEngine.getConversationMessages(sessionId, { limit: 100 });
+      if (!result?.ok || !result.messages) return;
+
+      const chatMessages = document.getElementById('chatMessages');
+      if (!chatMessages) return;
+
+      const featureCards = chatMessages.querySelector('.feature-cards');
+      const quickQuestions = chatMessages.querySelector('.quick-questions');
+
+      // 清空现有消息
+      chatMessages.innerHTML = '';
+      if (featureCards) chatMessages.appendChild(featureCards);
+      if (quickQuestions) chatMessages.appendChild(quickQuestions);
+
+      // 渲染每条消息
+      for (const msg of result.messages) {
+        const isUser = msg.role === 'user';
+        const isSystem = msg.role === 'system';
+        if (isSystem) continue; // 跳过系统消息
+
+        const msgHtml = `
+          <div class="message ${isUser ? 'user' : 'assistant'}">
+            ${!isUser ? `<div class="message-avatar">${this._assistantAvatarSvg}</div>` : ''}
+            <div class="message-content">
+              <p>${this.escapeHtml(msg.content)}</p>
+              <span class="message-time ${isUser ? 'user-time' : 'assistant-time'}">${this._formatChatTime(new Date(msg.created_at))}</span>
+            </div>
+          </div>`;
+        chatMessages.insertAdjacentHTML('beforeend', msgHtml);
+      }
+
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      console.log('[ChatSync] Loaded', result.messages.length, 'messages for', sessionId);
+    } catch (e) {
+      console.warn('[ChatSync] loadCloudMessages failed:', e.message);
+    }
+  },
 };
 
 document.addEventListener('DOMContentLoaded', () => {
