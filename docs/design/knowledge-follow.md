@@ -227,7 +227,7 @@ function classifyClipboardIntent(text) {
 ### 5.1 ADP 配置
 
 ```
-AppKey: VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK
+AppKey: <your_adp_knowledge_app_key>
 URL: https://wss.lke.cloud.tencent.com/adp/v2/chat
 ```
 
@@ -238,7 +238,7 @@ URL: https://wss.lke.cloud.tencent.com/adp/v2/chat
 ```javascript
 // main.js 新增 IPC
 ipcMain.handle('knowledge:search-adp', async (event, { query, intent, conversationId }) => {
-  const appKey = 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK';
+  const appKey = process.env.ADP_KNOWLEDGE_APP_KEY || '<your_adp_knowledge_app_key>';
   const url = 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
   
   const requestBody = {

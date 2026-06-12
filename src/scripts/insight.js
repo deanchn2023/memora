@@ -1677,12 +1677,18 @@ const Insight = {
       );
       console.log('[Insight] Generate book result:', {
         success: result?.success,
+        bookId: result?.book?.id,
+        bookTitle: result?.book?.title,
         bookChapters: result?.book?.chapters?.length || 0,
         error: result?.error
       });
       if (result?.success) {
         const chCount = result?.book?.chapters?.length || 0;
-        this._showToast(`知识体系生成成功！共 ${chCount} 章`, 'success');
+        if (chCount > 0) {
+          this._showToast(`知识体系生成成功！共 ${chCount} 章`, 'success');
+        } else {
+          this._showToast('知识体系已生成，但 AI 未能返回有效的章节内容，请稍后重试', 'warning');
+        }
         this.loadMultimodal();
       } else {
         this._showToast(result?.error || '生成失败', 'error');

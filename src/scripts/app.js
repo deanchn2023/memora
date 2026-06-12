@@ -17,7 +17,7 @@ const App = {
   _adpStreaming: false,
   _adpCurrentText: '',
   _adpThinkingText: '',
-  _adpStepMap: {},
+  _adpStepMap: {},           // msgId → { el, detailEl, type, textBuffer }
   _adpToolStepCount: 0,
   _adpFileItems: [],
   _adpTimerStart: 0,
@@ -25,6 +25,7 @@ const App = {
   _adpCurrentBubble: null,
   _adpRenderPending: false,
   _adpConfigSource: '',
+  _adpReplyMsgId: '',        // reply 消息的 MessageId，用于区分 text.delta 归属
   // 对话会话管理
   _chatSessions: [],        // 所有对话会话
   _activeSessionId: null,   // 当前活跃的会话ID
@@ -128,12 +129,8 @@ const App = {
           this._updateOrgUI(data);
           if (data.isLoggedIn) {
             this._updateConfigServerHints(true);
-            // 登录成功后自动启动同步（如果已开启）
-            const syncSettings = this._getSyncSettings();
-            if (syncSettings.enabled && SyncEngine && !SyncEngine._initialized) {
-              SyncEngine.init();
-              SyncEngine._startAutoSync?.();
-            }
+            // 登录成功后注册设备并启动同步
+            this._startSyncAfterLogin();
           } else {
             this._updateConfigServerHints(false);
           }
@@ -364,22 +361,24 @@ const App = {
     document.getElementById('loginEnv')?.addEventListener('change', (e) => {
       const env = e.target.value;
       const hint = document.getElementById('loginEnvHint');
-      const emailLabel = document.querySelector('label[for="loginEmail"]');
-      const emailInput = document.getElementById('loginEmail');
+      const accountLabel = document.querySelector('label[for="loginAccount"]');
+      const accountInput = document.getElementById('loginAccount');
 
       if (env === 'production') {
         if (hint) hint.textContent = '正式环境：ADPToolkit';
-        if (emailLabel) emailLabel.textContent = '用户名';
-        if (emailInput) emailInput.placeholder = '输入用户名';
+        if (accountLabel) accountLabel.textContent = '账号';
+        if (accountInput) accountInput.placeholder = '用户名 / 手机号 / 邮箱';
       } else {
         if (hint) hint.textContent = '测试环境：ADPToolkit';
-        if (emailLabel) emailLabel.textContent = '用户名';
-        if (emailInput) emailInput.placeholder = '输入用户名';
+        if (accountLabel) accountLabel.textContent = '账号';
+        if (accountInput) accountInput.placeholder = '用户名 / 手机号 / 邮箱';
       }
     });
     document.getElementById('resetPromptBtn')?.addEventListener('click', () => this.resetAIPrompt());
     document.getElementById('clearClipboardHashesBtn')?.addEventListener('click', () => this.clearClipboardHashes());
     document.getElementById('clearAPIKeyBtn')?.addEventListener('click', () => this.clearAPIKey());
+    document.getElementById('testLLMBtn')?.addEventListener('click', () => this._testLLMConnection('lowvol'));
+    document.getElementById('testHighvolLLMBtn')?.addEventListener('click', () => this._testLLMConnection('highvol'));
     document.getElementById('refreshMemoriesBtn')?.addEventListener('click', () => this.loadMemories());
     document.getElementById('clearAllMemoriesBtn')?.addEventListener('click', () => this.clearAllMemories());
     document.getElementById('addManualMemoryBtn')?.addEventListener('click', () => this.addManualMemory());
@@ -493,6 +492,31 @@ const App = {
     document.getElementById('stopAIMessageBtn')?.addEventListener('click', () => this.stopADPGeneration());
     // 新建对话
     document.getElementById('newChatBtn')?.addEventListener('click', () => this.createNewChatSession());
+    // 对话搜索
+    const chatSearchInput = document.getElementById('chatSearchInput');
+    const chatSearchClear = document.getElementById('chatSearchClear');
+    if (chatSearchInput) {
+      chatSearchInput.addEventListener('input', (e) => {
+        const kw = e.target.value;
+        if (chatSearchClear) chatSearchClear.classList.toggle('hidden', !kw);
+        this._renderChatSessionList(kw);
+      });
+      // 回车时也触发搜索
+      chatSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          chatSearchInput.value = '';
+          if (chatSearchClear) chatSearchClear.classList.add('hidden');
+          this._renderChatSessionList();
+        }
+      });
+    }
+    if (chatSearchClear) {
+      chatSearchClear.addEventListener('click', () => {
+        if (chatSearchInput) chatSearchInput.value = '';
+        chatSearchClear.classList.add('hidden');
+        this._renderChatSessionList();
+      });
+    }
     // 对话列表点击
     document.getElementById('chatSessionList')?.addEventListener('click', (e) => {
       const item = e.target.closest('.chat-session-item');
@@ -776,6 +800,7 @@ const App = {
   _loadAdpConfig() {
     if (!window.electronAPI) return;
     window.electronAPI.getADPConfig().then(config => {
+      console.log('[ADP Config] Loaded config, fromServer:', config.fromServer, 'tcSecretId:', config.tcSecretId ? '✅有值' : '❌空', 'botBizId:', config.botBizId ? '✅有值' : '❌空');
       document.getElementById('adpAppKey').value = config.appKey || '';
       document.getElementById('adpKnowledgeAppKey').value = config.knowledgeAppKey || '';
       document.getElementById('adpSearchAppKey').value = config.searchAppKey || '';
@@ -788,6 +813,14 @@ const App = {
       document.getElementById('adpTcSecretId').value = config.tcSecretId || '';
       document.getElementById('adpTcSecretKey').value = config.tcSecretKey || '';
       document.getElementById('adpBotBizId').value = config.botBizId || '';
+      // SecretKey 不回显明文，用占位符提示是否已配置
+      const secretKeyInput = document.getElementById('adpTcSecretKey');
+      if (config.tcSecretKeyConfigured) {
+        secretKeyInput.placeholder = '已配置（密钥不回显）';
+        secretKeyInput.value = '••••••••';
+      } else {
+        secretKeyInput.placeholder = '在腾讯云控制台「访问管理 → API密钥管理」获取';
+      }
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
       
@@ -804,7 +837,37 @@ const App = {
       const conflictSrc = sourceLabel[src.conflictAppKey] || '未知';
       const fileShareSrc = sourceLabel[src.fileShareApiKey] || '未知';
       const tcCredsConfigured = config.tcSecretId && config.botBizId;
-      document.getElementById('adpConfigStatus').textContent = `通用: ${appKeySrc} | 知识: ${knowledgeSrc} | 搜索: ${searchSrc} | 聚类: ${clusteringSrc} | 图谱: ${graphSrc} | 活化: ${activationSrc} | 演化: ${evolutionSrc} | 冲突: ${conflictSrc} | 文件共享: ${fileShareSrc} | COS上传: ${tcCredsConfigured ? '✅已配置' : '❌未配置'}`;
+      const cosSrc = src.tcSecretId === 'server' ? '🏢 组织配置' : (src.tcSecretId === 'local' ? '✏️ 本地配置' : '❌ 未配置');
+      document.getElementById('adpConfigStatus').textContent = `通用: ${appKeySrc} | 知识: ${knowledgeSrc} | 搜索: ${searchSrc} | 聚类: ${clusteringSrc} | 图谱: ${graphSrc} | 活化: ${activationSrc} | 演化: ${evolutionSrc} | 冲突: ${conflictSrc} | 文件共享: ${fileShareSrc} | COS上传: ${tcCredsConfigured ? '✅已配置(' + cosSrc + ')' : '❌未配置'}`;
+      
+      // 更新 COS 配置卡片状态
+      const cosBadge = document.getElementById('cosStatusBadge');
+      const cosCard = document.getElementById('cosUploadCard');
+      if (cosBadge && cosCard) {
+        if (tcCredsConfigured) {
+          const isServerSource = src.tcSecretId === 'server';
+          cosBadge.textContent = '已配置 · ' + (isServerSource ? '组织同步' : '本地');
+          cosBadge.classList.add('configured');
+          // 云端配置时自动展开显示已同步的值
+          if (isServerSource) {
+            cosCard.classList.add('expanded');
+          }
+          // 添加来源标签
+          const existingLabel = cosCard.querySelector('.cos-source-label');
+          if (existingLabel) existingLabel.remove();
+          const sourceLabelEl = document.createElement('div');
+          sourceLabelEl.className = 'cos-source-label';
+          sourceLabelEl.textContent = isServerSource ? '🏢 已从组织配置同步，本地修改不会覆盖云端值' : '✏️ 使用本地配置';
+          cosCard.querySelector('.cos-upload-body').prepend(sourceLabelEl);
+        } else {
+          cosBadge.textContent = '未配置';
+          cosBadge.classList.remove('configured');
+          cosCard.classList.add('expanded'); // 未配置时自动展开提示用户
+          // 移除来源标签
+          const existingLabel = cosCard.querySelector('.cos-source-label');
+          if (existingLabel) existingLabel.remove();
+        }
+      }
       
       // v2.0: 登录状态时 ADP 面板显示提示
       this._updateConfigServerHints(config.fromServer);
@@ -853,6 +916,12 @@ const App = {
     } else {
       loginSection.classList.remove('hidden');
       loggedInSection.classList.add('hidden');
+
+      // 确保显示登录表单，隐藏注册表单
+      const registerSection = document.getElementById('registerSection');
+      const loginCard = loginSection.querySelector('.org-login-card');
+      if (registerSection) registerSection.classList.add('hidden');
+      if (loginCard) loginCard.classList.remove('hidden');
 
       // 更新头部用户徽章
       this._updateHeaderUserBadge(false);
@@ -945,15 +1014,15 @@ const App = {
   },
 
   async handleOrgLogin() {
-    const username = document.getElementById('loginEmail').value.trim();
+    const account = document.getElementById('loginAccount').value.trim();
     const password = document.getElementById('loginPassword').value;
     const env = document.getElementById('loginEnv')?.value || 'beta';
     const rememberMe = document.getElementById('loginRememberMe')?.checked !== false;
     const errorEl = document.getElementById('loginError');
     const btn = document.getElementById('orgLoginBtn');
 
-    if (!username || !password) {
-      errorEl.textContent = '请输入用户名和密码';
+    if (!account || !password) {
+      errorEl.textContent = '请输入账号和密码';
       errorEl.classList.remove('hidden');
       return;
     }
@@ -963,7 +1032,7 @@ const App = {
     btn.textContent = '登录中...';
 
     try {
-      const result = await window.electronAPI.authLogin(username, password, env, rememberMe);
+      const result = await window.electronAPI.authLogin(account, password, env, rememberMe);
 
       if (result.success) {
         this._updateOrgUI({ isLoggedIn: true, user: result.user, env: result.env, forceLocalConfig: false });
@@ -1007,6 +1076,184 @@ const App = {
       // 刷新 API 和 ADP 配置显示
       this._settingsTabLoaded.api = false;
       this._settingsTabLoaded.adp = false;
+    }
+  },
+
+  // ===== 登录后同步 =====
+
+  async _startSyncAfterLogin() {
+    if (!SyncEngine) return;
+    try {
+      // 先注册设备（确保新用户/新设备都能同步）
+      await SyncEngine.registerDevice();
+      console.log('[App] Device registered after login');
+    } catch (err) {
+      console.warn('[App] Device registration failed:', err.message);
+    }
+    // 首次全量同步
+    try {
+      const result = await SyncEngine.fullSync();
+      if (result?.ok) {
+        console.log('[App] First sync after login completed');
+      }
+    } catch (err) {
+      console.warn('[App] First sync failed:', err.message);
+    }
+    // 启动自动同步
+    SyncEngine._startAutoSync?.();
+  },
+
+  // ===== 注册功能 =====
+
+  showRegisterForm() {
+    document.getElementById('orgLoginSection').querySelector('.org-login-card').classList.add('hidden');
+    document.getElementById('registerSection').classList.remove('hidden');
+    document.getElementById('registerError')?.classList.add('hidden');
+  },
+
+  showLoginForm() {
+    document.getElementById('registerSection').classList.add('hidden');
+    document.getElementById('orgLoginSection').querySelector('.org-login-card').classList.remove('hidden');
+    document.getElementById('loginError')?.classList.add('hidden');
+  },
+
+  async sendVerifyCode() {
+    const mobile = document.getElementById('regMobile').value.trim();
+    const btn = document.getElementById('regSendCodeBtn');
+    const errorEl = document.getElementById('registerError');
+
+    if (!mobile) {
+      errorEl.textContent = '请输入手机号';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!/^1[3-9]\d{9}$/.test(mobile)) {
+      errorEl.textContent = '手机号格式不正确';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    errorEl.classList.add('hidden');
+    btn.disabled = true;
+
+    try {
+      const result = await window.electronAPI.authSendCode(mobile);
+      if (result.success) {
+        this.showToast('验证码已发送');
+        // 开发模式显示验证码提示
+        if (result.code) {
+          const hintEl = document.getElementById('regDevCodeHint');
+          if (hintEl) {
+            hintEl.textContent = `开发模式验证码：${result.code}`;
+            hintEl.classList.remove('hidden');
+          }
+          // 自动填充验证码
+          const codeInput = document.getElementById('regSmsCode');
+          if (codeInput) codeInput.value = result.code;
+        }
+        // 60s 倒计时
+        let countdown = 60;
+        btn.textContent = `${countdown}s`;
+        const timer = setInterval(() => {
+          countdown--;
+          if (countdown <= 0) {
+            clearInterval(timer);
+            btn.disabled = false;
+            btn.textContent = '获取验证码';
+          } else {
+            btn.textContent = `${countdown}s`;
+          }
+        }, 1000);
+      } else {
+        errorEl.textContent = result.error || '发送失败';
+        errorEl.classList.remove('hidden');
+        btn.disabled = false;
+      }
+    } catch (err) {
+      errorEl.textContent = `发送失败: ${err.message}`;
+      errorEl.classList.remove('hidden');
+      btn.disabled = false;
+    }
+  },
+
+  async handleRegister() {
+    const username = document.getElementById('regUsername').value.trim();
+    const mobile = document.getElementById('regMobile').value.trim();
+    const smsCode = document.getElementById('regSmsCode').value.trim();
+    const name = document.getElementById('regName').value.trim();
+    const password = document.getElementById('regPassword').value;
+    const nickname = document.getElementById('regNickname').value.trim();
+    const email = document.getElementById('regEmail').value.trim();
+    const env = document.getElementById('loginEnv')?.value || 'beta';
+    const errorEl = document.getElementById('registerError');
+    const btn = document.getElementById('regSubmitBtn');
+
+    // 校验
+    if (!username || !mobile || !smsCode || !name || !password) {
+      errorEl.textContent = '请填写所有必填项';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]{2,20}$/.test(username)) {
+      errorEl.textContent = '用户名：2-20位，仅限字母/数字/下划线/中划线';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!/^1[3-9]\d{9}$/.test(mobile)) {
+      errorEl.textContent = '手机号格式不正确';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (password.length < 6) {
+      errorEl.textContent = '密码至少6位';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errorEl.textContent = '邮箱格式不正确';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    errorEl.classList.add('hidden');
+    btn.disabled = true;
+    btn.textContent = '注册中...';
+
+    try {
+      const result = await window.electronAPI.authRegister({
+        username, mobile, sms_code: smsCode, name, password,
+        nickname, email, env
+      });
+
+      if (result.success) {
+        this.showToast('注册成功，已自动登录');
+        // 注册成功后自动登录
+        this._updateOrgUI({ isLoggedIn: true, user: result.user, env: result.env, forceLocalConfig: false });
+        this._loadOrgConfigSummary();
+        this._updateConfigServerHints(true);
+        this._updateHeaderUserBadge(true, result.user);
+        this._updateLoginProfileEnv(result.env);
+        // 清空注册表单
+        ['regUsername','regMobile','regSmsCode','regName','regPassword','regNickname','regEmail'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+        document.getElementById('regDevCodeHint')?.classList.add('hidden');
+        // 切回登录视图
+        this.showLoginForm();
+        // 刷新 API 和 ADP 配置显示
+        this._settingsTabLoaded.api = false;
+        this._settingsTabLoaded.adp = false;
+      } else {
+        errorEl.textContent = result.error || '注册失败';
+        errorEl.classList.remove('hidden');
+      }
+    } catch (err) {
+      errorEl.textContent = `注册失败: ${err.message || '请检查网络'}`;
+      errorEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '注 册';
     }
   },
 
@@ -1650,6 +1897,16 @@ const App = {
 
     const chatMessages = document.getElementById('chatMessages');
     const attachments = [...this._chatAttachments]; // 复制附件列表
+
+    // 🔧 关键修复：当发送文档附件（非图片）时，先重置 ADP ConversationId
+    // 原因：如果旧对话上下文中 ADP 已经"误解"了文件（如当图片处理），
+    // 在同一对话中重新发送文件，ADP 仍会基于旧上下文回复（继续说"请上传文件"）。
+    // 重置 ConversationId 让 ADP 以全新上下文处理文件。
+    const hasDocAttachment = attachments.some(a => a.type !== 'image');
+    if (hasDocAttachment) {
+      await window.electronAPI?.newADPChat?.();
+      console.log('[Chat] 🔄 文档附件：已重置 ADP ConversationId');
+    }
     
     // 添加用户消息
     const userMessage = document.createElement('div');
@@ -1661,7 +1918,8 @@ const App = {
       attachmentsHtml = '<div class="message-attachments">';
       for (const att of attachments) {
         const icon = this.getFileIcon(att.type, att.name);
-        attachmentsHtml += `<span class="message-attachment-item"><span class="msg-att-icon">${icon}</span>${this.escapeHtml(att.name)}</span>`;
+        const filePath = att.file?.path || '';
+        attachmentsHtml += `<span class="message-attachment-item" data-att-name="${this.escapeHtml(att.name)}" data-att-path="${this.escapeHtml(filePath)}"><span class="msg-att-icon">${icon}</span>${this.escapeHtml(att.name)}</span>`;
       }
       attachmentsHtml += '</div>';
     }
@@ -1679,26 +1937,11 @@ const App = {
       </div>
     `;
     chatMessages.appendChild(userMessage);
+    userMessage.dataset._actionsBound = 'true';
 
     // 绑定用户消息操作按钮
     const msgContent = userMessage.querySelector('.message-content');
-    userMessage.querySelector('.copy-user-msg')?.addEventListener('click', async () => {
-      const p = msgContent.querySelector('p');
-      const text = p ? p.textContent : '';
-      await window.electronAPI?.writeClipboardText(text);
-      this.showToast('已复制到剪贴板', 'success');
-    });
-    userMessage.querySelector('.edit-user-msg')?.addEventListener('click', () => {
-      const p = msgContent.querySelector('p');
-      const text = p ? p.textContent : '';
-      const inputEl = document.getElementById('aiChatInput');
-      if (inputEl) {
-        inputEl.value = text;
-        inputEl.style.height = 'auto';
-        inputEl.style.height = inputEl.scrollHeight + 'px';
-        inputEl.focus();
-      }
-    });
+    this._bindUserMsgActions(msgContent);
     
     input.value = '';
     input.style.height = 'auto';
@@ -1754,8 +1997,36 @@ const App = {
               <span class="adp-progress-title">智能体处理中</span>
               <span class="adp-progress-timer" id="adpProgressTimer">0s</span>
             </div>
+            <div class="adp-upload-status" id="adpUploadStatus" style="display:none;">
+              <span class="adp-upload-spinner"></span>
+              <span class="adp-upload-text">正在上传并解析文档…</span>
+            </div>
             <div class="adp-progress-steps" id="adpProgressSteps"></div>
           </div>`;
+
+        // 🔧 文档上传/解析进度：必须在 sendADPMessage 之前注册监听，
+        // 因为文档解析在主进程 IPC handler 内部完成（早于返回 streaming），晚注册会漏事件。
+        const hasDocAttachment = attachmentData.some(a => a.type !== 'image');
+        let _docParseHadError = false; // 记录解析是否失败，失败时保留提示更久
+        if (hasDocAttachment) {
+          const uploadStatusEl = messageContent.querySelector('#adpUploadStatus');
+          if (uploadStatusEl) uploadStatusEl.style.display = 'flex';
+          window.electronAPI.removeADPUploadListeners?.();
+          window.electronAPI.onADPUploadProgress?.((p) => {
+            const el = document.getElementById('adpUploadStatus');
+            if (!el) return;
+            const textEl = el.querySelector('.adp-upload-text');
+            if (textEl && p?.message) textEl.textContent = p.message;
+            if (p?.phase === 'parse_failed') _docParseHadError = true;
+            // 一旦出现过失败就保持错误样式，避免后续 complete 把红色覆盖回正常色
+            el.classList.toggle('is-error', _docParseHadError);
+            if (p?.phase === 'complete') {
+              // 解析失败时多停留 6s 让用户看清原因；成功则 400ms 后收起
+              const delay = _docParseHadError ? 6000 : 400;
+              setTimeout(() => { const e2 = document.getElementById('adpUploadStatus'); if (e2) e2.style.display = 'none'; }, delay);
+            }
+          });
+        }
 
         // 发送前最后一次保险：把当前激活会话的 convId 同步到主进程，避免任何状态漂移
         const activeSession = this._activeSessionId
@@ -1773,6 +2044,12 @@ const App = {
           message: message,
           attachments: attachmentData
         });
+
+        // 文档解析阶段已结束，移除上传进度监听并隐藏状态行
+        window.electronAPI.removeADPUploadListeners?.();
+        const _uploadStatusEl = document.getElementById('adpUploadStatus');
+        // 解析失败时保留提示（由进度回调的 6s 定时器收起），成功则立即隐藏
+        if (_uploadStatusEl && !_docParseHadError) _uploadStatusEl.style.display = 'none';
         
         if (result.success && result.streaming) {
           // 流式模式：监听 SSE 事件
@@ -1786,6 +2063,7 @@ const App = {
           this._adpCurrentBubble = null;
           this._adpRenderPending = false;
           this._adpConfigSource = result.configSource || '';
+          this._adpReplyMsgId = '';
           // 保存 conversationId 到当前会话，用于切换对话时恢复（必须立即持久化）
           if (result.conversationId && this._activeSessionId) {
             const session = this._chatSessions.find(s => s.id === this._activeSessionId);
@@ -1939,6 +2217,8 @@ const App = {
               this.handleAgentAction(action, result.result, result.agentType);
             });
           });
+          // 绑定 Agent 产物保存按钮
+          this._bindArtifactSaveButtons(messageContent);
           messageContent.querySelectorAll('.agent-task-card').forEach(card => {
             card.addEventListener('click', () => {
               const title = card.dataset.title;
@@ -1969,13 +2249,30 @@ const App = {
   },
 
   // === 复制按钮 ===
-  copyAssistantMessage(btn, messageContent) {
-    // 获取文本内容，排除复制按钮、反馈按钮等非内容元素
+  async copyAssistantMessage(btn, messageContent) {
+    // 获取纯文本内容，排除复制按钮、反馈按钮等非内容元素
     const clone = messageContent.cloneNode(true);
     // 移除不需要复制的元素
-    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section').forEach(el => el.remove());
-    const text = clone.innerText || clone.textContent || '';
-    (window.electronAPI ? window.electronAPI.writeClipboardText(text.trim()) : navigator.clipboard.writeText(text.trim())).then(() => {
+    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions').forEach(el => el.remove());
+    // 使用 textContent 获取纯文本（不含格式），再清理多余空白
+    const text = (clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+    console.log('[Copy] Text length:', text.length, 'Preview:', text.slice(0, 100));
+    try {
+      // 优先通过主进程写入，确保写入纯文本而非富文本/图片
+      if (window.electronAPI?.writeClipboardText) {
+        await window.electronAPI.writeClipboardText(text);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // 最终兜底：创建临时 textarea 复制
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
       btn.classList.add('copied');
       btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
       this.showToast('已复制到剪贴板', 'success');
@@ -1983,9 +2280,108 @@ const App = {
         btn.classList.remove('copied');
         btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
       }, 2000);
-    }).catch(err => {
+    } catch (err) {
       console.error('[Copy] Failed:', err);
-      this.showToast('复制失败', 'error');
+      this.showToast('复制失败: ' + (err.message || ''), 'error');
+    }
+  },
+
+  // === 绑定用户消息操作按钮（复制+编辑） ===
+  _bindUserMsgActions(msgContent) {
+    if (!msgContent) return;
+    const copyBtn = msgContent.querySelector('.copy-user-msg');
+    const editBtn = msgContent.querySelector('.edit-user-msg');
+
+    // 提取消息完整文本（含附件信息）
+    const _getFullText = () => {
+      const p = msgContent.querySelector('p');
+      let text = p ? p.textContent : '';
+      // 收集附件信息
+      const attItems = msgContent.querySelectorAll('.message-attachment-item');
+      if (attItems.length > 0) {
+        text += '\n';
+        attItems.forEach(item => {
+          const name = item.dataset.attName || item.textContent.trim();
+          const path = item.dataset.attPath || '';
+          if (path) {
+            text += `\n📎 ${name} (${path})`;
+          } else {
+            text += `\n📎 ${name}`;
+          }
+        });
+      }
+      return text.trim();
+    };
+
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const btn = e.currentTarget;
+        const text = _getFullText();
+        if (!text) { this.showToast('没有可复制的内容', 'error'); return; }
+        try {
+          // 优先通过主进程写入，确保写入纯文本
+          if (window.electronAPI?.writeClipboardText) {
+            await window.electronAPI.writeClipboardText(text);
+          } else if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          btn.style.color = '#34C759';
+          this.showToast('已复制到剪贴板', 'success');
+          setTimeout(() => { btn.style.color = ''; }, 1500);
+        } catch (err) {
+          console.error('[Copy] User msg copy failed:', err);
+          this.showToast('复制失败: ' + (err.message || ''), 'error');
+        }
+      });
+    }
+
+    if (editBtn) {
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const text = _getFullText();
+        const inputEl = document.getElementById('aiChatInput');
+        if (inputEl && text) {
+          inputEl.value = text;
+          inputEl.style.height = 'auto';
+          inputEl.style.height = inputEl.scrollHeight + 'px';
+          inputEl.focus();
+          this.showToast('已加载到输入框，可直接发送', 'success');
+        }
+      });
+    }
+  },
+
+  // === 重新绑定恢复消息的事件处理器 ===
+  _bindRestoredMessageActions() {
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+
+    // 重新绑定用户消息的复制和编辑按钮
+    chatMessages.querySelectorAll('.message.user').forEach(msg => {
+      const msgContent = msg.querySelector('.message-content');
+      if (msgContent && !msg.dataset._actionsBound) {
+        this._bindUserMsgActions(msgContent);
+        msg.dataset._actionsBound = 'true';
+      }
+    });
+
+    // 重新绑定助手消息的复制按钮
+    chatMessages.querySelectorAll('.message.assistant .copy-btn').forEach(btn => {
+      if (!btn.dataset._bound) {
+        btn.addEventListener('click', () => this.copyAssistantMessage(btn, btn.closest('.message-content')));
+        btn.dataset._bound = 'true';
+      }
     });
   },
 
@@ -2299,6 +2695,26 @@ const App = {
 
     messageContent.innerHTML = html;
 
+    // 🔧 绑定链接点击事件（Agent 模式也需要）
+    messageContent.querySelectorAll('.adp-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const url = link.dataset.url || link.getAttribute('href');
+        if (url) {
+          window.electronAPI?.openExternal(url);
+        }
+      });
+    });
+    messageContent.querySelectorAll('.adp-file-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const url = card.dataset.url;
+        const name = card.dataset.name;
+        if ((url && url !== '#') || card.dataset.filepath) {
+          this._downloadFileToArtifacts(url, name, card);
+        }
+      });
+    });
+
     // 绑定按钮事件
     const copyBtn = messageContent.querySelector('.copy-btn');
     if (copyBtn) {
@@ -2324,6 +2740,9 @@ const App = {
         this.handleAgentAction(action, parsed, agentType);
       });
     });
+
+    // 绑定 Agent 产物保存按钮
+    this._bindArtifactSaveButtons(messageContent);
 
     // 绑定可点击任务卡片
     messageContent.querySelectorAll('.agent-task-card').forEach(card => {
@@ -2373,10 +2792,11 @@ const App = {
       return;
     }
 
-    // 错误
+    // 错误（兼容多种错误结构：{Error:{Code,Message}} / {type,code,msg} / {error:{message}}）
     if (event === 'error') {
-      const errMsg = data?.Error?.Message || data?.error?.message || '未知错误';
-      this._addErrorToADP(messageContent, errMsg);
+      const errMsg = data?.Error?.Message || data?.error?.message || data?.msg || data?.Message || '未知错误';
+      const errCode = data?.Error?.Code || data?.code || '';
+      this._addErrorToADP(messageContent, errCode ? `[${errCode}] ${errMsg}` : errMsg);
       this._finishADPMessage(messageContent);
       return;
     }
@@ -2400,12 +2820,24 @@ const App = {
       case 'message.added': {
         const msg = data?.Message || {};
         const msgId = data?.MessageId || msg.MessageId || '';
+
         if (msg.Type === 'tool_call') {
-          const toolName = msg.ExtraInfo?.ToolName || '工具';
+          const toolName = msg.ExtraInfo?.ToolName || msg.Name || '工具';
           const icon = this._getADPToolIcon(toolName);
           const label = this._getADPToolLabel(toolName);
-          this._addADPProgressStep(msgId, icon, label, 'active');
+          this._addADPProgressStep(msgId, icon, label, 'active', 'tool_call');
+        } else if (msg.Type === 'thought') {
+          const agentName = msg.ExtraInfo?.AgentName || '';
+          const label = agentName ? `思考（${agentName}）` : '思考中';
+          this._addADPProgressStep(msgId, '💭', label, 'active', 'thought');
+        } else if (msg.Type === 'task_execution') {
+          this._addADPProgressStep(msgId, '⚡', msg.Title || '任务执行', 'active', 'task_execution');
+        } else if (msg.Type === 'notice') {
+          this._addADPProgressStep(msgId, 'ℹ️', msg.StatusDesc || '提示', 'active', 'notice');
         } else if (msg.Type === 'reply' || msg.Name === 'reply') {
+          this._adpReplyMsgId = msgId;
+          // 记录到 stepMap 以便 text.delta 路由
+          this._adpStepMap[msgId] = { type: 'reply', textBuffer: '' };
           this._startADPReply(messageContent);
         }
         break;
@@ -2413,8 +2845,9 @@ const App = {
 
       case 'message.processing': {
         const msg = data?.Message || {};
-        if (msg.Type === 'tool_call' && msg.Contents?.[0]?.Text?.trim()) {
-          const msgId = data?.MessageId || msg.MessageId || '';
+        const msgId = data?.MessageId || msg.MessageId || '';
+        const stepInfo = this._adpStepMap[msgId];
+        if (stepInfo && msg.Contents?.[0]?.Text?.trim()) {
           this._addADPStepDetail(msgId, msg.Contents[0].Text, 'text');
         }
         break;
@@ -2423,8 +2856,10 @@ const App = {
       case 'message.done': {
         const msg = data?.Message || {};
         const msgId = data?.MessageId || msg.MessageId || '';
+        const stepInfo = this._adpStepMap[msgId];
+
         if (msg.Type === 'tool_call') {
-          const toolName = msg.ExtraInfo?.ToolName || '工具';
+          const toolName = msg.ExtraInfo?.ToolName || msg.Name || '工具';
           const doneLabel = this._getADPToolLabel(toolName) + ' ✓';
           this._updateADPProgressStep(msgId, doneLabel, 'done');
           if (msg.Contents?.[0]?.Text) {
@@ -2440,41 +2875,104 @@ const App = {
                     const iconMap = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
                     const ic = iconMap[ext] || '📄';
                     return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}">
-                      <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">↗ 下载</span></div>`;
+                      <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">💾 保存</span></div>`;
                   }).join('');
                   this._addADPStepDetail(msgId, cards, 'file');
                 }
               } catch (e) { this._addADPStepDetail(msgId, resultText, 'json'); }
+            } else if (this._isADPWidgetContent(resultText)) {
+              try {
+                const widgetData = JSON.parse(resultText);
+                const widgetContainer = document.createElement('div');
+                widgetContainer.className = 'adp-widget-container';
+                messageContent.appendChild(widgetContainer);
+                this._renderADPWidget(msgId, widgetData, widgetContainer);
+              } catch (e) {
+                const contentType = msg.Contents[0].Type || 'text';
+                this._addADPStepDetail(msgId, resultText, contentType === 'json_text' ? 'json' : 'text');
+              }
             } else {
-              this._addADPStepDetail(msgId, resultText, 'json');
+              // ask_user_question 等工具的文本内容，用 text 类型展示更可读
+              const contentText = msg.Contents[0].Text;
+              const contentType = msg.Contents[0].Type || 'text';
+              if (contentType === 'json_text') {
+                this._addADPStepDetail(msgId, contentText, 'json');
+              } else {
+                this._addADPStepDetail(msgId, contentText, 'text');
+              }
             }
+          }
+          // 如果 text.delta 有缓存文本但 message.done 没有显式 Contents，用缓存的
+          if (!msg.Contents?.[0]?.Text && stepInfo?.textBuffer) {
+            this._addADPStepDetail(msgId, stepInfo.textBuffer, 'text');
+          }
+        } else if (msg.Type === 'thought') {
+          const doneLabel = (msg.ExtraInfo?.AgentName ? `思考（${msg.ExtraInfo.AgentName}）` : '思考') + ' ✓';
+          this._updateADPProgressStep(msgId, doneLabel, 'done');
+          if (msg.Contents?.[0]?.Text) {
+            this._addADPStepDetail(msgId, msg.Contents[0].Text, 'text');
+          } else if (stepInfo?.textBuffer) {
+            this._addADPStepDetail(msgId, stepInfo.textBuffer, 'text');
+          }
+          // 将思考内容也追加到 thinkingText，供最终渲染使用
+          const thoughtContent = msg.Contents?.[0]?.Text || stepInfo?.textBuffer || '';
+          if (thoughtContent) this._adpThinkingText += thoughtContent;
+        } else if (msg.Type === 'task_execution' || msg.Type === 'notice') {
+          const doneLabel = (msg.Title || msg.StatusDesc || '完成') + ' ✓';
+          this._updateADPProgressStep(msgId, doneLabel, 'done');
+          if (msg.Contents?.[0]?.Text) {
+            this._addADPStepDetail(msgId, msg.Contents[0].Text, 'text');
           }
         }
         break;
       }
 
-      case 'content.added':
-        if (!this._adpCurrentBubble) this._startADPReply(messageContent);
-        break;
-
-      case 'text.delta':
-        if (data?.Text) {
+      case 'content.added': {
+        const msgId = data?.MessageId || '';
+        // 如果是 reply 消息的 content.added，确保回复气泡已创建
+        const stepInfo = this._adpStepMap[msgId];
+        if (stepInfo?.type === 'reply' || !stepInfo) {
           if (!this._adpCurrentBubble) this._startADPReply(messageContent);
-          // 过滤混入的 JSON 内容
-          const text = data.Text;
-          if (!/^\{"content":\[/i.test(text)) {
-            this._adpCurrentText += text;
+        }
+        break;
+      }
+
+      case 'text.delta': {
+        const msgId = data?.MessageId || '';
+        const text = data?.Text || '';
+        if (!text) break;
+        // 过滤混入的 JSON 内容
+        if (/^\{"content":\[/i.test(text)) break;
+
+        const stepInfo = this._adpStepMap[msgId];
+        if (stepInfo && stepInfo.type !== 'reply') {
+          // 非 reply 消息的 text.delta → 追加到步骤详情
+          stepInfo.textBuffer = (stepInfo.textBuffer || '') + text;
+          // 实时更新步骤详情（追加模式）
+          this._updateADPStepDetailStreaming(msgId, stepInfo.textBuffer);
+        } else {
+          // reply 消息或未知消息 → 追加到主回复
+          if (!this._adpCurrentBubble) this._startADPReply(messageContent);
+          this._adpCurrentText += text;
+          this._renderADPBubble();
+        }
+        break;
+      }
+
+      case 'text.replace': {
+        const msgId = data?.MessageId || '';
+        const stepInfo = this._adpStepMap[msgId];
+        if (stepInfo && stepInfo.type !== 'reply') {
+          stepInfo.textBuffer = data?.Text || '';
+          this._updateADPStepDetailStreaming(msgId, stepInfo.textBuffer);
+        } else {
+          if (data?.Text) {
+            this._adpCurrentText = data.Text;
             this._renderADPBubble();
           }
         }
         break;
-
-      case 'text.replace':
-        if (data?.Text) {
-          this._adpCurrentText = data.Text;
-          this._renderADPBubble();
-        }
-        break;
+      }
 
       case 'response.completed':
         if (data?.Response?.StatInfo) {
@@ -2484,6 +2982,7 @@ const App = {
         break;
 
       case 'thought':
+        // 兼容旧版 thought 事件（V1 接口）
         if (data?.Text || data?.Content) {
           this._adpThinkingText += (data.Text || data.Content || '');
         }
@@ -2498,8 +2997,8 @@ const App = {
   _startADPReply(messageContent) {
     if (this._adpCurrentBubble) return; // 已有回复气泡
 
-    // 折叠进度区域
-    this._collapseADPProgress();
+    // 不再在回复开始时立即折叠进度区域——后续可能还有工具步骤
+    // 折叠移到 _finishADPMessage 中处理
 
     // 添加 ADP 智能体 badge
     const badgeEl = document.createElement('div');
@@ -2533,6 +3032,9 @@ const App = {
       this._adpTimerInterval = null;
     }
 
+    // 完成时折叠进度区域（不再在 _startADPReply 中提前折叠）
+    this._collapseADPProgress();
+
     // 如果没有回复气泡，创建一个
     if (!this._adpCurrentBubble && this._adpCurrentText) {
       this._startADPReply(messageContent);
@@ -2549,7 +3051,18 @@ const App = {
         card.addEventListener('click', () => {
           const url = card.dataset.url;
           const name = card.dataset.name;
-          if (url && url !== '#') {
+          if ((url && url !== '#') || card.dataset.filepath) {
+            this._downloadFileToArtifacts(url, name, card);
+          }
+        });
+      });
+
+      // 🔧 绑定链接点击事件（替代 inline onclick，更安全可靠）
+      this._adpCurrentBubble.querySelectorAll('.adp-link').forEach(link => {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const url = link.dataset.url || link.getAttribute('href');
+          if (url) {
             window.electronAPI?.openExternal(url);
           }
         });
@@ -2563,6 +3076,9 @@ const App = {
           if (toggle) toggle.textContent = header.parentElement.classList.contains('expanded') ? '▼' : '▶';
         });
       });
+
+      // 绑定 Agent 产物保存按钮
+      this._bindArtifactSaveButtons(this._adpCurrentBubble);
     }
 
     // 如果有文件输出，添加文件卡片区域
@@ -2573,7 +3089,7 @@ const App = {
         const iconMap = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
         const ic = iconMap[ext] || '📄';
         return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}">
-          <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">↗ 下载</span></div>`;
+          <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">💾 保存</span></div>`;
       }).join('');
       const filesEl = document.createElement('div');
       filesEl.className = 'adp-files-section';
@@ -2581,7 +3097,8 @@ const App = {
       filesEl.querySelectorAll('.adp-file-card').forEach(card => {
         card.addEventListener('click', () => {
           const url = card.dataset.url;
-          if (url && url !== '#') window.electronAPI?.openExternal(url);
+          const name = card.dataset.name;
+          if ((url && url !== '#') || card.dataset.filepath) this._downloadFileToArtifacts(url, name, card);
         });
       });
       messageContent.appendChild(filesEl);
@@ -2818,7 +3335,7 @@ const App = {
 
   // ---- 进度步骤 ----
 
-  _addADPProgressStep(msgId, icon, text, status) {
+  _addADPProgressStep(msgId, icon, text, status, msgType) {
     const stepsEl = document.getElementById('adpProgressSteps');
     if (!stepsEl) return;
     this._adpToolStepCount++;
@@ -2830,6 +3347,7 @@ const App = {
     const stepEl = document.createElement('div');
     stepEl.className = 'adp-progress-step' + (status === 'active' ? ' active' : status === 'done' ? ' done' : '');
     stepEl.dataset.msgId = msgId || '';
+    stepEl.dataset.msgType = msgType || '';
     stepEl.innerHTML = `
       <div class="adp-step-row">
         <span class="adp-step-icon">${icon}</span>
@@ -2839,7 +3357,16 @@ const App = {
       </div>
       <div class="adp-step-detail"></div>`;
     stepsEl.appendChild(stepEl);
-    if (msgId) this._adpStepMap[msgId] = { el: stepEl, detailEl: stepEl.querySelector('.adp-step-detail') };
+    // 记录到 stepMap：如果已有记录（如 reply 类型已提前注册），保留 type；否则用 msgType
+    if (msgId) {
+      const existing = this._adpStepMap[msgId];
+      if (existing) {
+        existing.el = stepEl;
+        existing.detailEl = stepEl.querySelector('.adp-step-detail');
+      } else {
+        this._adpStepMap[msgId] = { el: stepEl, detailEl: stepEl.querySelector('.adp-step-detail'), type: msgType || 'tool_call', textBuffer: '' };
+      }
+    }
 
     // 点击展开/折叠详情
     const row = stepEl.querySelector('.adp-step-row');
@@ -2891,13 +3418,30 @@ const App = {
       detailEl.querySelectorAll('.adp-file-card').forEach(card => {
         card.addEventListener('click', () => {
           const url = card.dataset.url;
-          if (url && url !== '#') window.electronAPI?.openExternal(url);
+          const name = card.dataset.name;
+          if ((url && url !== '#') || card.dataset.filepath) this._downloadFileToArtifacts(url, name, card);
         });
       });
     } else {
       detailEl.innerHTML = `<div class="adp-step-detail-text">${this.escapeHtml(content).replace(/\n/g, '<br>')}</div>`;
     }
 
+    info.el.classList.add('has-detail');
+  },
+
+  /**
+   * 流式更新步骤详情（text.delta 追加模式）
+   * 用于 tool_call/thought 等非 reply 消息的实时文本更新
+   */
+  _updateADPStepDetailStreaming(msgId, text) {
+    const info = msgId ? this._adpStepMap[msgId] : null;
+    if (!info?.detailEl) return;
+    const detailEl = info.detailEl;
+    const expandEl = info.el.querySelector('.adp-step-expand');
+    if (expandEl) expandEl.style.display = 'inline';
+    // 截断过长内容
+    const displayText = text.length > 3000 ? text.substring(0, 3000) + '\n... (已截断)' : text;
+    detailEl.innerHTML = `<div class="adp-step-detail-text">${this.escapeHtml(displayText).replace(/\n/g, '<br>')}</div>`;
     info.el.classList.add('has-detail');
   },
 
@@ -2969,6 +3513,30 @@ const App = {
       return match;
     });
 
+    // 🔧 提取 Markdown 表格（在 escape 前提取，避免 | 被转义）
+    const tables = [];
+    text = text.replace(/(?:^\|.+?\|(?:\r?\n|$))+/gm, (match) => {
+      const idx = tables.length;
+      tables.push(match);
+      return `__TABLE_${idx}__`;
+    });
+
+    // 🔧 提取无序列表
+    const ulLists = [];
+    text = text.replace(/(?:^\s*[-*]\s+.+?(?:\r?\n|$))+/gm, (match) => {
+      const idx = ulLists.length;
+      ulLists.push(match);
+      return `__ULLIST_${idx}__`;
+    });
+
+    // 🔧 提取有序列表
+    const olLists = [];
+    text = text.replace(/(?:^\s*\d+\.\s+.+?(?:\r?\n|$))+/gm, (match) => {
+      const idx = olLists.length;
+      olLists.push(match);
+      return `__OLLIST_${idx}__`;
+    });
+
     // 提取裸链接
     const links = [];
     text = text.replace(/https?:\/\/[^\s"'<>\]}|\\^`]+/g, (url) => {
@@ -2982,14 +3550,25 @@ const App = {
       return `__LINK_${idx}__`;
     });
 
+    // 提取容器内文件路径（如 /workdir/xxx.xlsx, /tmp/xxx.pdf）
+    const filePaths = [];
+    text = text.replace(/(?:文件路径[：:]\s*)?(\/(?:workdir|tmp|app|home|data|opt|output|files)[\/\\][^\s"'<>\]},;，；\]\)]+\.(?:xlsx?|docx?|pptx?|pdf|csv|json|html?|xml|svg|png|jpe?g|gif|zip|tar\.gz|md|txt|py|js|ts))/gi, (match, filePath) => {
+      const idx = filePaths.length;
+      const fileName = filePath.split('/').pop();
+      filePaths.push({ path: filePath, name: fileName });
+      return `__FILEPATH_${idx}__`;
+    });
+
     let html = this.escapeHtml(text);
 
     // 还原 Markdown 链接
+    // 🔧 修复：不使用 inline onclick（Electron contextIsolation 下可能不生效），
+    // 改用 data-url 属性 + 事件委托（和 adp-file-card 同模式）
     mdLinks.forEach((link, idx) => {
       const ph = `__MDLINK_${idx}__`, su = this.escapeHtml(link.url), sd = this.escapeHtml(link.display);
       html = html.replace(ph, link.isHtml
         ? `<div class="adp-file-card" data-url="${su}" data-name="${this.escapeHtml(link.fileName)}"><span class="adp-file-icon">🌐</span><span class="adp-file-name">${sd}</span><span class="adp-file-open">↗ 打开</span></div>`
-        : `<a href="${su}" class="adp-link" onclick="event.preventDefault();window.electronAPI?.openExternal('${su}')">${sd}</a>`);
+        : `<a href="${su}" class="adp-link" data-url="${su}">${sd}</a>`);
     });
 
     // 还原文件卡片
@@ -3000,19 +3579,86 @@ const App = {
           const fn = f.file_path?.split('/').pop() || '文件';
           const ext = fn.split('.').pop()?.toLowerCase();
           const im = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
-          return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">↗ 下载</span></div>`;
+          return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">💾 保存</span></div>`;
         }).join(''));
       } else html = html.replace(ph, '');
     });
 
     // 还原裸链接
+    // 🔧 修复：同样使用 data-url + 事件委托
     links.forEach((link, idx) => {
       const ph = `__LINK_${idx}__`;
-      html = html.replace(ph, `<a href="${this.escapeHtml(link.url)}" class="adp-link" onclick="event.preventDefault();window.electronAPI?.openExternal('${this.escapeHtml(link.url)}')">${this.escapeHtml(link.display)}</a>`);
+      html = html.replace(ph, `<a href="${this.escapeHtml(link.url)}" class="adp-link" data-url="${this.escapeHtml(link.url)}">${this.escapeHtml(link.display)}</a>`);
+    });
+
+    // 还原容器内文件路径（转为保存按钮）
+    filePaths.forEach((fp, idx) => {
+      const ph = `__FILEPATH_${idx}__`;
+      const ext = fp.name.split('.').pop()?.toLowerCase();
+      const im = { html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', svg: '🖼', md: '📝' };
+      // 文件路径不是可下载 URL，用 data-filepath 标记，后续可走 ADP 文件下载
+      html = html.replace(ph, `<div class="adp-file-card" data-url="#" data-name="${this.escapeHtml(fp.name)}" data-filepath="${this.escapeHtml(fp.path)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fp.name)}</span><span class="adp-file-open">💾 保存</span></div>`);
+    });
+
+    // 🔧 还原 Markdown 表格
+    tables.forEach((table, idx) => {
+      const ph = `__TABLE_${idx}__`;
+      const rows = table.trim().split(/\r?\n/).filter(r => r.trim());
+      if (rows.length < 2) { html = html.replace(ph, ''); return; }
+      // 过滤表头分隔行（|---|---|）
+      const dataRows = rows.filter(r => !r.match(/^\|?\s*[-:]+/));
+      const headerRow = dataRows[0];
+      const bodyRows = dataRows.slice(1);
+      if (!headerRow) { html = html.replace(ph, ''); return; }
+      let tableHtml = '<table class="adp-table"><thead><tr>';
+      headerRow.split('|').filter(c => c.trim()).forEach(cell => {
+        tableHtml += `<th>${this.escapeHtml(cell.trim())}</th>`;
+      });
+      tableHtml += '</tr></thead><tbody>';
+      bodyRows.forEach(row => {
+        tableHtml += '<tr>';
+        row.split('|').filter(c => c.trim()).forEach(cell => {
+          tableHtml += `<td>${this.escapeHtml(cell.trim())}</td>`;
+        });
+        tableHtml += '</tr>';
+      });
+      tableHtml += '</tbody></table>';
+      html = html.replace(ph, tableHtml);
+    });
+
+    // 🔧 还原无序列表
+    ulLists.forEach((list, idx) => {
+      const ph = `__ULLIST_${idx}__`;
+      const items = list.trim().split(/\r?\n/).filter(r => r.trim()).map(r => {
+        const match = r.match(/^\s*[-*]\s+(.+)$/);
+        return match ? match[1] : r.trim();
+      });
+      if (items.length === 0) { html = html.replace(ph, ''); return; }
+      const listHtml = '<ul class="adp-list">' + items.map(item => `<li>${this.escapeHtml(item)}</li>`).join('') + '</ul>';
+      html = html.replace(ph, listHtml);
+    });
+
+    // 🔧 还原有序列表
+    olLists.forEach((list, idx) => {
+      const ph = `__OLLIST_${idx}__`;
+      const items = list.trim().split(/\r?\n/).filter(r => r.trim()).map(r => {
+        const match = r.match(/^\s*\d+\.\s+(.+)$/);
+        return match ? match[1] : r.trim();
+      });
+      if (items.length === 0) { html = html.replace(ph, ''); return; }
+      const listHtml = '<ol class="adp-list">' + items.map(item => `<li>${this.escapeHtml(item)}</li>`).join('') + '</ol>';
+      html = html.replace(ph, listHtml);
     });
 
     // Markdown 基础格式
-    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code.trim()}</code></pre>`);
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      const isHtml = lang.toLowerCase() === 'html' || lang.toLowerCase() === 'htm';
+      const isDocument = isHtml || ['json', 'xml', 'svg', 'css', 'md', 'markdown'].includes(lang.toLowerCase());
+      const saveBtn = isDocument
+        ? `<button class="agent-save-artifact-btn" data-action="save-artifact" data-lang="${this.escapeHtml(lang)}" data-filename="" title="保存到 Agent 产物">💾 保存</button>`
+        : '';
+      return `<pre><code>${code.trim()}</code></pre>${saveBtn}`;
+    });
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -3049,6 +3695,14 @@ const App = {
       write: '📝',
       FileToURL: '🔗',
       search: '🔍',
+      AskUserQuestion: '❓',
+      ask_user_question: '❓',
+      GenerateReport: '📄',
+      generate_report: '📄',
+      WebSearch: '🌐',
+      web_search: '🌐',
+      DocParse: '📖',
+      doc_parse: '📖',
       default: '🔧'
     };
     return icons[toolName] || icons.default;
@@ -3061,10 +3715,192 @@ const App = {
       render_chart: '渲染图表',
       write: '生成报告',
       FileToURL: '获取文件链接',
-      search: '搜索数据'
+      search: '搜索数据',
+      AskUserQuestion: '向用户提问',
+      ask_user_question: '向用户提问',
+      GenerateReport: '生成报告',
+      generate_report: '生成报告',
+      WebSearch: '联网搜索',
+      web_search: '联网搜索',
+      DocParse: '文档解析',
+      doc_parse: '文档解析'
     };
     return labels[toolName] || `调用 ${toolName}`;
   },
+
+  // ===== ADP 交互式技能组件（Widget）渲染 =====
+
+  _isADPWidgetContent(text) {
+    if (!text || typeof text !== 'string' || text.length < 20) return false;
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch { return false; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const keys = Object.keys(parsed);
+    const widgetKeywords = ['widget', 'form', 'skill', 'question', 'interactive', 'options', 'fields', 'actions', 'buttons', 'steps', 'choices'];
+    const hasWidgetKeyword = widgetKeywords.some(kw => keys.some(k => k.toLowerCase().includes(kw)));
+    const hasArrayChildren = ['options', 'fields', 'actions', 'buttons', 'steps', 'choices'].some(k => Array.isArray(parsed[k]) && parsed[k].length > 0);
+    const hasType = parsed.type && ['widget', 'form', 'question', 'skill', 'interactive'].includes(String(parsed.type).toLowerCase());
+    return !!(hasWidgetKeyword || hasArrayChildren || hasType);
+  },
+
+  _renderADPWidget(msgId, data, container) {
+    const widgetEl = document.createElement('div');
+    widgetEl.className = 'adp-widget';
+    widgetEl.dataset.msgId = msgId || '';
+
+    // 标题
+    const title = data.title || data.name || data.widget_title || data.skill_name || data.label || '';
+    if (title) {
+      const titleEl = document.createElement('div');
+      titleEl.className = 'adp-widget-title';
+      titleEl.textContent = title;
+      widgetEl.appendChild(titleEl);
+    }
+
+    // 描述（支持 Markdown）
+    const description = data.description || data.question || data.desc || data.prompt || data.text || '';
+    if (description) {
+      const descEl = document.createElement('div');
+      descEl.className = 'adp-widget-description';
+      descEl.innerHTML = this._renderADPMarkdown(description, '');
+      widgetEl.appendChild(descEl);
+    }
+
+    // 步骤（支持多步骤）
+    const steps = data.steps || data.fields || [];
+    if (steps.length > 0) {
+      steps.forEach((step, stepIdx) => {
+        const stepEl = document.createElement('div');
+        stepEl.className = 'adp-widget-step';
+
+        const stepTitle = step.title || step.name || step.label || `步骤 ${stepIdx + 1}`;
+        const stepDesc = step.description || step.question || step.desc || step.prompt || step.text || '';
+        const stepOptions = step.options || step.choices || step.fields || [];
+
+        if (stepTitle) {
+          const stEl = document.createElement('div');
+          stEl.className = 'adp-widget-step-title';
+          stEl.textContent = stepTitle;
+          stepEl.appendChild(stEl);
+        }
+        if (stepDesc) {
+          const sdEl = document.createElement('div');
+          sdEl.className = 'adp-widget-step-desc';
+          sdEl.innerHTML = this._renderADPMarkdown(stepDesc, '');
+          stepEl.appendChild(sdEl);
+        }
+
+        // 选项渲染
+        if (stepOptions.length > 0) {
+          const optsEl = document.createElement('div');
+          optsEl.className = 'adp-widget-options';
+          stepOptions.forEach((opt, optIdx) => {
+            const label = opt.label || opt.text || opt.name || opt.title || String(optIdx + 1);
+            const value = opt.value || opt.id || String(optIdx);
+            const desc = opt.description || opt.desc || opt.detail || opt.subtitle || '';
+            const inputType = step.type === 'checkbox' || step.multi_select || data.type === 'checkbox' || data.multi_select ? 'checkbox' : 'radio';
+            const inputName = `adp-widget-${msgId}-${stepIdx}`;
+
+            const optEl = document.createElement('label');
+            optEl.className = 'adp-widget-option';
+            optEl.innerHTML = `
+              <input type="${inputType}" name="${inputName}" value="${this.escapeHtml(value)}" data-label="${this.escapeHtml(label)}">
+              <div class="adp-widget-option-content">
+                <div class="adp-widget-option-label">${this.escapeHtml(label)}</div>
+                ${desc ? `<div class="adp-widget-option-desc">${this.escapeHtml(desc)}</div>` : ''}
+              </div>
+            `;
+            optsEl.appendChild(optEl);
+          });
+          stepEl.appendChild(optsEl);
+        }
+        widgetEl.appendChild(stepEl);
+      });
+    } else {
+      // 直接 options（没有 steps 包装）
+      const options = data.options || data.choices || [];
+      if (options.length > 0) {
+        const optsEl = document.createElement('div');
+        optsEl.className = 'adp-widget-options';
+        options.forEach((opt, optIdx) => {
+          const label = opt.label || opt.text || opt.name || opt.title || String(optIdx + 1);
+          const value = opt.value || opt.id || String(optIdx);
+          const desc = opt.description || opt.desc || opt.detail || opt.subtitle || '';
+          const inputType = data.type === 'checkbox' || data.multi_select ? 'checkbox' : 'radio';
+          const inputName = `adp-widget-${msgId}`;
+
+          const optEl = document.createElement('label');
+          optEl.className = 'adp-widget-option';
+          optEl.innerHTML = `
+            <input type="${inputType}" name="${inputName}" value="${this.escapeHtml(value)}" data-label="${this.escapeHtml(label)}">
+            <div class="adp-widget-option-content">
+              <div class="adp-widget-option-label">${this.escapeHtml(label)}</div>
+              ${desc ? `<div class="adp-widget-option-desc">${this.escapeHtml(desc)}</div>` : ''}
+            </div>
+          `;
+          optsEl.appendChild(optEl);
+        });
+        widgetEl.appendChild(optsEl);
+      }
+    }
+
+    // 按钮
+    const actions = data.actions || data.buttons || [];
+    if (actions.length > 0) {
+      const actionsEl = document.createElement('div');
+      actionsEl.className = 'adp-widget-actions';
+      actions.forEach(action => {
+        const btn = document.createElement('button');
+        const actType = (action.type || action.action || 'default').toLowerCase();
+        const isPrimary = actType === 'primary' || actType === 'submit' || actType === 'confirm';
+        btn.className = 'adp-widget-btn' + (isPrimary ? ' primary' : ' secondary');
+        btn.textContent = action.label || action.text || action.name || '按钮';
+        btn.dataset.actionType = actType;
+        btn.addEventListener('click', () => {
+          const inputs = widgetEl.querySelectorAll(`input[type="radio"]:checked, input[type="checkbox"]:checked`);
+          const selectedValues = Array.from(inputs).map(i => i.value);
+          const selectedLabels = Array.from(inputs).map(i => i.dataset.label || i.value);
+          this._handleADPWidgetAction(msgId, actType, selectedValues, selectedLabels, data);
+        });
+        actionsEl.appendChild(btn);
+      });
+      widgetEl.appendChild(actionsEl);
+    }
+
+    container.appendChild(widgetEl);
+  },
+
+  _handleADPWidgetAction(msgId, actionType, values, labels, widgetData) {
+    let message = '';
+    if (actionType === 'skip' || actionType === 'cancel' || actionType === 'pass') {
+      message = '跳过';
+    } else if (values.length === 0) {
+      message = '提交';
+    } else if (values.length === 1) {
+      message = labels[0] || values[0];
+    } else {
+      message = labels.join('，') || values.join('，');
+    }
+
+    // 设置输入框并发送
+    const input = document.getElementById('aiChatInput');
+    if (input) {
+      input.value = message;
+      input.style.height = 'auto';
+    }
+    this.sendAIMessage();
+
+    // 禁用 widget 交互
+    const widgetEl = document.querySelector(`.adp-widget[data-msg-id="${msgId}"]`);
+    if (widgetEl) {
+      widgetEl.querySelectorAll('.adp-widget-btn').forEach(btn => btn.disabled = true);
+      widgetEl.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach(inp => inp.disabled = true);
+      widgetEl.classList.add('adp-widget-completed');
+    }
+  },
+
   handleChatFileSelect(e) {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -3144,13 +3980,20 @@ const App = {
   },
 
   getFileType(filename, mimeType) {
-    const ext = filename.split('.').pop().toLowerCase();
-    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-    const textExts = ['txt', 'md', 'csv'];
-    
-    if (imageExts.includes(ext) || mimeType.startsWith('image/')) return 'image';
-    if (textExts.includes(ext) || mimeType.startsWith('text/')) return 'text';
+    const ext = (filename.split('.').pop() || '').toLowerCase();
+    mimeType = mimeType || '';
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'];
+    const textExts = ['txt', 'md', 'markdown', 'csv', 'log', 'json', 'yaml', 'yml'];
+    // 🔧 各类文档（Word/PPT/Excel 等）走文档解析流程
+    const docExts = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'rtf', 'wps', 'et', 'dps'];
+
+    // 🔧 关键修复：已知扩展名优先于 mimeType 判定。
+    // 否则当浏览器给出空或异常 mimeType 时，Word/Excel 等文档可能被错误当成图片处理。
     if (ext === 'pdf') return 'pdf';
+    if (docExts.includes(ext)) return 'binary';      // 文档：走 COS 上传 + docParse 解析
+    if (textExts.includes(ext)) return 'text';       // 纯文本：直接注入内容
+    if (imageExts.includes(ext) || mimeType.startsWith('image/')) return 'image';
+    if (mimeType.startsWith('text/')) return 'text';
     return 'binary';
   },
 
@@ -3492,7 +4335,7 @@ const App = {
     }
   },
 
-  _renderChatSessionList() {
+  _renderChatSessionList(keyword) {
     const listEl = document.getElementById('chatSessionList');
     if (!listEl) return;
 
@@ -3502,9 +4345,33 @@ const App = {
     }
 
     // 按更新时间倒序
-    const sorted = [...this._chatSessions].sort((a, b) =>
+    let sorted = [...this._chatSessions].sort((a, b) =>
       new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)
     );
+
+    // 搜索过滤
+    if (keyword && keyword.trim()) {
+      const kw = keyword.trim().toLowerCase();
+      const scored = sorted.map(session => {
+        const title = (session.title || '新对话').toLowerCase();
+        const titleMatch = title.includes(kw);
+        // 标题匹配优先级更高：标题匹配=2分，内容匹配=1分
+        let score = 0;
+        if (titleMatch) score += 2;
+        // 检查对话内容是否匹配
+        const msgHtml = localStorage.getItem('memora_session_msg_' + session.id) || '';
+        if (msgHtml.toLowerCase().includes(kw)) score += 1;
+        return { session, score };
+      }).filter(item => item.score > 0);
+      // 按分数降序，同分按更新时间倒序
+      scored.sort((a, b) => b.score - a.score || new Date(b.session.updatedAt || b.session.createdAt) - new Date(a.session.updatedAt || a.session.createdAt));
+      sorted = scored.map(item => item.session);
+
+      if (sorted.length === 0) {
+        listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-tertiary); font-size: 12px;">无匹配对话</div>';
+        return;
+      }
+    }
 
     listEl.innerHTML = sorted.map(session => `
       <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}" data-session-id="${session.id}">
@@ -3737,6 +4604,8 @@ const App = {
     }
 
     this._initFeatureCards();
+    // 重新绑定恢复消息的事件处理器（复制、编辑等按钮）
+    this._bindRestoredMessageActions();
     chatMessages.scrollTop = chatMessages.scrollHeight;
   },
 
@@ -3894,14 +4763,14 @@ ${JSON.stringify(reportData, null, 2)}`;
       }
       
       await window.electronAPI.setAPIConfig({
-        apiKey: apiKey || null,
-        baseUrl: baseUrl || null,
-        model: model || null,
+        apiKey: apiKey.trim() || null,
+        baseUrl: baseUrl.trim() || null,
+        model: model.trim() || null,
         dailyLimit: dailyLimit || null,
-        // 大用量 LLM 配置
-        highvolApiKey: document.getElementById('highvolApiKey').value || null,
-        highvolBaseUrl: document.getElementById('highvolBaseUrl').value || null,
-        highvolModel: document.getElementById('highvolModel').value || null,
+        // 大用量 LLM 配置（传空字符串表示清空，不传 null）
+        highvolApiKey: document.getElementById('highvolApiKey').value.trim(),
+        highvolBaseUrl: document.getElementById('highvolBaseUrl').value.trim(),
+        highvolModel: document.getElementById('highvolModel').value.trim(),
       });
       
       // 保存ADP配置
@@ -3973,8 +4842,62 @@ ${JSON.stringify(reportData, null, 2)}`;
       document.getElementById('apiDailyLimit').value = '1000';
       document.getElementById('currentKeyType').textContent = '当前使用: 内置密钥';
       document.getElementById('currentDailyLimit').textContent = '每日限制: 10次';
+      // 同时清空大用量配置
+      document.getElementById('highvolApiKey').value = '';
+      document.getElementById('highvolBaseUrl').value = '';
+      document.getElementById('highvolModel').value = '';
     }
     this.showToast('API配置已清空，将使用内置密钥');
+  },
+
+  async _testLLMConnection(type) {
+    if (!window.electronAPI?.testLLMConnection) {
+      this.showToast('当前版本不支持测试连接');
+      return;
+    }
+
+    const isHighvol = type === 'highvol';
+    const resultEl = document.getElementById(isHighvol ? 'testHighvolLLMResult' : 'testLLMResult');
+    const btnEl = document.getElementById(isHighvol ? 'testHighvolLLMBtn' : 'testLLMBtn');
+
+    let baseUrl, apiKey, model;
+
+    if (isHighvol) {
+      baseUrl = document.getElementById('highvolBaseUrl').value;
+      apiKey = document.getElementById('highvolApiKey').value;
+      model = document.getElementById('highvolModel').value;
+      // 大用量留空时回退到小用量
+      if (!baseUrl) baseUrl = document.getElementById('apiBaseUrl').value;
+      if (!apiKey) apiKey = document.getElementById('apiKey').value;
+      if (!model) model = document.getElementById('apiModel').value;
+    } else {
+      baseUrl = document.getElementById('apiBaseUrl').value;
+      apiKey = document.getElementById('apiKey').value;
+      model = document.getElementById('apiModel').value;
+    }
+
+    if (!baseUrl || !apiKey || !model) {
+      resultEl.innerHTML = '<span style="color: var(--danger);">⚠️ 请填写 Base URL、API Key 和模型名称</span>';
+      return;
+    }
+
+    btnEl.disabled = true;
+    btnEl.textContent = '⏳ 测试中...';
+    resultEl.innerHTML = '<span style="color: var(--text-secondary);">连接中...</span>';
+
+    try {
+      const result = await window.electronAPI.testLLMConnection({ baseUrl, apiKey, model });
+      if (result.ok) {
+        resultEl.innerHTML = `<span style="color: var(--success);">✅ 连接成功 (${result.latency}ms) · 模型: ${result.model || model} · 回复: "${result.content}"</span>`;
+      } else {
+        resultEl.innerHTML = `<span style="color: var(--danger);">❌ 连接失败: ${this.escapeHtml(result.error)}</span>`;
+      }
+    } catch (err) {
+      resultEl.innerHTML = `<span style="color: var(--danger);">❌ 请求异常: ${this.escapeHtml(err.message)}</span>`;
+    } finally {
+      btnEl.disabled = false;
+      btnEl.textContent = '🔗 测试连接';
+    }
   },
 
   // === 数据导出/导入 ===
@@ -7139,6 +8062,131 @@ ${JSON.stringify(reportData, null, 2)}`;
     });
   },
 
+  // === Agent 产物保存按钮绑定 ===
+  _bindArtifactSaveButtons(container) {
+    if (!container) return;
+    container.querySelectorAll('.agent-save-artifact-btn').forEach(btn => {
+      if (btn._artifactBound) return;
+      btn._artifactBound = true;
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pre = btn.previousElementSibling;
+        if (!pre) return;
+        const codeEl = pre.querySelector('code');
+        if (!codeEl) return;
+        const content = codeEl.textContent || '';
+        const lang = btn.dataset.lang || '';
+        // 推断文件名
+        let fileName = '';
+        const lowerLang = lang.toLowerCase();
+        if (lowerLang === 'html' || lowerLang === 'htm') {
+          // 尝试从 HTML 中提取 <title>
+          const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
+          fileName = titleMatch ? titleMatch[1].trim().replace(/[<>:"/\\|?*]/g, '_') + '.html' : 'page.html';
+        } else if (lowerLang === 'json') {
+          fileName = 'data.json';
+        } else if (lowerLang === 'css') {
+          fileName = 'style.css';
+        } else if (lowerLang === 'xml') {
+          fileName = 'data.xml';
+        } else if (lowerLang === 'svg') {
+          fileName = 'image.svg';
+        } else if (lowerLang === 'md' || lowerLang === 'markdown') {
+          fileName = 'document.md';
+        } else {
+          fileName = `artifact.${lowerLang || 'txt'}`;
+        }
+        if (window.electronAPI?.artifactsSave) {
+          btn.textContent = '⏳ 保存中...';
+          btn.disabled = true;
+          try {
+            const result = await window.electronAPI.artifactsSave({ content, fileName, source: 'ai-assistant' });
+            if (result.success) {
+              btn.textContent = '✅ 已保存';
+              btn.disabled = true;
+              this.showToast(`已保存到 Agent 产物: ${result.name}`, 'success');
+            } else {
+              btn.textContent = '💾 保存';
+              btn.disabled = false;
+              this.showToast('保存失败: ' + (result.error || ''), 'error');
+            }
+          } catch (err) {
+            btn.textContent = '💾 保存';
+            btn.disabled = false;
+            this.showToast('保存出错: ' + err.message, 'error');
+          }
+        } else {
+          this.showToast('产物保存功能不可用', 'error');
+        }
+      });
+    });
+  },
+
+  // === 下载文件到 Agent 产物 ===
+  async _downloadFileToArtifacts(url, fileName, cardEl) {
+    // 检查是否为容器内文件路径（data-filepath）
+    const filePath = cardEl?.dataset?.filepath;
+    if (filePath && (!url || url === '#')) {
+      // 容器内文件路径，无法直接下载，保存为引用文件
+      await this._saveFilePathReference(filePath, fileName, cardEl);
+      return;
+    }
+    if (!window.electronAPI?.artifactsDownloadAndSave) {
+      this.showToast('产物保存功能不可用，请重启应用', 'error');
+      return;
+    }
+    // 更新卡片状态
+    const openSpan = cardEl?.querySelector('.adp-file-open');
+    const originalText = openSpan?.textContent || '';
+    if (openSpan) openSpan.textContent = '⏳ 下载中...';
+
+    try {
+      const result = await window.electronAPI.artifactsDownloadAndSave({ url, fileName });
+      if (result.success) {
+        if (openSpan) openSpan.textContent = '✅ 已保存';
+        this.showToast(`已保存到 Agent 产物: ${result.name}`, 'success');
+      } else {
+        if (openSpan) openSpan.textContent = originalText;
+        this.showToast('下载失败: ' + (result.error || ''), 'error');
+      }
+    } catch (err) {
+      if (openSpan) openSpan.textContent = originalText;
+      this.showToast('下载出错: ' + err.message, 'error');
+    }
+  },
+
+  // 保存容器内文件路径引用（文件在 ADP 容器中，本地无法直接下载）
+  async _saveFilePathReference(filePath, fileName, cardEl) {
+    if (!window.electronAPI?.artifactsSave) {
+      this.showToast('产物保存功能不可用', 'error');
+      return;
+    }
+    const openSpan = cardEl?.querySelector('.adp-file-open');
+    const originalText = openSpan?.textContent || '';
+    if (openSpan) openSpan.textContent = '⏳ 保存中...';
+
+    try {
+      // 保存为引用文件，包含文件路径和来源信息
+      const refContent = `文件路径引用\n============\n文件名: ${fileName}\n容器路径: ${filePath}\n来源: ADP 智能体\n时间: ${new Date().toLocaleString('zh-CN')}\n\n注意: 此文件位于 ADP 智能体容器内，请在 ADP 对话中通过文件卡片下载。`;
+      const result = await window.electronAPI.artifactsSave({
+        content: refContent,
+        fileName: `${fileName}.引用.txt`,
+        source: 'adp-container-ref'
+      });
+      if (result.success) {
+        if (openSpan) openSpan.textContent = '✅ 已保存';
+        this.showToast(`已保存引用到 Agent 产物: ${result.name}`, 'success');
+      } else {
+        if (openSpan) openSpan.textContent = originalText;
+        this.showToast('保存失败: ' + (result.error || ''), 'error');
+      }
+    } catch (err) {
+      if (openSpan) openSpan.textContent = originalText;
+      this.showToast('保存出错: ' + err.message, 'error');
+    }
+  },
+
   // === Phase 2: Agent 操作按钮处理 ===
   handleAgentAction(action, result, agentType) {
     switch (action) {
@@ -8680,17 +9728,35 @@ ${JSON.stringify(reportData, null, 2)}`;
         const isSystem = msg.role === 'system';
         if (isSystem) continue; // 跳过系统消息
 
-        const msgHtml = `
-          <div class="message ${isUser ? 'user' : 'assistant'}">
-            ${!isUser ? `<div class="message-avatar">${this._assistantAvatarSvg}</div>` : ''}
-            <div class="message-content">
-              <p>${this.escapeHtml(msg.content)}</p>
-              <span class="message-time ${isUser ? 'user-time' : 'assistant-time'}">${this._formatChatTime(new Date(msg.created_at))}</span>
-            </div>
-          </div>`;
-        chatMessages.insertAdjacentHTML('beforeend', msgHtml);
+        if (isUser) {
+          const msgHtml = `
+            <div class="message user" data-_actions-bound="true">
+              <div class="message-content">
+                <p>${this.escapeHtml(msg.content)}</p>
+                <div class="message-actions user-msg-actions">
+                  <button class="msg-action-btn copy-user-msg" title="复制"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                  <button class="msg-action-btn edit-user-msg" title="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                </div>
+                <span class="message-time user-time">${this._formatChatTime(new Date(msg.created_at))}</span>
+              </div>
+            </div>`;
+          chatMessages.insertAdjacentHTML('beforeend', msgHtml);
+        } else {
+          const msgHtml = `
+            <div class="message assistant">
+              <div class="message-avatar">${this._assistantAvatarSvg}</div>
+              <div class="message-content">
+                <p>${this.escapeHtml(msg.content)}</p>
+                <button class="copy-btn" title="复制" data-_bound="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                <span class="message-time assistant-time">${this._formatChatTime(new Date(msg.created_at))}</span>
+              </div>
+            </div>`;
+          chatMessages.insertAdjacentHTML('beforeend', msgHtml);
+        }
       }
 
+      // 重新绑定事件处理器
+      this._bindRestoredMessageActions();
       chatMessages.scrollTop = chatMessages.scrollHeight;
       console.log('[ChatSync] Loaded', result.messages.length, 'messages for', sessionId);
     } catch (e) {

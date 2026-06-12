@@ -1,0 +1,224 @@
+lke-component-eILwIrep.js:34 [MermaidTrace][695][renderAll.start] Object
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】message.done Object
+lke-component-eILwIrep.js:34 [MermaidTrace][696][renderAll.start] Object
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】response.completed Object
+__federation_expose_AssistChat-CMKSNWPy.js:190 [assist-chat] skipPayCheck=true, msgList: 2 showWelcome: false
+vhtml-others-BMgfptRU.js:53 [VHTML-UI][v-tip] VTip "replyTimeTip" not found.
+o @ vhtml-others-BMgfptRU.js:53
+__federation_expose_AssistChat-CMKSNWPy.js:93 getUploadCredential client
+__federation_expose_AssistChat-CMKSNWPy.js:95 [ajax/index] Using service for category: cloud cloudService
+__federation_expose_AssistChat-CMKSNWPy.js:95 session_id null
+__federation_expose_AssistChat-CMKSNWPy.js:93 config Object
+editor-BeW-htki.js:170 editorvalue <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> </p> <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> </p>
+__federation_expose_AssistChat-CMKSNWPy.js:93 1 'upload percent'
+__federation_expose_AssistChat-CMKSNWPy.js:93 resolve
+__federation_expose_AssistChat-CMKSNWPy.js:93 本组完成: Array(1)
+__federation_expose_AssistChat-CMKSNWPy.js:93 upload response Object
+__federation_expose_AssistChat-CMKSNWPy.js:93         0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx finished
+editor-BeW-htki.js:170 editorvalue <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成</p> <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成</p>
+editor-BeW-htki.js:170 editorvalue <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成点对点</p> <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成点对点</p>
+editor-BeW-htki.js:170 editorvalue <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成点对点应答</p> <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成点对点应答</p>
+__federation_expose_AssistChat-CMKSNWPy.js:192 【AssistFooter】onSend 深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx 生成点对点应答 Array(1)
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】用户发送消息 Object
+__federation_expose_AssistChat-CMKSNWPy.js:200 =======233333333311111111======= Array(4) Array(2) false
+__federation_expose_AssistChat-CMKSNWPy.js:190 [assist-chat] skipPayCheck=true, msgList: 3 showWelcome: false
+__federation_expose_AssistChat-CMKSNWPy.js:188 normalizedContents----------> Array(2) Array(2)
+editor-BeW-htki.js:170 editorvalue  <p><span data-w-e-type="mention" data-mention-type="file" data-mention-id="0ddf388a-f8bd-87bc-537f-0fca58c40c8e-深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx" data-mention-name="%E6%B7%B1%E5%9C%B3%E5%9C%B0%E9%93%81%E6%99%BA%E8%83%BD%E4%BD%93%E5%BB%BA%E8%AE%BE%E5%8F%8A%E7%BA%B3%E7%AE%A1%E5%B9%B3%E5%8F%B0%E9%87%87%E8%B4%AD%E5%92%8C%E8%B4%A2%E5%8A%A1%E8%AF%95%E7%82%B9%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1%E9%A1%B9%E7%9B%AE%E6%8B%9B%E6%A0%87%E6%96%87%E4%BB%B6%EF%BC%88%E7%BB%88%EF%BC%89.docx" data-display-label="" class="at-mention-tag at-mention-tag--attach at-mention-tag--file" contenteditable="false"><span class="at-mention-tag__icon at-mention-tag__icon--file"></span><span class="at-mention-tag__text">深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目招标文件（终）.docx</span><span class="at-mention-tag__close"></span></span> 生成点对点应答</p>
+editor-BeW-htki.js:170 this.editor Object
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】request_ack Object
+__federation_expose_AssistChat-CMKSNWPy.js:188 normalizedContents----------> Array(1) Array(1)
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】response.created Object
+__federation_expose_AssistChat-CMKSNWPy.js:190 [assist-chat] skipPayCheck=true, msgList: 4 showWelcome: false
+index-B4Spflos.js:2 11---------- resizeMobile ---->
+index-B4Spflos.js:2 22---------- resizeMobile ----> 949
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】message.added {Type: 'message.added', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', Message: {…}, Timestamp: '1781192934211', RecordId: ''}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】content.added {Type: 'content.added', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Content: {…}, Timestamp: '1781192934211', …}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '收', Timestamp: '1781192934287', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:52 WidgetHelper: Workers 预加载完成
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '到。', Timestamp: '1781192934287', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '要', Timestamp: '1781192934287', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '为', Timestamp: '1781192934287', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '「', Timestamp: '1781192934288', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '深圳地铁智能', Timestamp: '1781192934288', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '体建设及纳管平', Timestamp: '1781192934288', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '台采购和财务试点', Timestamp: '1781192934288', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][697][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][698][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][699][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][700][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][701][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '智能体服务项目」', Timestamp: '1781192934381', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][702][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '生', Timestamp: '1781192934382', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '成**', Timestamp: '1781192934383', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成** []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][703][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][704][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][705][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][706][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][707][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '点对点应答**，', Timestamp: '1781192935161', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**， []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][708][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '这', Timestamp: '1781192935166', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][709][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '属', Timestamp: '1781192935170', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][710][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '于**应', Timestamp: '1781192935172', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '标材料**', Timestamp: '1781192935174', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料** []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][711][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][712][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '类', Timestamp: '1781192935183', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '输', Timestamp: '1781192935186', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '出（', Timestamp: '1781192935190', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（ []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][713][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '针', Timestamp: '1781192935197', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][714][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '对招', Timestamp: '1781192935198', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][715][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][716][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][717][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '标文件每', Timestamp: '1781192935339', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][718][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '条', Timestamp: '1781192935339', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '需', Timestamp: '1781192935340', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '求', Timestamp: '1781192935341', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '逐条响', Timestamp: '1781192935342', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][719][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '应）。\n\n我', Timestamp: '1781192935343', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '先按', Timestamp: '1781192935344', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '规', Timestamp: '1781192935345', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][720][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '范启', Timestamp: '1781192935346', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '动流', Timestamp: '1781192935347', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][721][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][722][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][723][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '程：先', Timestamp: '1781192935347', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][724][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][725][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][726][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][727][renderAll.start] {count: 0}
+lke-component-eILwIrep.js:34 [MermaidTrace][728][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '下', Timestamp: '1781192936162', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][729][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '载招', Timestamp: '1781192936165', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][730][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '标文件 ', Timestamp: '1781192936168', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件  []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][731][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '→ 双', Timestamp: '1781192936173', …}ContentIndex: 0MessageId: "msg_db109009-54b5-4afa-8245-209328656975_1"RecordId: "rcd_db109009-54b5-4afa-8245-209328656975"Text: "→ 双"Timestamp: "1781192936173"Type: "text.delta"[[Prototype]]: Object
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件 → 双 []
+lke-component-eILwIrep.js:31 9999 true
+lke-component-eILwIrep.js:34 [MermaidTrace][732][renderAll.start] {count: 0}
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '库检', Timestamp: '1781192936237', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件 → 双库检 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '索 → ', Timestamp: '1781192936237', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件 → 双库检索 →  []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '沉淀原', Timestamp: '1781192936238', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件 → 双库检索 → 沉淀原 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '始文件 → 生成', Timestamp: '1781192936238', …}
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件 → 双库检索 → 沉淀原始文件 → 生成 []
+lke-component-eILwIrep.js:31 9999 true
+__federation_expose_AssistChat-CMKSNWPy.js:200 【ClientV2ClawManager】text.delta {Type: 'text.delta', MessageId: 'msg_db109009-54b5-4afa-8245-209328656975_1', ContentIndex: 0, Text: '点', Timestamp: '1781192936238', …}ContentIndex: 0MessageId: "msg_db109009-54b5-4afa-8245-209328656975_1"RecordId: "rcd_db109009-54b5-4afa-8245-209328656975"Text: "点"Timestamp: "1781192936238"Type: "text.delta"[[Prototype]]: Object
+lke-component-eILwIrep.js:34 extractDollarEnclosedStrings1 收到。要为「深圳地铁智能体建设及纳管平台采购和财务试点智能体服务项目」生成**点对点应答**，这属于**应标材料**类输出（针对招标文件每条需求逐条响应）。
+
+我先按规范启动流程：先下载招标文件 → 双库检索 → 沉淀原始文件 → 生成点 []

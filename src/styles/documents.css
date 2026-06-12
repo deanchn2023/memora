@@ -147,6 +147,57 @@
   border-radius: 1px;
 }
 
+/* 云端资料子分类 */
+.cloud-sub-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 0.5px solid var(--border-light);
+}
+
+.cloud-sub-tabs.hidden {
+  display: none;
+}
+
+.cloud-sub-tab {
+  padding: 7px 18px;
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  position: relative;
+  letter-spacing: -0.1px;
+  border-radius: 8px;
+}
+
+.cloud-sub-tab:hover {
+  color: var(--text-primary);
+  background: var(--primary-light);
+}
+
+.cloud-sub-tab.active {
+  color: var(--primary-color);
+  font-weight: 600;
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.cloud-sub-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 25%;
+  right: 25%;
+  height: 2px;
+  background: var(--primary-color);
+  border-radius: 1px;
+}
+
 /* 主体 */
 .documents-body {
   flex: 1;
@@ -636,6 +687,11 @@
     white-space: nowrap;
     font-size: 12px;
   }
+
+  .cloud-sub-tab {
+    padding: 5px 12px;
+    font-size: 11.5px;
+  }
 }
 
 @media (min-width: 1200px) {
@@ -670,4 +726,395 @@
   padding: 16px 0;
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+/* ============= Agent 产物 ============= */
+
+.agent-artifacts-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.artifacts-toolbar {
+  padding: 14px 0 10px;
+  border-bottom: 0.5px solid var(--border-light);
+  margin-bottom: 12px;
+}
+
+.artifacts-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.artifacts-path-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.artifacts-path-value {
+  flex: 1;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 12px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.artifacts-change-dir-btn,
+.artifacts-open-dir-btn,
+.artifacts-refresh-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s var(--transition);
+}
+
+.artifacts-change-dir-btn:hover,
+.artifacts-open-dir-btn:hover,
+.artifacts-refresh-btn:hover {
+  background: var(--primary-light);
+  border-color: var(--primary-color);
+  transform: scale(1.05);
+}
+
+.artifacts-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.artifacts-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 0;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+.artifacts-loading .spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(79, 142, 247, 0.2);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.artifacts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.artifacts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.artifacts-empty .empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.artifacts-empty p {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.artifacts-empty .empty-hint {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+/* Agent 产物日期分组 */
+.artifact-date-group {
+  margin-bottom: 8px;
+}
+
+.artifact-date-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.1px;
+}
+
+.artifact-date-header::after {
+  content: '';
+  flex: 1;
+  height: 0.5px;
+  background: var(--border-light);
+}
+
+/* Agent 产物卡片 */
+.artifact-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  position: relative;
+}
+
+.artifact-card:hover {
+  border-color: rgba(79, 142, 247, 0.2);
+  box-shadow: var(--shadow-xs);
+  transform: translateX(2px);
+}
+
+.artifact-card-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.artifact-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.artifact-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.1px;
+}
+
+.artifact-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.artifact-card-type {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(79, 142, 247, 0.08);
+  color: var(--primary-color);
+}
+
+.artifact-card-size {
+  color: var(--text-tertiary);
+}
+
+.artifact-card-time {
+  margin-left: auto;
+}
+
+.artifact-card-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s var(--transition);
+}
+
+.artifact-card:hover .artifact-card-actions {
+  opacity: 1;
+}
+
+.artifact-action-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s var(--transition);
+}
+
+.artifact-action-btn:hover {
+  background: var(--primary-light);
+  color: var(--primary-color);
+  transform: scale(1.1);
+}
+
+.artifact-action-btn.danger:hover {
+  background: rgba(255, 59, 48, 0.08);
+  color: #FF3B30;
+}
+
+/* Agent 产物 - 保存到产物的按钮（AI 对话中） */
+.agent-save-artifact-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s var(--transition);
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.agent-save-artifact-btn:hover {
+  background: var(--primary-light);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+/* 预览弹窗 */
+.artifact-preview-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5000;
+  animation: fadeIn 0.2s ease;
+}
+
+.artifact-preview-modal {
+  width: 90%;
+  max-width: 900px;
+  height: 80vh;
+  background: var(--bg-glass-heavy);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border-radius: var(--radius-2xl);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2), 0 0 0 0.5px rgba(255, 255, 255, 0.2) inset;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: panelFadeIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.artifact-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 0.5px solid var(--border-light);
+}
+
+.artifact-preview-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-preview-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: var(--bg-tertiary);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s var(--transition);
+}
+
+.artifact-preview-close:hover {
+  background: rgba(255, 59, 48, 0.08);
+  color: #FF3B30;
+  transform: rotate(90deg);
+}
+
+.artifact-preview-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.artifact-preview-body iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: white;
+}
+
+.artifact-preview-body pre {
+  padding: 16px 20px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  overflow: auto;
+  height: 100%;
+  color: var(--text-primary);
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .artifacts-config-row {
+    flex-wrap: wrap;
+  }
+  .artifacts-path-value {
+    font-size: 11px;
+  }
+  .artifact-preview-modal {
+    width: 95%;
+    height: 85vh;
+  }
 }

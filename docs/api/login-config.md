@@ -135,17 +135,7 @@ GET /memora/config
     "daily_limit": 500
   },
   "adp": {
-    "app_key": "EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm",
-    "url": "https://wss.lke.cloud.tencent.com/adp/v2/chat",
-    "agent_name": "我的AI助手",
-    "knowledge_app_key": "",
-    "search_app_key": ""
-  },
-  "prompts": {
-    "ai_prompt": "",
-    "memory_prompt": "",
-    "clipboard_prompt": ""
-  },
+    "app_key": "<your_adp_app_key>",
   "policies": {
     "lock_config": false,
     "allow_local_override": true
@@ -250,7 +240,7 @@ PUT /memora/admin/configs/:organization
     "daily_limit": 500
   },
   "adp": {
-    "app_key": "EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm",
+    "app_key": "<your_adp_app_key>",
     "url": "https://wss.lke.cloud.tencent.com/adp/v2/chat",
     "agent_name": "我的AI助手",
     "knowledge_app_key": "",

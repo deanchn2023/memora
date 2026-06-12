@@ -114,6 +114,7 @@ class Notebook {
     // 图片专属字段（纯图片笔记 或 图文混合笔记）
     if (note.category === 'image' || note.imagePath) {
       newNote.imagePath = note.imagePath || null;
+      newNote.serverImagePath = note.serverImagePath || '';
       newNote.imageHash = note.imageHash || null;
       newNote.imageWidth = note.imageWidth || null;
       newNote.imageHeight = note.imageHeight || null;

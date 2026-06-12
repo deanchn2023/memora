@@ -209,6 +209,11 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     新对话
                   </button>
+                  <div class="chat-search-box">
+                    <svg class="chat-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" id="chatSearchInput" placeholder="搜索对话..." class="chat-search-input" />
+                    <button class="chat-search-clear hidden" id="chatSearchClear" title="清除">×</button>
+                  </div>
                 </div>
                 <div class="chat-session-list" id="chatSessionList">
                   <!-- 动态生成 -->
@@ -537,11 +542,16 @@
               </div>
             </div>
             <div class="documents-category-tabs" id="documentsCategoryTabs">
-              <button class="doc-cat-tab active" data-type="documents">📄 文档</button>
-              <button class="doc-cat-tab" data-type="cases">💼 案例</button>
-              <button class="doc-cat-tab" data-type="demos">🎮 Demo</button>
-              <button class="doc-cat-tab" data-type="learning">📚 学习材料</button>
+              <button class="doc-cat-tab active" data-type="cloud">☁️ 云端资料</button>
               <button class="doc-cat-tab" data-type="local">💻 本地</button>
+              <button class="doc-cat-tab" data-type="artifacts">🤖 Agent 产物</button>
+            </div>
+            <!-- 云端资料子分类 -->
+            <div class="cloud-sub-tabs" id="cloudSubTabs">
+              <button class="cloud-sub-tab active" data-type="documents">📄 文档</button>
+              <button class="cloud-sub-tab" data-type="cases">💼 案例</button>
+              <button class="cloud-sub-tab" data-type="demos">🎮 Demo</button>
+              <button class="cloud-sub-tab" data-type="learning">📚 学习材料</button>
             </div>
             <div class="documents-body" id="documentsBody">
               <div class="documents-loading" id="documentsLoading" style="display: none;">
@@ -550,8 +560,8 @@
               </div>
               <div class="documents-grid" id="documentsGrid">
                 <div class="documents-empty">
-                  <div class="empty-icon">📄</div>
-                  <p>点击标签浏览文档</p>
+                  <div class="empty-icon">☁️</div>
+                  <p>浏览云端资料</p>
                   <span class="empty-hint">支持搜索文档、案例、Demo 和学习材料</span>
                 </div>
               </div>
@@ -604,6 +614,31 @@
                   </div>
                   <div class="local-load-more" id="localLoadMore" style="display: none;">
                     <button class="local-load-more-btn" id="localLoadMoreBtn">加载更多</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Agent 产物区域 -->
+              <div class="agent-artifacts-container hidden" id="agentArtifactsContainer">
+                <div class="artifacts-toolbar">
+                  <div class="artifacts-config-row">
+                    <span class="artifacts-path-label">📂 保存目录：</span>
+                    <span class="artifacts-path-value" id="artifactsPathValue">加载中...</span>
+                    <button class="artifacts-change-dir-btn" id="artifactsChangeDirBtn" title="更改保存目录">✏️</button>
+                    <button class="artifacts-open-dir-btn" id="artifactsOpenDirBtn" title="在 Finder 中打开">📁</button>
+                    <button class="artifacts-refresh-btn" id="artifactsRefreshBtn" title="刷新列表">🔄</button>
+                  </div>
+                </div>
+                <div class="artifacts-body" id="artifactsBody">
+                  <div class="artifacts-loading" id="artifactsLoading" style="display: none;">
+                    <div class="spinner"></div>
+                    <span>加载中...</span>
+                  </div>
+                  <div class="artifacts-grid" id="artifactsGrid"></div>
+                  <div class="artifacts-empty" id="artifactsEmpty" style="display: none;">
+                    <div class="empty-icon">🤖</div>
+                    <p>暂无 Agent 产物</p>
+                    <span class="empty-hint">AI 助手生成的文档、HTML 等交付物将保存在这里</span>
                   </div>
                 </div>
               </div>
@@ -853,8 +888,8 @@
               <div class="server-url-status hidden" id="loginServerUrlStatus"></div>
             </div>
             <div class="form-group">
-              <label for="loginEmail">用户名</label>
-              <input type="text" id="loginEmail" placeholder="输入用户名">
+              <label for="loginAccount">账号</label>
+              <input type="text" id="loginAccount" placeholder="用户名 / 手机号 / 邮箱">
             </div>
             <div class="form-group">
               <label for="loginPassword">密码</label>
@@ -869,6 +904,55 @@
             </div>
             <div id="loginError" class="login-error hidden"></div>
             <button class="btn-primary org-login-btn" id="orgLoginBtn" onclick="App.handleOrgLogin()">登 录</button>
+            <div class="login-register-link">
+              还没有账号？<a href="javascript:void(0)" onclick="App.showRegisterForm()">注册新账号</a>
+            </div>
+          </div>
+
+          <!-- 注册表单（默认隐藏） -->
+          <div id="registerSection" class="hidden">
+            <div class="org-login-card">
+              <div class="org-login-icon">✨</div>
+              <h4>注册账号</h4>
+              <p style="color: var(--text-secondary); margin: 8px 0 16px;">创建账号后即可使用全部功能</p>
+              <div class="form-group">
+                <label for="regUsername">用户名 <span class="required-mark">*</span></label>
+                <input type="text" id="regUsername" placeholder="2-20位，字母/数字/下划线/中划线" maxlength="20">
+              </div>
+              <div class="form-group">
+                <label for="regMobile">手机号 <span class="required-mark">*</span></label>
+                <div class="sms-code-row">
+                  <input type="tel" id="regMobile" placeholder="11位手机号" maxlength="11">
+                  <button class="sms-send-btn" id="regSendCodeBtn" onclick="App.sendVerifyCode()">获取验证码</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="regSmsCode">验证码 <span class="required-mark">*</span></label>
+                <input type="text" id="regSmsCode" placeholder="6位数字验证码" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+                <div id="regDevCodeHint" class="dev-code-hint hidden"></div>
+              </div>
+              <div class="form-group">
+                <label for="regName">姓名 <span class="required-mark">*</span></label>
+                <input type="text" id="regName" placeholder="您的姓名" maxlength="30">
+              </div>
+              <div class="form-group">
+                <label for="regPassword">密码 <span class="required-mark">*</span></label>
+                <input type="password" id="regPassword" placeholder="至少6位" maxlength="50">
+              </div>
+              <div class="form-group">
+                <label for="regNickname">昵称</label>
+                <input type="text" id="regNickname" placeholder="选填，展示用名" maxlength="30">
+              </div>
+              <div class="form-group">
+                <label for="regEmail">邮箱</label>
+                <input type="email" id="regEmail" placeholder="选填" maxlength="100">
+              </div>
+              <div id="registerError" class="login-error hidden"></div>
+              <button class="btn-primary org-login-btn" id="regSubmitBtn" onclick="App.handleRegister()">注 册</button>
+              <div class="login-register-link">
+                已有账号？<a href="javascript:void(0)" onclick="App.showLoginForm()">返回登录</a>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -1003,16 +1087,19 @@
 
           <!-- 小用量 LLM（默认/通用） -->
           <h4 class="settings-section-title">💬 小用量 LLM（通用对话、文章生成等）</h4>
+          <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
+            兼容所有 OpenAI 接口格式的大模型。示例：DeepSeek（api.deepseek.com）、智谱 GLM（open.bigmodel.cn/api/paas/v4）、火山方舟（ark.cn-beijing.volces.com/api/v3）等。Base URL 填写到 /v3 或 /v4 即可，系统自动拼接 /chat/completions。
+          </small>
           <div class="form-group">
             <label for="apiKey">API Key</label>
-            <input type="password" id="apiKey" placeholder="输入API Key（不输入则使用内置密钥）">
+            <input type="password" id="apiKey" placeholder="输入对应平台的 API Key">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
               不设置API Key时使用内置密钥，每日限制10次调用；设置后使用您自己的密钥。
             </small>
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label for="apiBaseUrl">API地址</label>
+              <label for="apiBaseUrl">Base URL</label>
               <input type="text" id="apiBaseUrl" placeholder="https://api.deepseek.com">
             </div>
             <div class="form-group">
@@ -1020,26 +1107,30 @@
               <input type="text" id="apiModel" placeholder="deepseek-v4-flash">
             </div>
           </div>
+          <button class="btn secondary" id="testLLMBtn" style="margin-bottom: 12px;">🔗 测试连接</button>
+          <span id="testLLMResult" style="margin-left: 8px; font-size: 13px;"></span>
 
           <!-- 大用量 LLM（高并发场景） -->
           <h4 class="settings-section-title" style="margin-top: 16px;">⚡ 大用量 LLM（剪贴板分析、记忆提取等高频调用）</h4>
           <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
-            大用量场景默认使用 DeepSeek（稳定性优先）。如需更换为 GLM/通义等高并发模型，可单独配置。留空则回退到小用量 LLM 配置。
+            高频调用场景可单独配置不同模型。留空则复用上方小用量 LLM 配置。⚠️ Base URL、API Key、模型名称三者必须配对（同一平台），否则鉴权失败。
           </small>
           <div class="form-group">
-            <label for="highvolApiKey">大用量 API Key（可选）</label>
+            <label for="highvolApiKey">大用量 API Key</label>
             <input type="password" id="highvolApiKey" placeholder="留空则使用上方小用量 API Key">
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label for="highvolBaseUrl">大用量 API地址</label>
-              <input type="text" id="highvolBaseUrl" placeholder="https://api.deepseek.com">
+              <label for="highvolBaseUrl">大用量 Base URL</label>
+              <input type="text" id="highvolBaseUrl" placeholder="留空则使用上方小用量 Base URL">
             </div>
             <div class="form-group">
               <label for="highvolModel">大用量模型名称</label>
-              <input type="text" id="highvolModel" placeholder="deepseek-v4-flash">
+              <input type="text" id="highvolModel" placeholder="留空则使用上方小用量模型">
             </div>
           </div>
+          <button class="btn secondary" id="testHighvolLLMBtn" style="margin-bottom: 12px;">🔗 测试连接</button>
+          <span id="testHighvolLLMResult" style="margin-left: 8px; font-size: 13px;"></span>
 
           <div class="form-group">
             <label for="apiDailyLimit">每日调用限制（设置自定义Key后生效）</label>
@@ -1121,26 +1212,37 @@
               File Share 服务 API Key（降级方案）。优先使用下方的「腾讯云文件上传」配置。
             </small>
           </div>
-          <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 12px; margin-top: 8px;">
-            <label style="font-weight: 600; margin-bottom: 8px; display: block;">腾讯云文件上传（推荐，ADP 官方规范）</label>
-            <small style="color: var(--text-secondary); margin-bottom: 8px; display: block;">
-              配置后，文件将上传到 ADP 的 COS 存储，后端可正常接收文档。在腾讯云控制台「访问管理 → API密钥管理」获取 SecretId/SecretKey，BotBizId 在 ADP 应用管理页面获取。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="adpTcSecretId">腾讯云 SecretId</label>
-            <input type="password" id="adpTcSecretId" placeholder="输入腾讯云 SecretId">
-          </div>
-          <div class="form-group">
-            <label for="adpTcSecretKey">腾讯云 SecretKey</label>
-            <input type="password" id="adpTcSecretKey" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-          </div>
-          <div class="form-group">
-            <label for="adpBotBizId">BotBizId（应用ID）</label>
-            <input type="text" id="adpBotBizId" placeholder="177106121651545xxxx">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              ADP 应用的业务 ID，在应用管理页面的应用详情中获取。与 AppKey 不同。
-            </small>
+          <!-- 腾讯云文件上传配置卡片 -->
+          <div class="cos-upload-card" id="cosUploadCard">
+            <div class="cos-upload-header" onclick="document.getElementById('cosUploadCard').classList.toggle('expanded')">
+              <div class="cos-upload-title">
+                <span class="cos-upload-icon">☁️</span>
+                <span>腾讯云文件上传（推荐）</span>
+                <span class="cos-status-badge" id="cosStatusBadge">未配置</span>
+              </div>
+              <div class="cos-upload-toggle">▼</div>
+            </div>
+            <div class="cos-upload-body">
+              <div class="cos-upload-desc">
+                <p>配置后，文件将通过 ADP 官方 COS 方式上传，后端可正常接收文档。</p>
+                <p>📝 <a href="https://cloud.tencent.com/document/product/1759/108903" target="_blank" style="color: var(--primary-color);">查看 ADP 文件上传文档</a></p>
+              </div>
+              <div class="form-group">
+                <label for="adpTcSecretId">腾讯云 SecretId</label>
+                <input type="password" id="adpTcSecretId" placeholder="在腾讯云控制台「访问管理 → API密钥管理」获取">
+              </div>
+              <div class="form-group">
+                <label for="adpTcSecretKey">腾讯云 SecretKey</label>
+                <input type="password" id="adpTcSecretKey" placeholder="在腾讯云控制台「访问管理 → API密钥管理」获取">
+              </div>
+              <div class="form-group">
+                <label for="adpBotBizId">BotBizId（应用ID）</label>
+                <input type="text" id="adpBotBizId" placeholder="在 ADP 应用管理页面获取，如 177106121651545xxxx">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  ADP 应用的业务 ID，在应用管理页面的应用详情中获取。与 AppKey 不同。
+                </small>
+              </div>
+            </div>
           </div>
           <div class="form-group">
             <label for="adpUrl">ADP API地址</label>

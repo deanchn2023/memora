@@ -434,6 +434,19 @@ module.exports = function(db) {
     return { valid: true, device };
   }
 
+  // 🔧 设备验证中间件（与服务器部署代码同步，图片上传等路由需要）
+  function requireActiveDevice(req, res, next) {
+    const deviceId = req.body.device_id || req.query.device_id;
+    if (!deviceId) return res.status(400).json({ error: '缺少 device_id' });
+
+    const device = db.prepare('SELECT * FROM registered_devices WHERE device_id = ? AND user_id = ?').get(deviceId, req.userId);
+    if (!device) return res.status(404).json({ error: '设备未注册，请先调用 /sync/device/register' });
+    if (device.status === 'deactivated') return res.status(403).json({ error: '设备已停用' });
+
+    req.device = device;
+    next();
+  }
+
   // ===== 权限检查 =====
   function checkPermission(platform, dataType, operation) {
     const caps = PLATFORM_CAPABILITIES[platform] || PLATFORM_CAPABILITIES.web;
@@ -1019,7 +1032,8 @@ module.exports = function(db) {
   // ===== 图片同步 API（v3.1 新增）=====
 
   // POST /notes/images/upload — 上传图片（multipart/form-data）
-  router.post('/notes/images/upload', noteImageUpload.array('images', 5), (req, res) => {
+  // 🔧 添加 requireActiveDevice 中间件，与服务器端部署代码同步
+  router.post('/notes/images/upload', noteImageUpload.array('images', 5), requireActiveDevice, (req, res) => {
     const userId = req.userId;
     const files = req.files;
 

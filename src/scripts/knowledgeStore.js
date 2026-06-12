@@ -71,7 +71,26 @@ class KnowledgeStore {
   addAtom(atom) {
     // 去重：相同内容不重复添加
     const contentHash = this._hashContent(atom.content);
-    if (this.atoms.some(a => this._hashContent(a.content) === contentHash)) {
+    const existingIdx = this.atoms.findIndex(a => this._hashContent(a.content) === contentHash);
+
+    if (existingIdx !== -1) {
+      // 问题类型：如果已有答案则跳过，如果没答案但有新答案则更新
+      if (atom.type === 'question') {
+        const existing = this.atoms[existingIdx];
+        if (existing.answer) {
+          console.log('[KnowledgeStore] Duplicate question with answer, skipping');
+          return null;
+        }
+        if (atom.answer && !existing.answer) {
+          // 补充答案
+          existing.answer = atom.answer;
+          existing.answer_source = atom.answer_source || 'adp_search';
+          existing.updated_at = new Date().toISOString();
+          this.saveAtoms();
+          console.log('[KnowledgeStore] Updated answer for existing question');
+          return existing;
+        }
+      }
       console.log('[KnowledgeStore] Duplicate atom, skipping');
       return null;
     }
@@ -81,9 +100,12 @@ class KnowledgeStore {
       content: atom.content,
       source_note_ids: atom.source_note_ids || [],
       domain: atom.domain || '未分类',
-      type: atom.type || 'fact', // fact/rule/insight/procedure
+      type: atom.type || 'fact', // fact/rule/insight/procedure/question
       importance: atom.importance ?? 0.5,
       cluster_id: atom.cluster_id || null,
+      answer: atom.answer || null,                     // 问题答案（type=question 时）
+      answer_source: atom.answer_source || null,       // 答案来源（adp_search/manual 等）
+      auto_generated: atom.auto_generated || false,     // 是否自动生成
       contentHash,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()

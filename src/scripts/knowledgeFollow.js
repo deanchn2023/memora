@@ -46,6 +46,7 @@ class KnowledgeFollow {
     this.searchResults = [];
     this.publicResults = [];
     this.initialized = false;
+    this._pendingQuestionId = null; // 寻找答案时记录的问题原子 ID
     this._panelOrder = ['adp', 'local', 'public']; // 面板顺序：ADP优先
     this._expandedPanel = null; // 当前展开的面板
 
@@ -708,6 +709,7 @@ class KnowledgeFollow {
 
   /**
    * 自动保存 ADP 搜索结果到推荐列表（数据库）
+   * 同时自动记录问题到知识问题列表，如果有搜索结果则自动补充答案
    */
   async autoSaveADPToRecommendations() {
     const input = document.getElementById('knowledgeSearchInput');
@@ -726,6 +728,72 @@ class KnowledgeFollow {
     } catch (e) {
       console.error('[KnowledgeFollow] Auto-save ADP result error:', e);
     }
+
+    // 自动记录问题到知识问题列表（如果搜索有实质结果）
+    if (query && query.length >= 2 && this.adpFullText && this.adpFullText.trim().length > 20) {
+      try {
+        // 截取答案摘要（避免存储过长内容）
+        const answerText = this.adpFullText.trim();
+        const answerPreview = answerText.length > 500 ? answerText.substring(0, 500) + '...' : answerText;
+
+        // 如果是从"寻找答案"触发的搜索，更新已有问题
+        if (this._pendingQuestionId) {
+          const updateResult = await window.electronAPI.knowledgeUpdateAtom(this._pendingQuestionId, {
+            answer: answerPreview,
+            answer_source: 'adp_search'
+          });
+          if (updateResult.success) {
+            console.log('[KnowledgeFollow] Updated answer for question:', this._pendingQuestionId);
+          }
+          this._pendingQuestionId = null; // 清除标记
+        } else {
+          // 全新搜索 → 自动创建问题+答案
+          const domain = this._inferDomainFromQuery(query);
+          const addResult = await window.electronAPI.knowledgeAddAtom({
+            content: query,
+            domain: domain,
+            type: 'question',
+            importance: 0.7,
+            answer: answerPreview,
+            answer_source: 'adp_search',
+            auto_generated: true
+          });
+
+          if (addResult.success) {
+            console.log('[KnowledgeFollow] Auto-recorded question:', query.substring(0, 30), '| domain:', domain);
+          }
+        }
+
+        // 通知知识萃取模块刷新问题列表
+        if (window.knowledgeDistillation) {
+          window.knowledgeDistillation.loadQuestions();
+          window.knowledgeDistillation.loadStats();
+        }
+      } catch (e) {
+        console.error('[KnowledgeFollow] Auto-record question error:', e);
+        this._pendingQuestionId = null;
+      }
+    }
+  }
+
+  /**
+   * 从搜索查询推断问题领域
+   */
+  _inferDomainFromQuery(query) {
+    const domainKeywords = {
+      '技术': ['代码', '编程', 'API', '开发', '框架', '数据库', '服务器', '部署', 'Docker', 'Git', '前端', '后端', '接口', 'bug', '报错', '错误'],
+      '产品': ['产品', '需求', '功能', '用户', '体验', '设计', '原型', '交互'],
+      '业务': ['业务', '流程', '方案', '报价', '合同', '客户', '商机', '投标'],
+      '管理': ['管理', '团队', '进度', '排期', '计划', '会议', '汇报'],
+      'AI': ['AI', '模型', '训练', '智能体', 'Agent', 'LLM', 'GPT', '提示词', 'Prompt']
+    };
+    const lowerQ = query.toLowerCase();
+    for (const [domain, keywords] of Object.entries(domainKeywords)) {
+      if (keywords.some(kw => lowerQ.includes(kw.toLowerCase()))) {
+        return domain;
+      }
+    }
+    return '未分类';
   }
 
   async stopADPStreaming() {
@@ -1040,6 +1108,16 @@ class KnowledgeFollow {
         this.addRecommendation(data.recommendation);
       });
     }
+  }
+
+  // ============ 问题答案回调 ============
+
+  /**
+   * 设置待解答的问题 ID（由 resolveQuestion 调用）
+   * 搜索完成后自动更新该问题的答案
+   */
+  setPendingQuestionId(atomId) {
+    this._pendingQuestionId = atomId;
   }
 
   // ============ 工具方法 ============

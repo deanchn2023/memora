@@ -5,7 +5,8 @@
 
 const Documents = {
   BASE_URL: 'http://121.5.164.126:3010', // 默认使用外网可访问的 Beta 地址
-  currentType: 'documents', // documents | cases | demos | learning
+  currentType: 'cloud', // cloud | local | artifacts
+  cloudSubType: 'documents', // documents | cases | demos | learning
   currentSort: 'latest', // latest | hot
   currentPage: 1,
   pageSize: 20,
@@ -21,7 +22,7 @@ const Documents = {
     if (this.initialized) return;
     this.initialized = true;
 
-    // 分类标签切换
+    // 顶级分类标签切换：云端资料 | 本地 | Agent 产物
     document.querySelectorAll('.doc-cat-tab').forEach(tab => {
       tab.addEventListener('click', (e) => {
         document.querySelectorAll('.doc-cat-tab').forEach(t => t.classList.remove('active'));
@@ -32,18 +33,44 @@ const Documents = {
         this.hasMore = true;
         this.keyword = document.getElementById('documentsSearchInput')?.value || '';
 
-        // 本地文件标签切换
         const localContainer = document.getElementById('localFilesContainer');
+        const artifactsContainer = document.getElementById('agentArtifactsContainer');
         const normalElements = document.querySelectorAll('#documentsGrid, #documentsPagination, #documentsLoading');
+        const cloudSubTabs = document.getElementById('cloudSubTabs');
+
         if (this.currentType === 'local') {
           normalElements.forEach(el => el.classList.add('hidden'));
           if (localContainer) localContainer.classList.remove('hidden');
+          if (artifactsContainer) artifactsContainer.classList.add('hidden');
+          if (cloudSubTabs) cloudSubTabs.classList.add('hidden');
           if (window.LocalFiles) LocalFiles.onShow();
+        } else if (this.currentType === 'artifacts') {
+          normalElements.forEach(el => el.classList.add('hidden'));
+          if (localContainer) localContainer.classList.add('hidden');
+          if (artifactsContainer) artifactsContainer.classList.remove('hidden');
+          if (cloudSubTabs) cloudSubTabs.classList.add('hidden');
+          AgentArtifacts.onShow();
         } else {
+          // cloud
           normalElements.forEach(el => el.classList.remove('hidden'));
           if (localContainer) localContainer.classList.add('hidden');
+          if (artifactsContainer) artifactsContainer.classList.add('hidden');
+          if (cloudSubTabs) cloudSubTabs.classList.remove('hidden');
           this.fetchData(true);
         }
+      });
+    });
+
+    // 云端资料子分类切换：文档 | 案例 | Demo | 学习材料
+    document.querySelectorAll('.cloud-sub-tab').forEach(tab => {
+      tab.addEventListener('click', (e) => {
+        document.querySelectorAll('.cloud-sub-tab').forEach(t => t.classList.remove('active'));
+        e.target.classList.add('active');
+        this.cloudSubType = e.target.dataset.type;
+        this.currentPage = 1;
+        this.allData = [];
+        this.hasMore = true;
+        this.fetchData(true);
       });
     });
 
@@ -66,8 +93,8 @@ const Documents = {
       this.currentPage = 1;
       this.allData = [];
       this.hasMore = true;
-      // 如果当前不是本地，搜索在线文档
-      if (this.currentType !== 'local') {
+      // 如果当前不是本地/Agent产物，搜索在线文档
+      if (this.currentType !== 'local' && this.currentType !== 'artifacts') {
         this.fetchData(true);
       }
       // 始终同步搜索本地文件
@@ -82,7 +109,7 @@ const Documents = {
         this.currentPage = 1;
         this.allData = [];
         this.hasMore = true;
-        if (this.currentType !== 'local') {
+        if (this.currentType !== 'local' && this.currentType !== 'artifacts') {
           this.fetchData(true);
         }
         // 始终同步搜索本地文件
@@ -224,10 +251,16 @@ const Documents = {
 
   _getApiPath() {
     switch (this.currentType) {
-      case 'documents': return '/api/public/documents';
-      case 'cases': return '/api/public/cases';
-      case 'demos': return '/api/public/demos';
-      case 'learning': return '/api/public/learning';
+      case 'cloud': {
+        switch (this.cloudSubType) {
+          case 'documents': return '/api/public/documents';
+          case 'cases': return '/api/public/cases';
+          case 'demos': return '/api/public/demos';
+          case 'learning': return '/api/public/learning';
+          default: return '/api/public/documents';
+        }
+      }
+      case 'artifacts': return null; // Agent 产物不走 API
       default: return '/api/public/documents';
     }
   },
@@ -237,7 +270,7 @@ const Documents = {
     if (!grid) return;
 
     if (this.allData.length === 0) {
-      const typeLabel = { documents: '文档', cases: '案例', demos: 'Demo', learning: '学习材料' }[this.currentType];
+      const typeLabel = { documents: '文档', cases: '案例', demos: 'Demo', learning: '学习材料' }[this.cloudSubType];
       grid.innerHTML = `
         <div class="documents-empty">
           <div class="empty-icon">📭</div>
@@ -270,7 +303,8 @@ const Documents = {
   },
 
   _renderCard(item) {
-    switch (this.currentType) {
+    const subType = this.currentType === 'cloud' ? this.cloudSubType : this.currentType;
+    switch (subType) {
       case 'documents': return this._renderDocumentCard(item);
       case 'cases': return this._renderCaseCard(item);
       case 'demos': return this._renderDemoCard(item);
@@ -568,3 +602,267 @@ const Documents = {
 };
 
 window.Documents = Documents;
+
+/**
+ * Agent 产物模块 - 管理AI助手生成的文档交付物
+ * 保存目录：默认 userData/agent-artifacts/，按时间子目录组织
+ * 支持：HTML、Markdown、JSON、文本等文件
+ */
+const AgentArtifacts = {
+  basePath: '',
+  initialized: false,
+
+  init() {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    // 更改保存目录
+    document.getElementById('artifactsChangeDirBtn')?.addEventListener('click', async () => {
+      if (window.electronAPI?.artifactsChangeDir) {
+        const result = await window.electronAPI.artifactsChangeDir();
+        if (result?.path) {
+          this.basePath = result.path;
+          this._updatePathDisplay();
+          this.loadArtifacts();
+        }
+      }
+    });
+
+    // 在 Finder 中打开
+    document.getElementById('artifactsOpenDirBtn')?.addEventListener('click', () => {
+      if (window.electronAPI?.artifactsOpenDir) {
+        window.electronAPI.artifactsOpenDir();
+      }
+    });
+
+    // 刷新
+    document.getElementById('artifactsRefreshBtn')?.addEventListener('click', () => {
+      this.loadArtifacts();
+    });
+  },
+
+  async onShow() {
+    this.init();
+    await this._loadBasePath();
+    this.loadArtifacts();
+  },
+
+  async _loadBasePath() {
+    if (window.electronAPI?.artifactsGetBasePath) {
+      try {
+        const result = await window.electronAPI.artifactsGetBasePath();
+        this.basePath = result.path || '';
+      } catch (e) {
+        console.error('[AgentArtifacts] Failed to get base path:', e);
+      }
+    }
+    this._updatePathDisplay();
+  },
+
+  _updatePathDisplay() {
+    const el = document.getElementById('artifactsPathValue');
+    if (el) el.textContent = this.basePath || '未设置';
+  },
+
+  async loadArtifacts() {
+    const grid = document.getElementById('artifactsGrid');
+    const empty = document.getElementById('artifactsEmpty');
+    const loading = document.getElementById('artifactsLoading');
+
+    if (!grid) return;
+    grid.innerHTML = '';
+    if (empty) empty.style.display = 'none';
+    if (loading) loading.style.display = 'flex';
+
+    try {
+      if (!window.electronAPI?.artifactsList) {
+        if (loading) loading.style.display = 'none';
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+
+      const result = await window.electronAPI.artifactsList();
+      if (loading) loading.style.display = 'none';
+
+      const artifacts = result.artifacts || [];
+      if (artifacts.length === 0) {
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+
+      // 按日期分组
+      const grouped = {};
+      artifacts.forEach(a => {
+        const dateKey = a.dateFolder || '未知日期';
+        if (!grouped[dateKey]) grouped[dateKey] = [];
+        grouped[dateKey].push(a);
+      });
+
+      // 按日期倒序渲染
+      const sortedDates = Object.keys(grouped).sort().reverse();
+      grid.innerHTML = sortedDates.map(date => {
+        const items = grouped[date].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        return `
+          <div class="artifact-date-group">
+            <div class="artifact-date-header">📅 ${this._escapeHtml(date)}</div>
+            ${items.map(item => this._renderArtifactCard(item)).join('')}
+          </div>`;
+      }).join('');
+
+      // 绑定事件
+      grid.querySelectorAll('.artifact-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('.artifact-action-btn')) return;
+          this._previewArtifact(card.dataset.path);
+        });
+      });
+      grid.querySelectorAll('.artifact-action-btn[data-action="open"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._openInFinder(btn.dataset.path);
+        });
+      });
+      grid.querySelectorAll('.artifact-action-btn[data-action="delete"]').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (confirm('确定删除此文件？')) {
+            await this._deleteArtifact(btn.dataset.path);
+          }
+        });
+      });
+    } catch (err) {
+      console.error('[AgentArtifacts] Load error:', err);
+      if (loading) loading.style.display = 'none';
+      grid.innerHTML = `<div class="artifacts-empty"><div class="empty-icon">⚠️</div><p>加载失败</p><span class="empty-hint">${err.message}</span></div>`;
+    }
+  },
+
+  _renderArtifactCard(item) {
+    const icon = this._getFileIcon(item.ext);
+    const typeLabel = this._getTypeLabel(item.ext);
+    const sizeStr = this._formatSize(item.size);
+    const timeStr = this._formatTime(item.created_at);
+
+    return `
+      <div class="artifact-card" data-path="${this._escapeHtml(item.path)}">
+        <div class="artifact-card-icon">${icon}</div>
+        <div class="artifact-card-body">
+          <div class="artifact-card-name" title="${this._escapeHtml(item.name)}">${this._escapeHtml(item.name)}</div>
+          <div class="artifact-card-meta">
+            <span class="artifact-card-type">${typeLabel}</span>
+            <span class="artifact-card-size">${sizeStr}</span>
+            <span class="artifact-card-time">${timeStr}</span>
+          </div>
+        </div>
+        <div class="artifact-card-actions">
+          <button class="artifact-action-btn" data-action="open" data-path="${this._escapeHtml(item.path)}" title="在 Finder 中显示">📁</button>
+          <button class="artifact-action-btn danger" data-action="delete" data-path="${this._escapeHtml(item.path)}" title="删除">🗑️</button>
+        </div>
+      </div>`;
+  },
+
+  async _previewArtifact(filePath) {
+    if (!window.electronAPI?.artifactsRead) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'artifact-preview-overlay';
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    const fileName = filePath.split('/').pop() || '预览';
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+
+    let bodyContent = '';
+    try {
+      const result = await window.electronAPI.artifactsRead(filePath);
+      if (result.success) {
+        if (ext === 'html' || ext === 'htm') {
+          bodyContent = `<iframe sandbox="allow-scripts allow-same-origin allow-popups allow-forms" srcdoc="${this._escapeAttr(result.content)}"></iframe>`;
+        } else {
+          bodyContent = `<pre>${this._escapeHtml(result.content)}</pre>`;
+        }
+      } else {
+        bodyContent = `<pre style="color: #FF3B30;">读取失败: ${this._escapeHtml(result.error || '')}</pre>`;
+      }
+    } catch (err) {
+      bodyContent = `<pre style="color: #FF3B30;">读取错误: ${this._escapeHtml(err.message)}</pre>`;
+    }
+
+    overlay.innerHTML = `
+      <div class="artifact-preview-modal">
+        <div class="artifact-preview-header">
+          <span class="artifact-preview-title">${this._escapeHtml(fileName)}</span>
+          <button class="artifact-preview-close" onclick="this.closest('.artifact-preview-overlay').remove()">×</button>
+        </div>
+        <div class="artifact-preview-body">${bodyContent}</div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+  },
+
+  async _openInFinder(filePath) {
+    if (window.electronAPI?.artifactsShowInFolder) {
+      await window.electronAPI.artifactsShowInFolder(filePath);
+    }
+  },
+
+  async _deleteArtifact(filePath) {
+    if (window.electronAPI?.artifactsDelete) {
+      const result = await window.electronAPI.artifactsDelete(filePath);
+      if (result.success) {
+        this.loadArtifacts();
+      } else {
+        alert('删除失败: ' + (result.error || ''));
+      }
+    }
+  },
+
+  _getFileIcon(ext) {
+    const map = { html: '🌐', htm: '🌐', md: '📝', json: '📋', js: '💻', ts: '💻', css: '🎨', py: '🐍', txt: '📄', svg: '🖼', png: '🖼', jpg: '🖼', pdf: '📕', xlsx: '📊', docx: '📘' };
+    return map[ext] || '📄';
+  },
+
+  _getTypeLabel(ext) {
+    const map = { html: 'HTML', htm: 'HTML', md: 'Markdown', json: 'JSON', js: 'JavaScript', ts: 'TypeScript', css: 'CSS', py: 'Python', txt: 'Text', svg: 'SVG', pdf: 'PDF', xlsx: 'Excel' };
+    return map[ext] || ext?.toUpperCase() || 'FILE';
+  },
+
+  _formatSize(bytes) {
+    if (!bytes) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  },
+
+  _formatTime(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diff = now - d;
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return '刚刚';
+      if (mins < 60) return mins + '分钟前';
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return hours + '小时前';
+      const days = Math.floor(hours / 24);
+      if (days < 30) return days + '天前';
+      return d.toLocaleDateString('zh-CN');
+    } catch { return dateStr; }
+  },
+
+  _escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+  },
+
+  _escapeAttr(text) {
+    if (!text) return '';
+    return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+};
+
+window.AgentArtifacts = AgentArtifacts;

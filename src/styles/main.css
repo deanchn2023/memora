@@ -1030,6 +1030,81 @@ body {
   gap: 20px;
 }
 
+/* 腾讯云文件上传配置卡片 */
+.cos-upload-card {
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 12px;
+  margin: 16px 0;
+  overflow: hidden;
+  background: var(--bg-secondary, rgba(0,0,0,0.02));
+}
+.cos-upload-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+.cos-upload-header:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.04));
+}
+.cos-upload-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.cos-upload-icon {
+  font-size: 18px;
+}
+.cos-status-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #fee2e2;
+  color: #dc2626;
+  line-height: 1.4;
+}
+.cos-status-badge.configured {
+  background: #dcfce7;
+  color: #16a34a;
+}
+.cos-upload-toggle {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  transition: transform 0.2s;
+}
+.cos-upload-card.expanded .cos-upload-toggle {
+  transform: rotate(180deg);
+}
+.cos-upload-body {
+  display: none;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border-color, #e0e0e0);
+}
+.cos-upload-card.expanded .cos-upload-body {
+  display: block;
+}
+.cos-upload-desc {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--bg-primary, rgba(255,255,255,0.8));
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  line-height: 1.6;
+}
+.cos-upload-desc p {
+  margin: 0 0 4px;
+}
+.cos-upload-desc p:last-child {
+  margin-bottom: 0;
+}
+
 .settings-section-title {
   font-size: 13px;
   font-weight: 600;
@@ -2473,6 +2548,11 @@ body {
   text-align: left;
 }
 
+.message.user .message-time {
+  color: rgba(255, 255, 255, 0.7);
+  text-align: right;
+}
+
 /* 用户头像样式 */
 .message.user .message-avatar {
   background: var(--gradient-brand);
@@ -2803,6 +2883,46 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 文档上传/解析进度状态行 */
+.adp-upload-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: rgba(0, 122, 255, 0.08);
+  border: 0.5px solid rgba(0, 122, 255, 0.18);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.adp-upload-status.is-error {
+  background: rgba(255, 149, 0, 0.10);
+  border-color: rgba(255, 149, 0, 0.25);
+}
+
+.adp-upload-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid rgba(0, 122, 255, 0.2);
+  border-top-color: var(--primary-color, #007AFF);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.adp-upload-status.is-error .adp-upload-spinner {
+  border-color: rgba(255, 149, 0, 0.25);
+  border-top-color: #FF9500;
+}
+
+.adp-upload-text {
+  flex: 1;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
 .adp-progress-steps {
   display: flex;
   flex-direction: column;
@@ -2946,6 +3066,15 @@ body {
   font-size: 0.6875rem;
   color: var(--text-tertiary);
   line-height: 1.5;
+}
+
+/* ask_user_question / 交互式工具步骤样式 */
+.adp-progress-step[data-msg-type="thought"] .adp-step-row {
+  opacity: 0.8;
+}
+.adp-progress-step[data-msg-type="notice"] .adp-step-row {
+  opacity: 0.75;
+  font-style: italic;
 }
 
 /* ===== ADP 思考过程 ===== */
@@ -5324,6 +5453,83 @@ body {
   cursor: not-allowed;
 }
 
+/* 注册链接 */
+.login-register-link {
+  text-align: center;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+}
+.login-register-link a {
+  color: var(--primary-color, #007AFF);
+  text-decoration: none;
+  font-weight: 500;
+}
+.login-register-link a:hover {
+  text-decoration: underline;
+}
+
+/* 必填标记 */
+.required-mark {
+  color: #FF3B30;
+  font-size: 12px;
+}
+
+/* 验证码行 */
+.sms-code-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sms-code-row input {
+  flex: 1;
+  min-width: 0;
+}
+.sms-send-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  background: var(--primary-color, #007AFF);
+  color: white;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+.sms-send-btn:hover {
+  opacity: 0.85;
+}
+.sms-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 开发模式验证码提示 */
+.dev-code-hint {
+  font-size: 12px;
+  color: #FF9500;
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: rgba(255, 149, 0, 0.08);
+  border-radius: 6px;
+}
+
+/* 注册表单 */
+#registerSection .org-login-card {
+  max-height: 65vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+#registerSection .org-login-card::-webkit-scrollbar {
+  width: 4px;
+}
+#registerSection .org-login-card::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+  border-radius: 2px;
+}
+
 .login-error {
   color: #FF3B30;
   font-size: 13px;
@@ -5539,4 +5745,235 @@ body {
   opacity: 0.6;
   pointer-events: none;
   background: var(--bg-tertiary, #f0f0f2);
+}
+
+/* COS 上传卡片在 config-locked 模式下保持可查看（半透明但不隐藏值） */
+.settings-panel.config-locked .cos-upload-card input {
+  opacity: 0.8;
+  pointer-events: none;
+  background: var(--bg-tertiary, #f0f0f2);
+}
+
+/* COS 来源标签 */
+.cos-source-label {
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
+  margin-top: 4px;
+  display: block;
+}
+
+/* ===== ADP Markdown 表格 ===== */
+.adp-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-xs);
+}
+.adp-table thead {
+  background: var(--bg-tertiary, #eef1f6);
+}
+.adp-table th,
+.adp-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+.adp-table th {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.adp-table td {
+  color: var(--text-secondary);
+}
+.adp-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.adp-table tbody tr:hover {
+  background: var(--primary-light, rgba(79, 142, 247, 0.04));
+}
+
+/* ===== ADP 列表 ===== */
+.adp-list {
+  margin: 8px 0 8px 20px;
+  padding-left: 0;
+}
+.adp-list li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* ===== ADP 交互式技能组件（Widget）===== */
+.adp-widget-container {
+  margin: 16px 0;
+}
+
+.adp-widget {
+  background: var(--bg-secondary, #f8f9fc);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.adp-widget-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adp-widget-title::before {
+  content: '🧩';
+}
+
+.adp-widget-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  line-height: 1.6;
+}
+.adp-widget-description p {
+  margin-bottom: 8px;
+}
+.adp-widget-description p:last-child {
+  margin-bottom: 0;
+}
+
+.adp-widget-step {
+  margin-bottom: 16px;
+}
+.adp-widget-step:last-child {
+  margin-bottom: 0;
+}
+
+.adp-widget-step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.adp-widget-step-title::before {
+  content: '❓';
+  font-size: 13px;
+}
+
+.adp-widget-step-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.adp-widget-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.adp-widget-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-primary, #ffffff);
+  border: 1.5px solid var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.adp-widget-option:hover {
+  border-color: var(--primary-color, #4F8EF7);
+  background: var(--primary-light, rgba(79, 142, 247, 0.04));
+  box-shadow: var(--shadow-xs);
+}
+.adp-widget-option:has(input:checked) {
+  border-color: var(--primary-color, #4F8EF7);
+  background: var(--primary-light, rgba(79, 142, 247, 0.06));
+}
+.adp-widget-option input[type="radio"],
+.adp-widget-option input[type="checkbox"] {
+  margin-top: 2px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary-color, #4F8EF7);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.adp-widget-option-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.adp-widget-option-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.adp-widget-option-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.adp-widget-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.adp-widget-btn {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  outline: none;
+}
+.adp-widget-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.adp-widget-btn.primary {
+  background: var(--primary-color, #4F8EF7);
+  color: #ffffff;
+}
+.adp-widget-btn.primary:hover:not(:disabled) {
+  background: var(--primary-hover, #3A75E0);
+  box-shadow: var(--shadow-glow);
+}
+
+.adp-widget-btn.secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+.adp-widget-btn.secondary:hover:not(:disabled) {
+  background: var(--bg-tertiary, #eef1f6);
+}
+
+.adp-widget-completed {
+  opacity: 0.7;
+}
+.adp-widget-completed .adp-widget-option {
+  cursor: default;
+  pointer-events: none;
 }

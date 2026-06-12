@@ -37,6 +37,71 @@
   box-shadow: 0 4px 14px rgba(79, 142, 247, 0.35);
 }
 
+/* 对话搜索框 */
+.chat-search-box {
+  position: relative;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.chat-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.chat-search-input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  border: 0.5px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.2s var(--transition);
+}
+
+.chat-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.chat-search-input:focus {
+  border-color: var(--primary-color);
+  background: var(--bg-primary);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+
+.chat-search-clear {
+  position: absolute;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: var(--text-tertiary);
+  color: white;
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.chat-search-clear:hover {
+  background: var(--text-secondary);
+}
+
+.chat-search-clear.hidden {
+  display: none;
+}
+
 .chat-session-list {
   flex: 1;
   overflow-y: auto;
@@ -160,16 +225,16 @@
   height: 28px;
   border: none;
   border-radius: 8px;
-  background: var(--bg-tertiary, #f0f0f5);
-  color: var(--text-tertiary, #86868b);
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
   transition: all 0.15s;
   padding: 0;
 }
 
 .msg-action-btn:hover {
-  background: var(--primary-glow, rgba(0,122,255,0.12));
-  color: var(--primary-color, #007AFF);
+  background: rgba(255, 255, 255, 0.35);
+  color: white;
 }
 
 /* ============= 时间网格 ============= */

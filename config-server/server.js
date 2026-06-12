@@ -169,13 +169,21 @@ function getDefaultConfig() {
       daily_limit: 500
     },
     adp: {
-      app_key: 'EvcCHxUUzJxtLABspxBFjoVTpJOByUUYUgozjvursQwChNZqkEVGXrvGroXLNDTMSWKWabnkhGqjxIttpGLqPqqUefOIkPVQUEYyPTtHbbfoltrSajKxQnSjQDfFVcnm',
-      knowledge_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
-      search_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
-      clustering_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
-      graph_app_key: 'VnIvLvjBTdjXFNmqBnQFsAhDdHPuzELARwKgYwZwvEqBRiIViQamZAGgKXBbOqZNwMbvFvIYwIkYxgkjmtrcaUUqdXsMPXnNbqTxOJohdOXHzLNCYKloszFwrcEKSDcK',
+      app_key: process.env.ADP_APP_KEY || '',
+      knowledge_app_key: process.env.ADP_KNOWLEDGE_APP_KEY || '',
+      search_app_key: process.env.ADP_SEARCH_APP_KEY || '',
+      clustering_app_key: process.env.ADP_CLUSTERING_APP_KEY || '',
+      graph_app_key: process.env.ADP_GRAPH_APP_KEY || '',
       url: 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
       agent_name: '我的AI助手'
+    },
+    file_share: {
+      api_key: 'adp_976dc93397e49e036c8559dc36f3ac71c4aa3765838189db939ba63577dfe544'
+    },
+    tencent_cloud: {
+      secret_id: '',
+      secret_key: '',
+      bot_biz_id: ''
     },
     prompts: {
       ai_prompt: '',

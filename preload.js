@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAPIConfig: () => ipcRenderer.invoke('get-api-config'),
   setAPIConfig: (config) => ipcRenderer.invoke('set-api-config', config),
   clearAPIKey: () => ipcRenderer.invoke('clear-api-key'),
+  testLLMConnection: (params) => ipcRenderer.invoke('test-llm-connection', params),
   
   // 全局 AI 模式控制（v2.3）
   getGlobalAIMode: () => ipcRenderer.invoke('get-global-ai-mode'),
@@ -43,11 +44,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeADPListeners: () => {
     ipcRenderer.removeAllListeners('adp:sse-event');
   },
+  // 文档上传/解析进度（在 sendADPMessage 返回前由主进程推送）
+  onADPUploadProgress: (callback) => {
+    ipcRenderer.on('adp:upload-progress', (event, data) => callback(data));
+  },
+  removeADPUploadListeners: () => {
+    ipcRenderer.removeAllListeners('adp:upload-progress');
+  },
 
   // v2.0 认证与远程配置
-  authLogin: (email, password, env, rememberMe) => ipcRenderer.invoke('auth:login', { email, password, env, rememberMe }),
+  authLogin: (account, password, env, rememberMe) => ipcRenderer.invoke('auth:login', { account, password, env, rememberMe }),
   authLogout: () => ipcRenderer.invoke('auth:logout'),
   authGetState: () => ipcRenderer.invoke('auth:get-state'),
+  authSendCode: (mobile) => ipcRenderer.invoke('auth:send-code', { mobile }),
+  authRegister: (data) => ipcRenderer.invoke('auth:register', data),
   authGetServerUrls: () => ipcRenderer.invoke('auth:get-server-urls'),
   authSetServerUrls: (urls) => ipcRenderer.invoke('auth:set-server-urls', { urls }),
   authResetServerUrls: (env) => ipcRenderer.invoke('auth:reset-server-urls', { env }),
@@ -170,6 +180,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notebookGetCategories: () => ipcRenderer.invoke('notebook-get-categories'),
   notebookSaveCategories: (categories) => ipcRenderer.invoke('notebook-save-categories', categories),
   notebookExportMarkdown: (data) => ipcRenderer.invoke('notebook-export-markdown', data),
+
+  // Agent 产物系统
+  artifactsGetBasePath: () => ipcRenderer.invoke('artifacts:get-base-path'),
+  artifactsChangeDir: () => ipcRenderer.invoke('artifacts:change-dir'),
+  artifactsOpenDir: () => ipcRenderer.invoke('artifacts:open-dir'),
+  artifactsList: () => ipcRenderer.invoke('artifacts:list'),
+  artifactsRead: (filePath) => ipcRenderer.invoke('artifacts:read', { filePath }),
+  artifactsDelete: (filePath) => ipcRenderer.invoke('artifacts:delete', { filePath }),
+  artifactsShowInFolder: (filePath) => ipcRenderer.invoke('artifacts:show-in-folder', { filePath }),
+  artifactsSave: (data) => ipcRenderer.invoke('artifacts:save', data),
+  artifactsDownloadAndSave: (data) => ipcRenderer.invoke('artifacts:download-and-save', data),
   
   // 反馈系统（用于持续优化）
   recordFeedback: (feedback) => ipcRenderer.invoke('record-feedback', feedback),

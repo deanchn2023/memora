@@ -469,26 +469,34 @@ class KnowledgeDistillation {
         <div class="knowledge-empty">
           <div class="empty-icon">❓</div>
           <p>暂无待解决问题</p>
-          <span class="empty-hint">记录工作中遇到的问题，后续集中解决形成知识</span>
+          <span class="empty-hint">通过知识搜索自动记录，或手动添加问题</span>
         </div>`;
       return;
     }
 
     list.innerHTML = this.questions.map(q => {
-      const resolved = q.cluster_id ? true : false;
+      const hasAnswer = !!q.answer;
+      const isAutoGen = q.auto_generated;
       return `
-        <div class="kd-question-card ${resolved ? 'resolved' : 'pending'}" data-atom-id="${q.id}">
+        <div class="kd-question-card ${hasAnswer ? 'resolved' : 'pending'}" data-atom-id="${q.id}">
           <div class="kd-question-header">
-            <span class="kd-question-status">${resolved ? '✅' : '❓'}</span>
+            <span class="kd-question-status">${hasAnswer ? '✅' : '❓'}</span>
             <span class="kd-question-domain">${this.escHtml(q.domain)}</span>
+            ${isAutoGen ? '<span class="kd-question-auto-tag">🔍 搜索记录</span>' : ''}
           </div>
           <p class="kd-question-content">${this.escHtml(q.content)}</p>
+          ${hasAnswer ? `
+            <div class="kd-question-answer">
+              <div class="kd-answer-header">💡 答案${q.answer_source === 'adp_search' ? '（AI搜索）' : ''}</div>
+              <div class="kd-answer-content">${this.escHtml(q.answer)}</div>
+            </div>
+          ` : ''}
           <div class="kd-question-meta">
             <span>${this.formatRelativeTime(q.created_at)}</span>
-            <span title="${q.created_at}">${resolved ? '已解决' : '待解决'}</span>
+            <span title="${q.created_at}">${hasAnswer ? '已解答' : '待解决'}</span>
           </div>
           <div class="kd-question-actions">
-            ${!resolved ? `<button class="kd-action-btn primary" data-kd-action="resolveQuestion" data-kd-id="${q.id}">💡 寻找答案</button>` : ''}
+            ${!hasAnswer ? `<button class="kd-action-btn primary" data-kd-action="resolveQuestion" data-kd-id="${q.id}">💡 寻找答案</button>` : ''}
             <button class="kd-action-btn" data-kd-action="viewAtomDetail" data-kd-id="${q.id}">查看</button>
             <button class="kd-action-btn danger" data-kd-action="deleteAtom" data-kd-id="${q.id}">删除</button>
           </div>
@@ -1207,6 +1215,8 @@ class KnowledgeDistillation {
     try {
       // 尝试使用知识跟随的 ADP 搜索
       if (window.knowledgeFollow && window.electronAPI?.knowledgeSearchADP) {
+        // 设置待解答问题 ID，搜索完成后自动更新答案
+        window.knowledgeFollow.setPendingQuestionId(atomId);
         // 切换到搜索视图并搜索
         this.switchSubview('search');
         const searchInput = document.getElementById('knowledgeSearchInput');
@@ -1246,13 +1256,19 @@ class KnowledgeDistillation {
 
       detailContent.innerHTML = `
         <div class="kd-detail-header">
-          <h3>${tp.icon} ${tp.label}</h3>
-          <span class="kd-detail-status">${atom.cluster_id ? '已归簇' : '待归类'}</span>
+          <h3>${tp.icon} ${tp.label}${atom.auto_generated ? ' <span style="font-size:12px;color:var(--text-secondary);">🔍 搜索记录</span>' : ''}</h3>
+          <span class="kd-detail-status">${atom.answer ? '已解答' : (atom.cluster_id ? '已归簇' : '待归类')}</span>
         </div>
         <div class="kd-detail-section">
           <h4>📝 内容</h4>
           <p style="font-size:14px;color:var(--text-primary);line-height:1.8;">${this.escHtml(atom.content)}</p>
         </div>
+        ${atom.answer ? `
+        <div class="kd-detail-section">
+          <h4>💡 答案${atom.answer_source === 'adp_search' ? '（AI搜索）' : ''}</h4>
+          <div style="font-size:13px;color:var(--text-primary);line-height:1.8;background:var(--bg-secondary);padding:12px;border-radius:8px;white-space:pre-wrap;">${this.escHtml(atom.answer)}</div>
+        </div>
+        ` : ''}
         <div class="kd-detail-meta">
           <span>领域：${this.escHtml(atom.domain)}</span>
           <span>重要度：${atom.importance}</span>
@@ -1260,6 +1276,7 @@ class KnowledgeDistillation {
         </div>
         <div class="kd-detail-actions">
           <button class="kd-action-btn" data-kd-action="switchSubview" data-kd-id="questions">返回问题列表</button>
+          ${!atom.answer ? '<button class="kd-action-btn primary" data-kd-action="resolveQuestion" data-kd-id="' + atom.id + '">💡 寻找答案</button>' : ''}
           <button class="kd-action-btn danger" data-kd-action="deleteAtom" data-kd-id="${atom.id}">删除</button>
         </div>`;
 

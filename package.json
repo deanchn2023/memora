@@ -11,6 +11,7 @@
     "build:dir": "electron-builder --mac --dir"
   },
   "dependencies": {
+    "cos-nodejs-sdk-v5": "^2.15.4",
     "form-data": "^4.0.5",
     "sql.js": "^1.14.1",
     "uuid": "^9.0.0",
