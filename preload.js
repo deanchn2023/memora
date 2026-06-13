@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   authGetState: () => ipcRenderer.invoke('auth:get-state'),
   authSendCode: (mobile) => ipcRenderer.invoke('auth:send-code', { mobile }),
   authRegister: (data) => ipcRenderer.invoke('auth:register', data),
+  authUpdateProfile: (data) => ipcRenderer.invoke('auth:update-profile', data),
   authGetServerUrls: () => ipcRenderer.invoke('auth:get-server-urls'),
   authSetServerUrls: (urls) => ipcRenderer.invoke('auth:set-server-urls', { urls }),
   authResetServerUrls: (env) => ipcRenderer.invoke('auth:reset-server-urls', { env }),

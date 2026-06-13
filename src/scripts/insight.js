@@ -302,6 +302,17 @@ const Insight = {
         return;
       }
 
+      // 知识演化按钮
+      if (target.id === 'runEvolutionBtn' || target.id === 'rerunEvolutionBtn') {
+        e.preventDefault();
+        const container = document.getElementById('insightEvolutionContent');
+        if (container) {
+          container.innerHTML = '<div class="insight-loading"><div class="spinner"></div><span>AI 正在分析知识演化...（可切换其他页面，完成后自动通知）</span></div>';
+        }
+        this._startInsightTask('evolutions');
+        return;
+      }
+
       // 重试按钮
       if (target.closest('[data-retry]')) {
         const retryFn = target.closest('[data-retry]').dataset.retry;
@@ -518,12 +529,19 @@ const Insight = {
       container.innerHTML = `
         <div class="dashboard-grid">
           ${this._renderStatCard('🧠', '知识原子', knowledgeStats.totalAtoms || 0, '个')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('🔗', '知识簇', knowledgeStats.totalClusters || 0, '个')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('📝', '知识文章', knowledgeStats.totalArticles || 0, '篇')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('💭', '记忆总数', memoryStats.total || 0, '条')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('📚', '多模态资产', mmTotal, '个')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('📖', '知识书本', multimodalStats.bookCount || 0, '本')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('🕸', '图谱实体', graphStats.nodeCount || 0, '个')}
+          <span class="stat-dot">·</span>
           ${this._renderStatCard('↔️', '图谱关系', graphStats.edgeCount || 0, '条')}
         </div>
 
@@ -557,14 +575,7 @@ const Insight = {
   },
 
   _renderStatCard(icon, label, value, unit) {
-    return `
-      <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-card-icon">${icon}</span>
-          <span class="stat-card-label">${label}</span>
-        </div>
-        <div class="stat-card-value">${value}<span style="font-size:14px;font-weight:400;color:var(--text-tertiary,#aeaeb2);margin-left:2px">${unit}</span></div>
-      </div>`;
+    return `<span class="stat-item"><span class="stat-num">${value}</span> ${label}</span>`;
   },
 
   _renderDistribution(memoryStats) {
@@ -1090,9 +1101,29 @@ const Insight = {
       return;
     }
 
-    // 无缓存无运行 → 发起异步任务
-    container.innerHTML = '<div class="insight-loading"><div class="spinner"></div><span>正在发起知识演化分析...（可切换其他页面，完成后自动通知）</span></div>';
-    await this._startInsightTask('evolutions');
+    // 尝试从本地加载历史演化记录
+    try {
+      const localResult = await this._safeCall(
+        () => window.electronAPI?.insightGetEvolutions?.(),
+        { items: [] }
+      );
+      this.data.evolutions = localResult.items || [];
+      if (this.data.evolutions.length > 0) {
+        this._renderEvolutionsResult();
+        return;
+      }
+    } catch (_) {}
+
+    // 无缓存无运行 → 显示空状态+按钮，不自动发起任务
+    container.innerHTML = `
+      <div class="insight-empty">
+        <div class="insight-empty-icon">🌱</div>
+        <div class="insight-empty-title">暂无演化记录</div>
+        <div class="insight-empty-desc">知识演化分析会追踪知识的合并、更新和冲突事件。点击"开始演化分析"主动触发。</div>
+      </div>
+      <div style="text-align:center;margin-top:12px">
+        <button class="activation-refresh-btn" id="runEvolutionBtn">开始演化分析</button>
+      </div>`;
   },
 
   _renderEvolutionsResult() {
@@ -1104,12 +1135,19 @@ const Insight = {
         <div class="insight-empty">
           <div class="insight-empty-icon">🌱</div>
           <div class="insight-empty-title">暂无演化记录</div>
-          <div class="insight-empty-desc">当你持续积累知识、记忆后，知识演化时间线会自动记录知识的合并、更新和冲突事件。</div>
+          <div class="insight-empty-desc">知识演化分析会追踪知识的合并、更新和冲突事件。点击"开始演化分析"主动触发。</div>
+        </div>
+        <div style="text-align:center;margin-top:12px">
+          <button class="activation-refresh-btn" id="runEvolutionBtn">开始演化分析</button>
         </div>`;
       return;
     }
 
-    container.innerHTML = `<div class="evolution-timeline">${this.data.evolutions.map(e => this._renderEvolutionNode(e)).join('')}</div>`;
+    container.innerHTML = `
+      <div style="text-align:center;margin-bottom:12px">
+        <button class="activation-refresh-btn" id="rerunEvolutionBtn">重新分析</button>
+      </div>
+      <div class="evolution-timeline">${this.data.evolutions.map(e => this._renderEvolutionNode(e)).join('')}</div>`;
   },
 
   _renderEvolutionsError(error) {
@@ -1120,6 +1158,9 @@ const Insight = {
         <div class="insight-empty-icon">⚠️</div>
         <div class="insight-empty-title">演化分析失败</div>
         <div class="insight-empty-desc">${this._escapeHtml(error || '请稍后重试')}</div>
+      </div>
+      <div style="text-align:center;margin-top:12px">
+        <button class="activation-refresh-btn" id="runEvolutionBtn">重试</button>
       </div>`;
   },
 

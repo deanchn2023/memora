@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; connect-src http: https: wss:; font-src 'self' data:;">
-  <title>忆境 Memora</title>
+  <title>Memora</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/components.css">
   <link rel="stylesheet" href="styles/knowledge.css">
@@ -15,14 +15,16 @@
   <link rel="stylesheet" href="styles/audit.css">
   <link rel="stylesheet" href="styles/graph.css">
   <link rel="stylesheet" href="styles/insight.css">
+  <link rel="stylesheet" href="styles/richEditor.css">
   <script src="scripts/i18n.js"></script>
+  <script src="scripts/richEditor.js"></script>
 </head>
 <body>
   <div id="app">
     <div class="titlebar">
       <div class="titlebar-drag">
         <div class="app-logo">M</div>
-        <span class="app-title">忆境 Memora</span>
+        <span class="app-title">Memora</span>
       </div>
       <div class="titlebar-controls">
         <button class="titlebar-btn minimize" onclick="electronAPI.minimizeWindow()">
@@ -129,10 +131,10 @@
                   <rect x="9" y="3" width="6" height="4" rx="1"/>
                   <path d="M9 12h6M9 16h6"/>
                 </svg>
-                <p>暂无待办事项</p>
+                <p data-i18n="task.noTasks">暂无待办事项</p>
               </div>
             </div>
-            <button class="add-task-btn" id="addTaskBtn">+ 新建任务</button>
+            <button class="add-task-btn" id="addTaskBtn" data-i18n="task.newTask">+ 新建</button>
           </div>
         </div>
 
@@ -142,9 +144,9 @@
             <!-- 日历子视图切换 -->
             <div class="calendar-sub-tabs">
               <div class="calendar-sub-tabs-inner">
-                <button class="calendar-sub-tab" data-cal="day">日</button>
-                <button class="calendar-sub-tab active" data-cal="week">周</button>
-                <button class="calendar-sub-tab" data-cal="month">月</button>
+                <button class="calendar-sub-tab" data-cal="day" data-i18n="cal.day">日</button>
+                <button class="calendar-sub-tab active" data-cal="week" data-i18n="cal.week">周</button>
+                <button class="calendar-sub-tab" data-cal="month" data-i18n="cal.month">月</button>
               </div>
             </div>
             <div class="day-view" id="dayView">
@@ -181,15 +183,15 @@
               <div class="notebook-batch-bar hidden" id="notebookBatchBar">
                 <label class="batch-select-all">
                   <input type="checkbox" id="notebookSelectAll">
-                  <span>全选</span>
+                  <span data-i18n="notebook.selectAll">全选</span>
                 </label>
-                <span class="batch-count" id="notebookBatchCount">已选 0 项</span>
+                <span class="batch-count" id="notebookBatchCount" data-i18n="notebook.selected">已选 0 项</span>
                 <div class="batch-actions">
                   <button class="batch-btn batch-btn-download" id="batchDownloadMD" title="下载为 Markdown 文件">
-                    <span class="batch-btn-icon">📥</span> 下载
+                    <span class="batch-btn-icon">📥</span> <span data-i18n="notebook.download">下载</span>
                   </button>
                   <button class="batch-btn batch-btn-adp" id="batchSendToADP" title="发送给 ADP 小助手分析">
-                    <span class="batch-btn-icon">🤖</span> 发给小助手
+                    <span class="batch-btn-icon">🤖</span> <span data-i18n="notebook.sendToAgent">发给小助手</span>
                   </button>
                   <button class="batch-btn batch-btn-cancel" id="batchCancelSelect" title="取消选择">✕</button>
                 </div>
@@ -207,11 +209,11 @@
                 <div class="chat-sidebar-header">
                   <button class="new-chat-btn" id="newChatBtn" title="新建对话">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    新对话
+                    <span data-i18n="ai.newChat">新对话</span>
                   </button>
                   <div class="chat-search-box">
                     <svg class="chat-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                    <input type="text" id="chatSearchInput" placeholder="搜索对话..." class="chat-search-input" />
+                    <input type="text" id="chatSearchInput" placeholder="搜索对话..." data-i18n-placeholder="ai.searchChat" class="chat-search-input" />
                     <button class="chat-search-clear hidden" id="chatSearchClear" title="清除">×</button>
                   </div>
                 </div>
@@ -227,44 +229,44 @@
                     <div class="feature-card active" data-category="task" title="智能任务分析">
                       <div class="feature-icon">📝</div>
                       <div class="feature-content">
-                        <h4>智能任务分析</h4>
-                        <p>帮你分析和管理待办事项</p>
+                        <h4 data-i18n="ai.feature.task.title">智能任务分析</h4>
+                        <p data-i18n="ai.feature.task.desc">帮你分析和管理待办事项</p>
                       </div>
                     </div>
                     <div class="feature-card" data-category="bidding" title="招投标支持">
                       <div class="feature-icon">📋</div>
                       <div class="feature-content">
-                        <h4>招投标支持</h4>
-                        <p>招投标文档智能生成</p>
+                        <h4 data-i18n="ai.feature.bidding.title">招投标支持</h4>
+                        <p data-i18n="ai.feature.bidding.desc">招投标文档智能生成</p>
                       </div>
                     </div>
                     <div class="feature-card" data-category="knowledge" title="知识助手">
                       <div class="feature-icon">📚</div>
                       <div class="feature-content">
-                        <h4>知识助手</h4>
-                        <p>产品知识与助销资料</p>
+                        <h4 data-i18n="ai.feature.knowledge.title">知识助手</h4>
+                        <p data-i18n="ai.feature.knowledge.desc">产品知识与助销资料</p>
                       </div>
                     </div>
                   </div>
                   
                   <!-- 快捷问题胶囊 -->
                   <div class="quick-questions">
-                    <p class="quick-title">💡 快捷问题</p>
+                    <p class="quick-title" data-i18n="ai.quickTitle">💡 快捷问题</p>
                     <div class="quick-capsules" id="quickCapsules">
                       <!-- 智能任务分析 -->
-                      <button class="quick-capsule agent-priority" data-question="今天该做什么？帮我排个优先级" data-category="task">🎯 今日排程</button>
-                      <button class="quick-capsule agent-report" data-question="生成今天的工作日报" data-category="task">📊 生成日报</button>
-                      <button class="quick-capsule agent-knowledge" data-question="帮我整理一下最近的笔记" data-category="task">📚 整理笔记</button>
-                      <button class="quick-capsule agent-memory" data-question="帮我整理一下记忆，看看哪些需要保留" data-category="task">🧠 整理记忆</button>
-                      <button class="quick-capsule agent-priority" data-question="最紧急的事项是什么？" data-category="task">🔥 紧急事项</button>
-                      <button class="quick-capsule agent-report" data-question="给我一些时间管理建议" data-category="task">⏰ 时间建议</button>
+                      <button class="quick-capsule agent-priority" data-question="今天该做什么？帮我排个优先级" data-category="task" data-i18n="ai.quick.schedule">🎯 今日排程</button>
+                      <button class="quick-capsule agent-report" data-question="生成今天的工作日报" data-category="task" data-i18n="ai.quick.dailyReport">📊 生成日报</button>
+                      <button class="quick-capsule agent-knowledge" data-question="帮我整理一下最近的笔记" data-category="task" data-i18n="ai.quick.organizeNotes">📚 整理笔记</button>
+                      <button class="quick-capsule agent-memory" data-question="帮我整理一下记忆，看看哪些需要保留" data-category="task" data-i18n="ai.quick.organizeMemory">🧠 整理记忆</button>
+                      <button class="quick-capsule agent-priority" data-question="最紧急的事项是什么？" data-category="task" data-i18n="ai.quick.urgent">🔥 紧急事项</button>
+                      <button class="quick-capsule agent-report" data-question="给我一些时间管理建议" data-category="task" data-i18n="ai.quick.timeAdvice">⏰ 时间建议</button>
                     </div>
                   </div>
                   
                   <div class="message assistant">
                     <div class="message-avatar"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="aBgH" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4F8EF7"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs><rect width="40" height="40" rx="14" fill="url(#aBgH)"/><text x="20" y="26" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="white">M</text></svg></div>
                     <div class="message-content">
-                      <p>你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
+                      <p data-i18n="ai.welcome">你好！我是你的AI助手。有什么我可以帮助你的吗？</p>
                     </div>
                   </div>
                 </div>
@@ -277,7 +279,7 @@
                         <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
                       </svg>
                     </button>
-                    <textarea id="aiChatInput" placeholder="输入你的问题..." autocomplete="off" rows="1"></textarea>
+                    <textarea id="aiChatInput" placeholder="输入你的问题..." data-i18n-placeholder="ai.inputPlaceholder" autocomplete="off" rows="1"></textarea>
                     <button class="stop-btn hidden" id="stopAIMessageBtn" title="停止生成">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                     </button>
@@ -296,38 +298,38 @@
           <div class="knowledge-view hidden" id="knowledgeView">
             <!-- 子视图切换 Tab -->
             <div class="knowledge-sub-tabs">
-              <button class="knowledge-sub-tab active" data-knowledge-tab="graph">🧠 知识图谱</button>
-              <button class="knowledge-sub-tab" data-knowledge-tab="global-graph">🗺 全局图谱</button>
-              <button class="knowledge-sub-tab" data-knowledge-tab="articles">📚 知识文章</button>
-              <button class="knowledge-sub-tab" data-knowledge-tab="questions">❓ 问题列表</button>
-              <button class="knowledge-sub-tab" data-knowledge-tab="search">🔍 知识搜索</button>
+              <button class="knowledge-sub-tab active" data-knowledge-tab="graph" data-i18n="knowledge.sub.graph">🧠 知识图谱</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="global-graph" data-i18n="knowledge.sub.globalGraph">🗺 全局图谱</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="articles" data-i18n="knowledge.sub.articles">📚 知识文章</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="questions" data-i18n="knowledge.sub.questions">❓ 问题列表</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="search" data-i18n="knowledge.sub.search">🔍 知识搜索</button>
             </div>
 
             <!-- 子视图1：知识图谱 -->
             <div id="knowledgeGraphView" class="kd-subview">
               <!-- 统计栏 -->
               <div class="kd-stats-bar" id="knowledgeStats">
-                <span class="stat-item"><span class="stat-num">0</span> 知识原子</span>
+                <span class="stat-item"><span class="stat-num">0</span> <span data-i18n="knowledge.stat.atoms">知识原子</span></span>
                 <span class="stat-dot">·</span>
-                <span class="stat-item"><span class="stat-num">0</span> 知识簇</span>
+                <span class="stat-item"><span class="stat-num">0</span> <span data-i18n="knowledge.stat.clusters">知识簇</span></span>
                 <span class="stat-dot">·</span>
-                <span class="stat-item"><span class="stat-num">0</span> 知识文章</span>
+                <span class="stat-item"><span class="stat-num">0</span> <span data-i18n="knowledge.stat.articles">知识文章</span></span>
               </div>
               <!-- 工具栏 -->
               <div class="kd-toolbar">
-                <input type="text" id="knowledgeGraphSearch" class="kd-search-input" placeholder="搜索知识簇..." autocomplete="off">
+                <input type="text" id="knowledgeGraphSearch" class="kd-search-input" placeholder="搜索知识簇..." data-i18n-placeholder="knowledge.searchCluster" autocomplete="off">
                 <select id="knowledgeDomainFilter" class="kd-select">
-                  <option value="">全部领域</option>
+                  <option value="" data-i18n="knowledge.allDomains">全部领域</option>
                 </select>
-                <button class="kd-btn primary" id="knowledgeDistillBtn" onclick="window.kdDistillAll && window.kdDistillAll()">⚡ 一键萃取</button>
-                <button class="kd-btn" id="knowledgeCreateClusterBtn" onclick="window.kdShowCreateClusterModal && window.kdShowCreateClusterModal()">+ 新建簇</button>
+                <button class="kd-btn primary" id="knowledgeDistillBtn" data-i18n="knowledge.distill" onclick="window.kdDistillAll && window.kdDistillAll()">⚡ 一键萃取</button>
+                <button class="kd-btn" id="knowledgeCreateClusterBtn" data-i18n="knowledge.newCluster" onclick="window.kdShowCreateClusterModal && window.kdShowCreateClusterModal()">+ 新建簇</button>
               </div>
               <!-- 簇卡片网格 -->
               <div class="kd-cluster-grid" id="knowledgeClusterGrid">
                 <div class="knowledge-empty">
                   <div class="empty-icon">🧠</div>
-                  <p>暂无知识簇</p>
-                  <span class="empty-hint">复制内容到剪贴板，系统会自动提取知识原子并聚类</span>
+                  <p data-i18n="knowledge.empty.cluster">暂无知识簇</p>
+                  <span class="empty-hint" data-i18n="knowledge.empty.clusterHint">复制内容到剪贴板，系统会自动提取知识原子并聚类</span>
                 </div>
               </div>
             </div>
@@ -337,8 +339,8 @@
               <div class="kd-article-list" id="knowledgeArticleList">
                 <div class="knowledge-empty">
                   <div class="empty-icon">📚</div>
-                  <p>暂无知识文章</p>
-                  <span class="empty-hint">知识簇成熟后可生成文章</span>
+                  <p data-i18n="knowledge.empty.articles">暂无知识文章</p>
+                  <span class="empty-hint" data-i18n="knowledge.empty.articlesHint">知识簇成熟后可生成文章</span>
                 </div>
               </div>
             </div>
@@ -347,24 +349,24 @@
             <div id="globalGraphView" class="kd-subview hidden global-graph-view">
               <!-- 工具栏 -->
               <div class="gg-toolbar">
-                <h3 class="gg-title"><span class="gg-title-icon">🗺</span> 全局知识图谱</h3>
+                <h3 class="gg-title"><span class="gg-title-icon">🗺</span> <span data-i18n="knowledge.globalGraph.title">全局知识图谱</span></h3>
                 <div class="gg-spacer"></div>
-                <input type="text" id="graphSearchInput" class="gg-search" placeholder="搜索节点..." autocomplete="off">
+                <input type="text" id="graphSearchInput" class="gg-search" placeholder="搜索节点..." data-i18n-placeholder="knowledge.globalGraph.searchNodes" autocomplete="off">
                 <span class="gg-built-at" id="graphBuiltAt"></span>
-                <button class="gg-btn ghost" id="graphRelayoutBtn">📐 一键布局</button>
-                <button class="gg-btn ghost" id="graphGatherBtn">🎯 聚拢</button>
-                <button class="gg-btn ghost" id="graphScatterBtn">💫 扩散</button>
-                <button class="gg-btn ghost" id="graphRoamingBtn">🧭 知识漫游</button>
-                <button class="gg-btn ghost" id="graphRefreshBtn">🔄 重建</button>
+                <button class="gg-btn ghost" id="graphRelayoutBtn" data-i18n="knowledge.globalGraph.autoLayout">📐 一键布局</button>
+                <button class="gg-btn ghost" id="graphGatherBtn" data-i18n="knowledge.globalGraph.gather">🎯 聚拢</button>
+                <button class="gg-btn ghost" id="graphScatterBtn" data-i18n="knowledge.globalGraph.scatter">💫 扩散</button>
+                <button class="gg-btn ghost" id="graphRoamingBtn" data-i18n="knowledge.globalGraph.roaming">🧭 知识漫游</button>
+                <button class="gg-btn ghost" id="graphRefreshBtn" data-i18n="knowledge.globalGraph.rebuild">🔄 重建</button>
               </div>
               <!-- 筛选栏 -->
               <div class="gg-filter-bar">
-                <button class="gg-filter-chip active" data-graph-filter="all">全部</button>
-                <button class="gg-filter-chip" data-graph-filter="domain">领域</button>
-                <button class="gg-filter-chip" data-graph-filter="cluster">知识簇</button>
-                <button class="gg-filter-chip" data-graph-filter="person">人物</button>
-                <button class="gg-filter-chip" data-graph-filter="gap">缺口</button>
-                <button class="gg-filter-chip" data-graph-filter="unhealthy">⚠️ 异常</button>
+                <button class="gg-filter-chip active" data-graph-filter="all" data-i18n="knowledge.globalGraph.all">全部</button>
+                <button class="gg-filter-chip" data-graph-filter="domain" data-i18n="knowledge.globalGraph.domain">领域</button>
+                <button class="gg-filter-chip" data-graph-filter="cluster" data-i18n="knowledge.globalGraph.cluster">知识簇</button>
+                <button class="gg-filter-chip" data-graph-filter="person" data-i18n="knowledge.globalGraph.person">人物</button>
+                <button class="gg-filter-chip" data-graph-filter="gap" data-i18n="knowledge.globalGraph.gap">缺口</button>
+                <button class="gg-filter-chip" data-graph-filter="unhealthy" data-i18n="knowledge.globalGraph.unhealthy">⚠️ 异常</button>
               </div>
               <!-- Canvas -->
               <div class="gg-canvas-container">
@@ -380,25 +382,25 @@
                 <div class="gg-empty" id="graphEmptyState">
                   <div class="ge-inner">
                     <div class="ge-icon">🗺</div>
-                    <h3 class="ge-title">知识图谱</h3>
-                    <p class="ge-desc">AI 将分析你的知识体系，构建一张可视化图谱</p>
-                    <button class="ge-build-btn" id="graphRefreshBtn2">🚀 构建图谱</button>
-                    <p class="ge-hint">需要登录并配置 ADP</p>
+                    <h3 class="ge-title" data-i18n="knowledge.globalGraph.title2">知识图谱</h3>
+                    <p class="ge-desc" data-i18n="knowledge.globalGraph.desc">AI 将分析你的知识体系，构建一张可视化图谱</p>
+                    <button class="ge-build-btn" id="graphRefreshBtn2" data-i18n="knowledge.globalGraph.build">🚀 构建图谱</button>
+                    <p class="ge-hint" data-i18n="knowledge.globalGraph.needLogin">需要登录并配置 ADP</p>
                   </div>
                 </div>
                 <!-- 加载中 -->
                 <div class="gg-loading hidden" id="graphLoading">
                   <div class="gl-inner">
                     <div class="gl-spinner"></div>
-                    <h4 class="gl-title">🗺 正在分析知识体系</h4>
-                    <p class="gl-desc">AI 正在读取你的知识库，分析知识结构...</p>
+                    <h4 class="gl-title" data-i18n="knowledge.globalGraph.analyzing">🗺 正在分析知识体系</h4>
+                    <p class="gl-desc" data-i18n="knowledge.globalGraph.analyzingDesc">AI 正在读取你的知识库，分析知识结构...</p>
                     <div class="gl-progress-bar"><div class="gl-progress-fill"></div></div>
                   </div>
                 </div>
                 <!-- 详情面板 -->
                 <div class="gg-detail-panel hidden" id="graphDetailPanel">
                   <div class="gg-panel-header">
-                    <span style="font-size:14px;font-weight:600;">节点详情</span>
+                    <span style="font-size:14px;font-weight:600;" data-i18n="knowledge.globalGraph.detail">节点详情</span>
                     <button class="gg-panel-close" id="graphPanelClose">✕</button>
                   </div>
                   <div class="gg-panel-content" id="graphPanelContent"></div>
@@ -414,14 +416,14 @@
             <!-- 子视图3：问题列表 -->
             <div id="knowledgeQuestionsView" class="kd-subview hidden">
               <div class="kd-questions-toolbar">
-                <input type="text" id="knowledgeQuestionSearch" class="kd-search-input" placeholder="搜索问题..." autocomplete="off">
-                <button class="kd-btn primary" id="knowledgeAddQuestionBtn" onclick="window.kdShowAddQuestionModal && window.kdShowAddQuestionModal()">+ 记录问题</button>
+                <input type="text" id="knowledgeQuestionSearch" class="kd-search-input" placeholder="搜索问题..." data-i18n-placeholder="knowledge.searchQuestions" autocomplete="off">
+                <button class="kd-btn primary" id="knowledgeAddQuestionBtn" data-i18n="knowledge.addQuestion" onclick="window.kdShowAddQuestionModal && window.kdShowAddQuestionModal()">+ 记录问题</button>
               </div>
               <div class="kd-question-list" id="knowledgeQuestionList">
                 <div class="knowledge-empty">
                   <div class="empty-icon">❓</div>
-                  <p>暂无待解决问题</p>
-                  <span class="empty-hint">记录工作中遇到的问题，后续集中解决形成知识</span>
+                  <p data-i18n="knowledge.empty.questions">暂无待解决问题</p>
+                  <span class="empty-hint" data-i18n="knowledge.empty.questionsHint">记录工作中遇到的问题，后续集中解决形成知识</span>
                 </div>
               </div>
             </div>
@@ -429,25 +431,25 @@
             <!-- 子视图4：智能搜索（原知识跟随内容） -->
             <div id="knowledgeSearchView" class="kd-subview hidden">
               <div class="knowledge-search-bar">
-                <input type="text" id="knowledgeSearchInput" class="knowledge-search-input" placeholder="🔍 输入关键词搜索知识..." autocomplete="off">
-                <button class="knowledge-search-btn" id="knowledgeSearchBtn">🔍 搜索</button>
+                <input type="text" id="knowledgeSearchInput" class="knowledge-search-input" placeholder="🔍 输入关键词搜索知识..." data-i18n-placeholder="knowledge.searchPlaceholder" autocomplete="off">
+                <button class="knowledge-search-btn" id="knowledgeSearchBtn" data-i18n="knowledge.searchBtn">🔍 搜索</button>
               </div>
               <div class="knowledge-content">
                 <!-- 智能推荐区 -->
                 <div class="knowledge-section" id="knowledgeRecommendSection">
                   <div class="knowledge-section-header">
                     <div class="knowledge-section-title">
-                      <span class="icon">🤖</span> 智能推荐
+                      <span class="icon">🤖</span> <span data-i18n="knowledge.recommend">智能推荐</span>
                     </div>
                     <div class="knowledge-section-actions">
-                      <button class="knowledge-action-btn" id="knowledgeRefreshBtn">🔄 刷新</button>
+                      <button class="knowledge-action-btn" id="knowledgeRefreshBtn" data-i18n="knowledge.refresh">🔄 刷新</button>
                     </div>
                   </div>
                   <div id="recommendationList" class="knowledge-card-list">
                     <div class="knowledge-empty">
                       <div class="empty-icon">🤖</div>
-                      <p>暂无智能推荐</p>
-                      <span class="empty-hint">复制含疑问的内容，系统将自动推荐知识</span>
+                      <p data-i18n="knowledge.empty.recommend">暂无智能推荐</p>
+                      <span class="empty-hint" data-i18n="knowledge.empty.recommendHint">复制含疑问的内容，系统将自动推荐知识</span>
                     </div>
                   </div>
                 </div>
@@ -456,21 +458,21 @@
                 <div class="knowledge-section knowledge-search-results" id="knowledgeSearchResults" style="display: none;">
                   <div class="knowledge-section-header">
                     <div class="knowledge-section-title">
-                      <span class="icon">🔎</span> 搜索结果
+                      <span class="icon">🔎</span> <span data-i18n="knowledge.searchResults">搜索结果</span>
                     </div>
-                    <button class="knowledge-action-btn" onclick="knowledgeFollow.clearSearchResults()">✕ 关闭</button>
+                    <button class="knowledge-action-btn" data-i18n="knowledge.close" onclick="knowledgeFollow.clearSearchResults()">✕ 关闭</button>
                   </div>
 
                   <div class="search-panels" id="searchPanels">
                     <!-- 面板1: ADP 问答 -->
                     <div class="search-panel" id="panelADP" data-panel="adp" style="flex: 1 1 0%;">
                       <div class="search-panel-header" data-drag="adp">
-                        <span class="search-panel-title">🤖 ADP 问答</span>
+                        <span class="search-panel-title" data-i18n="knowledge.adpQa">🤖 ADP 问答</span>
                         <span class="adp-streaming-status" id="adpStreamingStatus" style="display: none;">
                           <span class="adp-pulse-dot"></span>
                           <span class="adp-pulse-dot"></span>
                           <span class="adp-pulse-dot"></span>
-                          <span>思考中</span>
+                          <span data-i18n="knowledge.thinking">思考中</span>
                         </span>
                         <div class="adp-streaming-controls" id="adpStreamingControls" style="display: none;">
                           <button class="adp-stream-control stop" onclick="knowledgeFollow.stopADPStreaming()">⏹</button>
@@ -493,7 +495,7 @@
                     <!-- 面板2: 本地记忆 -->
                     <div class="search-panel" id="panelLocal" data-panel="local" style="flex: 1 1 0%;">
                       <div class="search-panel-header" data-drag="local">
-                        <span class="search-panel-title">🧠 本地记忆</span>
+                        <span class="search-panel-title" data-i18n="knowledge.localMemory">🧠 本地记忆</span>
                         <span class="search-panel-keywords" id="localKeywords" style="display: none;"></span>
                         <span class="search-panel-count" id="localCount">0</span>
                       </div>
@@ -507,7 +509,7 @@
                     <!-- 面板3: 资源文件 -->
                     <div class="search-panel" id="panelPublic" data-panel="public" style="flex: 1 1 0%;">
                       <div class="search-panel-header" data-drag="public">
-                        <span class="search-panel-title">📄 资源文件</span>
+                        <span class="search-panel-title" data-i18n="knowledge.resourceFiles">📄 资源文件</span>
                         <span class="search-panel-keywords" id="publicKeywords" style="display: none;"></span>
                         <span class="search-panel-count" id="publicCount">0</span>
                       </div>
@@ -523,7 +525,7 @@
             <!-- 详情视图（覆盖在子视图上方） -->
             <div id="knowledgeDetailView" class="kd-subview hidden">
               <div class="kd-detail-toolbar">
-                <button class="kd-action-btn" id="knowledgeDetailBack">← 返回</button>
+                <button class="kd-action-btn" id="knowledgeDetailBack" data-i18n="knowledge.back">← 返回</button>
               </div>
               <div class="kd-detail-view" id="knowledgeDetailContent">
               </div>
@@ -533,87 +535,87 @@
           <div class="documents-view hidden" id="documentsView">
             <div class="documents-header">
               <div class="documents-search">
-                <input type="text" id="documentsSearchInput" placeholder="搜索文档、案例、Demo..." autocomplete="off">
+                <input type="text" id="documentsSearchInput" placeholder="搜索文档、案例、Demo..." data-i18n-placeholder="documents.searchPh" autocomplete="off">
                 <button class="documents-search-btn" id="documentsSearchBtn">🔍</button>
               </div>
               <div class="documents-sort-tabs" id="documentsSortTabs">
-                <button class="doc-sort-tab active" data-sort="latest">🕐 最新</button>
-                <button class="doc-sort-tab" data-sort="hot">🔥 最热</button>
+                <button class="doc-sort-tab active" data-sort="latest" data-i18n="documents.latest">🕐 最新</button>
+                <button class="doc-sort-tab" data-sort="hot" data-i18n="documents.hot">🔥 最热</button>
               </div>
             </div>
             <div class="documents-category-tabs" id="documentsCategoryTabs">
-              <button class="doc-cat-tab active" data-type="cloud">☁️ 云端资料</button>
-              <button class="doc-cat-tab" data-type="local">💻 本地</button>
-              <button class="doc-cat-tab" data-type="artifacts">🤖 Agent 产物</button>
+              <button class="doc-cat-tab active" data-type="cloud" data-i18n="documents.cloud">☁️ 云端资料</button>
+              <button class="doc-cat-tab" data-type="local" data-i18n="documents.local">💻 本地</button>
+              <button class="doc-cat-tab" data-type="artifacts" data-i18n="documents.artifacts">🤖 Agent 产物</button>
             </div>
             <!-- 云端资料子分类 -->
             <div class="cloud-sub-tabs" id="cloudSubTabs">
-              <button class="cloud-sub-tab active" data-type="documents">📄 文档</button>
-              <button class="cloud-sub-tab" data-type="cases">💼 案例</button>
-              <button class="cloud-sub-tab" data-type="demos">🎮 Demo</button>
-              <button class="cloud-sub-tab" data-type="learning">📚 学习材料</button>
+              <button class="cloud-sub-tab active" data-type="documents" data-i18n="documents.cloudDocs">📄 文档</button>
+              <button class="cloud-sub-tab" data-type="cases" data-i18n="documents.cloudCases">💼 案例</button>
+              <button class="cloud-sub-tab" data-type="demos" data-i18n="documents.cloudDemos">🎮 Demo</button>
+              <button class="cloud-sub-tab" data-type="learning" data-i18n="documents.cloudLearning">📚 学习材料</button>
             </div>
             <div class="documents-body" id="documentsBody">
               <div class="documents-loading" id="documentsLoading" style="display: none;">
                 <div class="spinner"></div>
-                <span>加载中...</span>
+                <span data-i18n="common.loading">加载中...</span>
               </div>
               <div class="documents-grid" id="documentsGrid">
                 <div class="documents-empty">
                   <div class="empty-icon">☁️</div>
-                  <p>浏览云端资料</p>
-                  <span class="empty-hint">支持搜索文档、案例、Demo 和学习材料</span>
+                  <p data-i18n="documents.browseCloud">浏览云端资料</p>
+                  <span class="empty-hint" data-i18n="documents.browseCloudHint">支持搜索文档、案例、Demo 和学习材料</span>
                 </div>
               </div>
               <div class="documents-pagination hidden" id="documentsPagination">
                 <span class="pagination-info" id="paginationInfo"></span>
-                <button class="pagination-btn" id="prevPageBtn">上一页</button>
-                <button class="pagination-btn" id="nextPageBtn">下一页</button>
+                <button class="pagination-btn" id="prevPageBtn" data-i18n="documents.prevPage">上一页</button>
+                <button class="pagination-btn" id="nextPageBtn" data-i18n="documents.nextPage">下一页</button>
               </div>
 
               <!-- 本地文件区域 -->
               <div class="local-files-container hidden" id="localFilesContainer">
                 <div class="local-files-toolbar">
                   <div class="local-dir-tabs" id="localDirTabs">
-                    <button class="local-dir-tab active" data-dir="all">📂 全部</button>
-                    <button class="local-dir-tab" data-dir="desktop">🖥 桌面</button>
-                    <button class="local-dir-tab" data-dir="downloads">📥 下载</button>
-                    <button class="local-dir-tab" data-dir="documents">📝 文档</button>
-                    <button class="local-dir-tab" data-dir="pictures">🖼 图片</button>
-                    <button class="local-dir-tab" data-dir="movies">🎬 影片</button>
-                    <button class="local-dir-tab" data-dir="home">🏠 主目录</button>
+                    <button class="local-dir-tab active" data-dir="all" data-i18n="documents.allFiles">📂 全部</button>
+                    <button class="local-dir-tab" data-dir="desktop" data-i18n="documents.desktop">🖥 桌面</button>
+                    <button class="local-dir-tab" data-dir="downloads" data-i18n="documents.downloads">📥 下载</button>
+                    <button class="local-dir-tab" data-dir="documents" data-i18n="documents.docsFolder">📝 文档</button>
+                    <button class="local-dir-tab" data-dir="pictures" data-i18n="documents.pictures">🖼 图片</button>
+                    <button class="local-dir-tab" data-dir="movies" data-i18n="documents.movies">🎬 影片</button>
+                    <button class="local-dir-tab" data-dir="home" data-i18n="documents.homeDir">🏠 主目录</button>
                     <!-- 自定义文件夹标签将动态插入此处 -->
-                    <button class="local-dir-tab-add" id="localAddDirBtn" title="添加自定义文件夹">＋</button>
+                    <button class="local-dir-tab-add" id="localAddDirBtn" title="添加自定义文件夹" data-i18n-title="documents.addCustomDir">＋</button>
                   </div>
-                  <button class="local-refresh-btn" id="localRefreshBtn">🔄 刷新索引</button>
+                  <button class="local-refresh-btn" id="localRefreshBtn" data-i18n="documents.refreshIndex">🔄 刷新索引</button>
                 </div>
                 <div class="local-type-row">
                   <div class="local-type-tabs" id="localTypeTabs">
-                    <button class="local-type-tab active" data-type="all">全部</button>
-                    <button class="local-type-tab" data-type="document">📄 文档</button>
-                    <button class="local-type-tab" data-type="spreadsheet">📊 表格</button>
-                    <button class="local-type-tab" data-type="presentation">📑 演示</button>
-                    <button class="local-type-tab" data-type="image">🖼 图片</button>
-                    <button class="local-type-tab" data-type="video">🎬 影片</button>
-                    <button class="local-type-tab" data-type="code">💻 代码</button>
+                    <button class="local-type-tab active" data-type="all" data-i18n="documents.allTypes">全部</button>
+                    <button class="local-type-tab" data-type="document" data-i18n="documents.typeDoc">📄 文档</button>
+                    <button class="local-type-tab" data-type="spreadsheet" data-i18n="documents.typeSheet">📊 表格</button>
+                    <button class="local-type-tab" data-type="presentation" data-i18n="documents.typePresentation">📑 演示</button>
+                    <button class="local-type-tab" data-type="image" data-i18n="documents.typeImage">🖼 图片</button>
+                    <button class="local-type-tab" data-type="video" data-i18n="documents.typeVideo">🎬 影片</button>
+                    <button class="local-type-tab" data-type="code" data-i18n="documents.typeCode">💻 代码</button>
                   </div>
                 </div>
                 <div class="local-index-status" id="localIndexStatus">
-                  <span>📊 点击「刷新索引」开始扫描本地文件</span>
+                  <span data-i18n="documents.clickRefresh">📊 点击「刷新索引」开始扫描本地文件</span>
                 </div>
                 <div class="local-files-body" id="localFilesBody">
                   <div class="local-files-loading" id="localFilesLoading" style="display: none;">
                     <div class="spinner"></div>
-                    <span>加载中...</span>
+                    <span data-i18n="common.loading">加载中...</span>
                   </div>
                   <div class="local-files-grid" id="localFilesGrid"></div>
                   <div class="local-files-empty" id="localFilesEmpty" style="display: none;">
                     <div class="empty-icon">📂</div>
-                    <p>暂无文件</p>
-                    <span class="empty-hint">尝试切换目录或调整筛选条件</span>
+                    <p data-i18n="documents.noFiles">暂无文件</p>
+                    <span class="empty-hint" data-i18n="documents.noFilesHint">尝试切换目录或调整筛选条件</span>
                   </div>
                   <div class="local-load-more" id="localLoadMore" style="display: none;">
-                    <button class="local-load-more-btn" id="localLoadMoreBtn">加载更多</button>
+                    <button class="local-load-more-btn" id="localLoadMoreBtn" data-i18n="documents.loadMore">加载更多</button>
                   </div>
                 </div>
               </div>
@@ -622,23 +624,23 @@
               <div class="agent-artifacts-container hidden" id="agentArtifactsContainer">
                 <div class="artifacts-toolbar">
                   <div class="artifacts-config-row">
-                    <span class="artifacts-path-label">📂 保存目录：</span>
-                    <span class="artifacts-path-value" id="artifactsPathValue">加载中...</span>
-                    <button class="artifacts-change-dir-btn" id="artifactsChangeDirBtn" title="更改保存目录">✏️</button>
-                    <button class="artifacts-open-dir-btn" id="artifactsOpenDirBtn" title="在 Finder 中打开">📁</button>
-                    <button class="artifacts-refresh-btn" id="artifactsRefreshBtn" title="刷新列表">🔄</button>
+                    <span class="artifacts-path-label" data-i18n="documents.artifactPath">📂 保存目录：</span>
+                    <span class="artifacts-path-value" id="artifactsPathValue" data-i18n="common.loading">加载中...</span>
+                    <button class="artifacts-change-dir-btn" id="artifactsChangeDirBtn" title="更改保存目录" data-i18n-title="documents.artifactChangeDir">✏️</button>
+                    <button class="artifacts-open-dir-btn" id="artifactsOpenDirBtn" title="在 Finder 中打开" data-i18n-title="documents.artifactOpenDir">📁</button>
+                    <button class="artifacts-refresh-btn" id="artifactsRefreshBtn" title="刷新列表" data-i18n-title="documents.artifactRefresh">🔄</button>
                   </div>
                 </div>
                 <div class="artifacts-body" id="artifactsBody">
                   <div class="artifacts-loading" id="artifactsLoading" style="display: none;">
                     <div class="spinner"></div>
-                    <span>加载中...</span>
+                    <span data-i18n="common.loading">加载中...</span>
                   </div>
                   <div class="artifacts-grid" id="artifactsGrid"></div>
                   <div class="artifacts-empty" id="artifactsEmpty" style="display: none;">
                     <div class="empty-icon">🤖</div>
-                    <p>暂无 Agent 产物</p>
-                    <span class="empty-hint">AI 助手生成的文档、HTML 等交付物将保存在这里</span>
+                    <p data-i18n="documents.noArtifacts">暂无 Agent 产物</p>
+                    <span class="empty-hint" data-i18n="documents.noArtifactsHint">AI 助手生成的文档、HTML 等交付物将保存在这里</span>
                   </div>
                 </div>
               </div>
@@ -647,45 +649,45 @@
           <!-- 洞察视图 v2.3 -->
           <div class="insight-view hidden" id="insightView">
             <div class="insight-tabs">
-              <button class="insight-tab active" data-tab="dashboard"><span class="tab-icon">📊</span> 仪表盘</button>
-              <button class="insight-tab" data-tab="multimodal"><span class="tab-icon">📚</span> 知识库</button>
-              <button class="insight-tab" data-tab="activation"><span class="tab-icon">⚡</span> 知识活化</button>
-              <button class="insight-tab" data-tab="evolution"><span class="tab-icon">🌱</span> 知识演化</button>
-              <button class="insight-tab" data-tab="conflicts"><span class="tab-icon">⚡</span> 冲突检测</button>
+              <button class="insight-tab active" data-tab="dashboard"><span class="tab-icon">📊</span> <span data-i18n="insight.dashboard">仪表盘</span></button>
+              <button class="insight-tab" data-tab="multimodal"><span class="tab-icon">📚</span> <span data-i18n="insight.knowledgeBase">知识库</span></button>
+              <button class="insight-tab" data-tab="activation"><span class="tab-icon">⚡</span> <span data-i18n="insight.activation">知识活化</span></button>
+              <button class="insight-tab" data-tab="evolution"><span class="tab-icon">🌱</span> <span data-i18n="insight.evolution">知识演化</span></button>
+              <button class="insight-tab" data-tab="conflicts"><span class="tab-icon">⚡</span> <span data-i18n="insight.conflicts">冲突检测</span></button>
             </div>
             <div class="insight-content">
               <!-- 仪表盘面板 -->
               <div class="insight-panel active" id="insightPanel_dashboard">
                 <div id="insightDashboardContent">
-                  <div class="insight-loading"><div class="spinner"></div><span>加载洞察数据...</span></div>
+                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingDashboard">加载洞察数据...</span></div>
                 </div>
               </div>
               <!-- 知识库面板（多模态资产 + 知识书本） -->
               <div class="insight-panel" id="insightPanel_multimodal">
                 <div id="insightMultimodalContent">
-                  <div class="insight-loading"><div class="spinner"></div><span>加载知识库...</span></div>
+                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingKB">加载知识库...</span></div>
                 </div>
               </div>
               <!-- 知识活化面板 -->
               <div class="insight-panel" id="insightPanel_activation">
                 <div class="activation-section-header" style="margin-bottom:16px">
-                  <h3 style="margin:0">⚡ 知识活化推荐</h3>
-                  <button class="activation-refresh-btn" id="activationRefreshBtn">刷新推荐</button>
+                  <h3 style="margin:0" data-i18n="insight.activationTitle">⚡ 知识活化推荐</h3>
+                  <button class="activation-refresh-btn" id="activationRefreshBtn" data-i18n="insight.refreshRecommend">刷新推荐</button>
                 </div>
                 <div id="insightActivationContent">
-                  <div class="insight-loading"><div class="spinner"></div><span>加载活化推荐...</span></div>
+                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingActivation">加载活化推荐...</span></div>
                 </div>
               </div>
               <!-- 知识演化面板 -->
               <div class="insight-panel" id="insightPanel_evolution">
                 <div id="insightEvolutionContent">
-                  <div class="insight-loading"><div class="spinner"></div><span>加载知识演化...</span></div>
+                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingEvolution">加载知识演化...</span></div>
                 </div>
               </div>
               <!-- 冲突检测面板 -->
               <div class="insight-panel" id="insightPanel_conflicts">
                 <div id="insightConflictContent">
-                  <div class="insight-loading"><div class="spinner"></div><span>加载冲突检测...</span></div>
+                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingConflicts">加载冲突检测...</span></div>
                 </div>
               </div>
             </div>
@@ -697,64 +699,64 @@
         <div class="detector-content">
           <div class="detector-header">
             <span class="detector-icon">📋</span>
-            <span class="detector-title">检测到待办事项</span>
+            <span class="detector-title" data-i18n="clipboard.detected">检测到待办事项</span>
           </div>
           <div class="detector-body">
             <div class="raw-text">
-              <span class="label">原文:</span>
+              <span class="label" data-i18n="clipboard.original">原文:</span>
               <p id="rawText"></p>
             </div>
             <div class="clipboard-intent-section" id="clipboardIntentSection" style="display: none;">
-              <span class="clipboard-intent-label">意图识别</span>
+              <span class="clipboard-intent-label" data-i18n="clipboard.intent">意图识别</span>
               <div class="clipboard-intent-tags" id="clipboardIntentTags">
-                <span class="clipboard-intent-tag intent-search" data-intent="search_knowledge">🔍 搜索知识</span>
-                <span class="clipboard-intent-tag intent-doc" data-intent="get_document">📄 获取文档</span>
-                <span class="clipboard-intent-tag intent-question" data-intent="query_question">❓ 查询问题</span>
-                <span class="clipboard-intent-tag intent-doubt" data-intent="doubt">🤔 有疑问</span>
+                <span class="clipboard-intent-tag intent-search" data-intent="search_knowledge" data-i18n="clipboard.intent.search">🔍 搜索知识</span>
+                <span class="clipboard-intent-tag intent-doc" data-intent="get_document" data-i18n="clipboard.intent.doc">📄 获取文档</span>
+                <span class="clipboard-intent-tag intent-question" data-intent="query_question" data-i18n="clipboard.intent.question">❓ 查询问题</span>
+                <span class="clipboard-intent-tag intent-doubt" data-intent="doubt" data-i18n="clipboard.intent.doubt">🤔 有疑问</span>
               </div>
             </div>
             <div class="divider"></div>
             <div class="task-preview">
               <div class="preview-item">
                 <span class="preview-icon">📌</span>
-                <span class="preview-label">任务:</span>
+                <span class="preview-label" data-i18n="clipboard.task">任务:</span>
                 <span id="previewTitle"></span>
               </div>
               <div class="preview-item">
                 <span class="preview-icon">⏰</span>
-                <span class="preview-label">截止:</span>
+                <span class="preview-label" data-i18n="clipboard.due">截止:</span>
                 <span id="previewDue"></span>
               </div>
               <div class="preview-item">
                 <span class="preview-icon">⏱</span>
-                <span class="preview-label">预估:</span>
+                <span class="preview-label" data-i18n="clipboard.estimated">预估:</span>
                 <span id="previewDuration"></span>
               </div>
               <div class="preview-item">
                 <span class="preview-icon">🔥</span>
-                <span class="preview-label">优先级:</span>
+                <span class="preview-label" data-i18n="clipboard.priorityLevel">优先级:</span>
                 <span id="previewPriority"></span>
               </div>
               <div class="preview-item">
                 <span class="preview-icon">✓</span>
-                <span class="preview-label">置信度:</span>
+                <span class="preview-label" data-i18n="clipboard.confidence">置信度:</span>
                 <span id="previewConfidence" style="display: none;"></span>
               </div>
               <div class="preview-item">
                 <span class="preview-icon">💡</span>
-                <span class="preview-label">原因:</span>
+                <span class="preview-label" data-i18n="clipboard.reason">原因:</span>
                 <span id="previewReason" style="display: none; font-size: 12px; color: var(--text-secondary);"></span>
               </div>
             </div>
           </div>
           <div class="detector-actions">
-            <button class="action-btn primary" id="createTaskBtn">创建任务</button>
-            <button class="action-btn secondary" id="saveToNoteBtn">保存到笔记</button>
-            <button class="action-btn secondary" id="saveToMemoryBtn">保存到记忆</button>
-            <button class="action-btn secondary" id="saveAsQuestionBtn">❓ 记录问题</button>
-            <button class="search-knowledge-btn" id="searchKnowledgeBtn">🔍 搜索知识</button>
-            <button class="action-btn" id="editTaskBtn">编辑</button>
-            <button class="action-btn" id="ignoreBtn">忽略</button>
+            <button class="action-btn primary" id="createTaskBtn" data-i18n="clipboard.createTask">创建任务</button>
+            <button class="action-btn secondary" id="saveToNoteBtn" data-i18n="clipboard.saveToNote">保存到笔记</button>
+            <button class="action-btn secondary" id="saveToMemoryBtn" data-i18n="clipboard.saveToMemory">保存到记忆</button>
+            <button class="action-btn secondary" id="saveAsQuestionBtn" data-i18n="clipboard.recordQuestion">❓ 记录问题</button>
+            <button class="search-knowledge-btn" id="searchKnowledgeBtn" data-i18n="clipboard.searchKnowledge">🔍 搜索知识</button>
+            <button class="action-btn" id="editTaskBtn" data-i18n="clipboard.edit">编辑</button>
+            <button class="action-btn" id="ignoreBtn" data-i18n="clipboard.ignore">忽略</button>
           </div>
         </div>
       </div>
@@ -765,14 +767,14 @@
     <div class="modal-overlay"></div>
     <div class="modal-content">
       <div class="modal-header">
-        <h3 id="modalTitle">新建任务</h3>
+        <h3 id="modalTitle" data-i18n="task.newTaskTitle">新建任务</h3>
         <button class="modal-close" id="closeModal">×</button>
       </div>
       <div class="modal-body">
         <!-- AI分析输入框 -->
         <div class="form-group">
-          <label for="aiTaskInput">📝 AI智能分析（输入任务描述，AI自动创建待办）</label>
-          <textarea id="aiTaskInput" placeholder="输入任务描述，例如：明天下午给客户发报价，需要准备PPT和合同..."></textarea>
+          <label>📝 AI智能分析（输入任务描述，AI自动创建待办）</label>
+          <div id="aiTaskInputEditor"></div>
           <div style="margin-top: 8px; display: flex; gap: 8px;">
             <button class="btn primary small" id="aiAnalyzeBtn">🤖 AI分析</button>
             <button class="btn secondary small" id="aiSaveToNoteBtn">📝 保存到记事本</button>
@@ -853,12 +855,33 @@
 
   </div>
 
+  <!-- 新建笔记弹窗 -->
+  <div class="modal hidden" id="noteEditorModal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="max-width:600px;">
+      <div class="modal-header">
+        <h3 id="noteEditorTitle">新建笔记</h3>
+        <button class="modal-close" id="closeNoteEditorBtn">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>内容</label>
+          <div id="noteEditorContainer"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="cancelNoteEditor">取消</button>
+        <button class="btn primary" id="saveNoteEditor">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 独立登录弹窗 -->
   <div class="modal hidden" id="loginModal">
     <div class="modal-overlay"></div>
     <div class="modal-content login-modal-content">
       <div class="modal-header">
-        <h3>账户</h3>
+        <h3 data-i18n="login.account">账户</h3>
         <button class="modal-close" id="closeLoginBtn">×</button>
       </div>
       <div class="modal-body">
@@ -866,46 +889,30 @@
         <div id="orgLoginSection">
           <div class="org-login-card">
             <div class="org-login-icon">🔐</div>
-            <h4>登录账户</h4>
-            <p style="color: var(--text-secondary); margin: 8px 0 16px;">登录后自动获取组织配置，接收通知推送</p>
-            <!-- 环境选择 -->
+            <h4 data-i18n="login.loginAccount">登录账户</h4>
+            <p style="color: var(--text-secondary); margin: 8px 0 16px;" data-i18n="login.loginHint">登录后自动获取组织配置，接收通知推送</p>
+            <!-- 环境选择（发版隐藏，默认正式环境） -->
+            <input type="hidden" id="loginEnv" value="production">
+            <!-- 服务器地址重置区（发版隐藏） -->
             <div class="form-group">
-              <label for="loginEnv">服务环境</label>
-              <select id="loginEnv" class="env-select">
-                <option value="beta">Beta 版本（测试）</option>
-                <option value="production">正式版本</option>
-              </select>
-              <div class="env-hint" id="loginEnvHint">测试环境：config-server</div>
-              <button class="server-urls-toggle-btn" id="serverUrlsToggleBtn" onclick="App.toggleServerUrlsEdit()">⚙ 服务器地址</button>
-            </div>
-            <!-- 服务器地址重置区（登录前只显示重置按钮，不显示地址内容） -->
-            <div class="server-urls-edit-collapsed" id="serverUrlsEditArea">
-              <div class="server-url-reset-group">
-                <button class="server-url-reset-env-btn" onclick="App.resetServerUrls('beta')">↩ 重置 Beta 服务器</button>
-                <button class="server-url-reset-env-btn" onclick="App.resetServerUrls('production')">↩ 重置正式服务器</button>
-                <button class="server-url-reset-all-btn" onclick="App.resetServerUrls('all')">↩ 全部重置</button>
-              </div>
-              <div class="server-url-status hidden" id="loginServerUrlStatus"></div>
+              <label for="loginAccount" data-i18n="login.username">账号</label>
+              <input type="text" id="loginAccount" placeholder="用户名 / 手机号 / 邮箱" data-i18n-placeholder="login.usernamePh">
             </div>
             <div class="form-group">
-              <label for="loginAccount">账号</label>
-              <input type="text" id="loginAccount" placeholder="用户名 / 手机号 / 邮箱">
-            </div>
-            <div class="form-group">
-              <label for="loginPassword">密码</label>
-              <input type="password" id="loginPassword" placeholder="输入密码" onkeydown="if(event.key==='Enter')App.handleOrgLogin()">
+              <label for="loginPassword" data-i18n="login.password">密码</label>
+              <input type="password" id="loginPassword" placeholder="输入密码" data-i18n-placeholder="login.passwordPh" onkeydown="if(event.key==='Enter')App.handleOrgLogin()">
             </div>
             <div class="login-remember-row">
               <label class="login-remember-label">
                 <input type="checkbox" id="loginRememberMe" checked>
-                <span>记住登录状态</span>
+                <span data-i18n="login.remember">记住登录状态</span>
               </label>
-              <span class="login-remember-hint">关闭应用后自动登录</span>
+              <span class="login-remember-hint" data-i18n="login.rememberHint">关闭应用后自动登录</span>
             </div>
             <div id="loginError" class="login-error hidden"></div>
-            <button class="btn-primary org-login-btn" id="orgLoginBtn" onclick="App.handleOrgLogin()">登 录</button>
+            <button class="btn-primary org-login-btn" id="orgLoginBtn" data-i18n="login.submit" onclick="App.handleOrgLogin()">登 录</button>
             <div class="login-register-link">
-              还没有账号？<a href="javascript:void(0)" onclick="App.showRegisterForm()">注册新账号</a>
+              <span data-i18n="login.noAccount">还没有账号？</span><a href="javascript:void(0)" onclick="App.showRegisterForm()" data-i18n="login.registerLink">注册新账号</a>
             </div>
           </div>
 
@@ -913,44 +920,40 @@
           <div id="registerSection" class="hidden">
             <div class="org-login-card">
               <div class="org-login-icon">✨</div>
-              <h4>注册账号</h4>
-              <p style="color: var(--text-secondary); margin: 8px 0 16px;">创建账号后即可使用全部功能</p>
+              <h4 data-i18n="login.registerTitle">注册账号</h4>
+              <p style="color: var(--text-secondary); margin: 8px 0 16px;" data-i18n="login.registerHint">创建账号后即可使用全部功能</p>
               <div class="form-group">
-                <label for="regUsername">用户名 <span class="required-mark">*</span></label>
-                <input type="text" id="regUsername" placeholder="2-20位，字母/数字/下划线/中划线" maxlength="20">
+                <label for="regUsername" data-i18n="login.regUsername">用户名 <span class="required-mark">*</span></label>
+                <input type="text" id="regUsername" placeholder="2-20位，字母/数字/下划线/中划线" data-i18n-placeholder="login.regUsernamePh" maxlength="20">
               </div>
               <div class="form-group">
-                <label for="regMobile">手机号 <span class="required-mark">*</span></label>
+                <label for="regMobile" data-i18n="login.regMobile">手机号 <span class="required-mark">*</span></label>
                 <div class="sms-code-row">
-                  <input type="tel" id="regMobile" placeholder="11位手机号" maxlength="11">
-                  <button class="sms-send-btn" id="regSendCodeBtn" onclick="App.sendVerifyCode()">获取验证码</button>
+                  <input type="tel" id="regMobile" placeholder="11位手机号" data-i18n-placeholder="login.regMobilePh" maxlength="11">
+                  <button class="sms-send-btn" id="regSendCodeBtn" data-i18n="login.sendCode" onclick="App.sendVerifyCode()">获取验证码</button>
                 </div>
               </div>
               <div class="form-group">
-                <label for="regSmsCode">验证码 <span class="required-mark">*</span></label>
-                <input type="text" id="regSmsCode" placeholder="6位数字验证码" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+                <label for="regSmsCode" data-i18n="login.regSmsCode">验证码 <span class="required-mark">*</span></label>
+                <input type="text" id="regSmsCode" placeholder="6位数字验证码" data-i18n-placeholder="login.regSmsCodePh" maxlength="6" inputmode="numeric" pattern="[0-9]*">
                 <div id="regDevCodeHint" class="dev-code-hint hidden"></div>
               </div>
               <div class="form-group">
-                <label for="regName">姓名 <span class="required-mark">*</span></label>
-                <input type="text" id="regName" placeholder="您的姓名" maxlength="30">
+                <label for="regPassword" data-i18n="login.regPassword">密码 <span class="required-mark">*</span></label>
+                <input type="password" id="regPassword" placeholder="至少6位" data-i18n-placeholder="login.regPasswordPh" maxlength="50">
               </div>
               <div class="form-group">
-                <label for="regPassword">密码 <span class="required-mark">*</span></label>
-                <input type="password" id="regPassword" placeholder="至少6位" maxlength="50">
+                <label for="regPasswordConfirm" data-i18n="login.regPasswordConfirm">确认密码 <span class="required-mark">*</span></label>
+                <input type="password" id="regPasswordConfirm" placeholder="再次输入密码" data-i18n-placeholder="login.regPasswordConfirmPh" maxlength="50">
               </div>
-              <div class="form-group">
-                <label for="regNickname">昵称</label>
-                <input type="text" id="regNickname" placeholder="选填，展示用名" maxlength="30">
-              </div>
-              <div class="form-group">
-                <label for="regEmail">邮箱</label>
-                <input type="email" id="regEmail" placeholder="选填" maxlength="100">
-              </div>
+              <!-- 隐藏字段：注册时传空值 -->
+              <input type="hidden" id="regName" value="">
+              <input type="hidden" id="regNickname" value="">
+              <input type="hidden" id="regEmail" value="">
               <div id="registerError" class="login-error hidden"></div>
-              <button class="btn-primary org-login-btn" id="regSubmitBtn" onclick="App.handleRegister()">注 册</button>
+              <button class="btn-primary org-login-btn" id="regSubmitBtn" data-i18n="login.registerBtn" onclick="App.handleRegister()">注 册</button>
               <div class="login-register-link">
-                已有账号？<a href="javascript:void(0)" onclick="App.showLoginForm()">返回登录</a>
+                <span data-i18n="login.hasAccount">已有账号？</span><a href="javascript:void(0)" onclick="App.showLoginForm()" data-i18n="login.backToLogin">返回登录</a>
               </div>
             </div>
           </div>
@@ -964,7 +967,6 @@
               <div class="login-profile-info">
                 <div class="login-profile-name" id="orgUserName">-</div>
                 <div class="login-profile-detail" id="orgUserOrg">-</div>
-                <div class="login-profile-env" id="orgUserEnv">-</div>
               </div>
             </div>
             <div class="login-profile-divider"></div>
@@ -976,12 +978,12 @@
               </div>
               <div class="login-config-item">
                 <span class="login-config-icon">🤖</span>
-                <span class="login-config-label">模型</span>
+                <span class="login-config-label" data-i18n="profile.model">模型</span>
                 <span class="login-config-value" id="orgApiModel">-</span>
               </div>
               <div class="login-config-item">
                 <span class="login-config-icon">⚡</span>
-                <span class="login-config-label">额度</span>
+                <span class="login-config-label" data-i18n="profile.quota">额度</span>
                 <span class="login-config-value" id="orgApiLimit">-</span>
               </div>
               <div class="login-config-item">
@@ -991,63 +993,89 @@
               </div>
             </div>
             <div class="login-profile-divider"></div>
-            <div class="login-profile-config-source">
-              <div class="config-source-label">配置来源</div>
+            <!-- 配置来源（发版隐藏，默认云端） -->
+            <div class="login-profile-config-source hidden" style="display:none;">
+              <div class="config-source-label" data-i18n="profile.configSource">配置来源</div>
               <div class="config-source-toggle" id="configSourceToggle">
-                <button class="config-source-btn active" data-source="cloud" onclick="App.setConfigSource('cloud')">☁️ 云端配置</button>
-                <button class="config-source-btn" data-source="local" onclick="App.setConfigSource('local')">💻 本地配置</button>
+                <button class="config-source-btn active" data-source="cloud" data-i18n="profile.cloudConfig" onclick="App.setConfigSource('cloud')">☁️ 云端配置</button>
+                <button class="config-source-btn" data-source="local" data-i18n="profile.localConfig" onclick="App.setConfigSource('local')">💻 本地配置</button>
               </div>
-              <div class="config-source-hint" id="configSourceHint">使用组织管理员统一配置</div>
+              <div class="config-source-hint" id="configSourceHint" data-i18n="profile.configHint">使用组织管理员统一配置</div>
             </div>
-            <div class="login-profile-divider"></div>
-            <!-- 服务器地址管理 -->
-            <div class="server-urls-section">
-              <div class="config-source-label">服务器地址</div>
+            <!-- 服务器地址管理（发版隐藏） -->
+            <div class="server-urls-section hidden" style="display:none;">
+              <div class="config-source-label" data-i18n="profile.serverUrls">服务器地址</div>
               <div class="server-urls-envs">
                 <!-- Beta -->
                 <div class="server-url-group">
                   <div class="server-url-group-header">
                     <span class="server-url-env-badge beta">Beta</span>
                     <span class="server-url-custom-hint" id="betaCustomHint"></span>
-                    <button class="server-url-reset-btn" onclick="App.resetServerUrls('beta')" title="重置为默认地址">↩ 重置</button>
+                    <button class="server-url-reset-btn" data-i18n="profile.reset" onclick="App.resetServerUrls('beta')" title="重置为默认地址">↩ 重置</button>
                   </div>
                   <div class="server-url-row">
-                    <label>认证</label>
+                    <label data-i18n="profile.auth">认证</label>
                     <input type="text" id="betaAuthUrl" class="server-url-input" placeholder="http://...">
                   </div>
                   <div class="server-url-row">
-                    <label>配置</label>
+                    <label data-i18n="profile.config">配置</label>
                     <input type="text" id="betaConfigUrl" class="server-url-input" placeholder="http://...">
                   </div>
                 </div>
                 <!-- Production -->
                 <div class="server-url-group">
                   <div class="server-url-group-header">
-                    <span class="server-url-env-badge production">正式</span>
+                    <span class="server-url-env-badge production" data-i18n="profile.production">正式</span>
                     <span class="server-url-custom-hint" id="productionCustomHint"></span>
-                    <button class="server-url-reset-btn" onclick="App.resetServerUrls('production')" title="重置为默认地址">↩ 重置</button>
+                    <button class="server-url-reset-btn" data-i18n="profile.reset" onclick="App.resetServerUrls('production')" title="重置为默认地址">↩ 重置</button>
                   </div>
                   <div class="server-url-row">
-                    <label>认证</label>
+                    <label data-i18n="profile.auth">认证</label>
                     <input type="text" id="productionAuthUrl" class="server-url-input" placeholder="http://...">
                   </div>
                   <div class="server-url-row">
-                    <label>配置</label>
+                    <label data-i18n="profile.config">配置</label>
                     <input type="text" id="productionConfigUrl" class="server-url-input" placeholder="http://...">
                   </div>
                 </div>
               </div>
               <div class="server-url-actions">
-                <button class="server-url-save-btn" onclick="App.saveServerUrls()">💾 保存并验证</button>
-                <button class="server-url-reset-all-btn" onclick="App.resetServerUrls('all')">↩ 全部重置</button>
+                <button class="server-url-save-btn" data-i18n="profile.saveAndVerify" onclick="App.saveServerUrls()">💾 保存并验证</button>
+                <button class="server-url-reset-all-btn" data-i18n="profile.resetAll" onclick="App.resetServerUrls('all')">↩ 全部重置</button>
               </div>
               <div class="server-url-status hidden" id="serverUrlStatus"></div>
             </div>
             <div class="login-profile-divider"></div>
             <div class="login-profile-actions">
               <span class="login-sync-time" id="orgSyncTime">-</span>
-              <button class="login-action-btn sync" id="syncConfigBtn" onclick="App.handleConfigSync()">🔄 同步配置</button>
-              <button class="login-action-btn logout" onclick="App.handleOrgLogout()">退出登录</button>
+              <button class="login-action-btn sync" id="syncConfigBtn" data-i18n="profile.syncConfig" onclick="App.handleConfigSync()">🔄 同步配置</button>
+              <button class="login-action-btn profile" data-i18n="profile.editProfile" onclick="App.toggleProfileEdit()">✏️ 修改资料</button>
+              <button class="login-action-btn logout" data-i18n="login.logout" onclick="App.handleOrgLogout()">退出登录</button>
+            </div>
+            <!-- 个人信息编辑区（默认隐藏） -->
+            <div id="profileEditSection" class="hidden" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color, #d1d1d6);">
+              <h5 style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary);" data-i18n="profile.editPersonalInfo">修改个人信息</h5>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <label for="profileName" style="font-size: 12px;" data-i18n="profile.name">姓名</label>
+                <input type="text" id="profileName" placeholder="您的姓名" data-i18n-placeholder="profile.namePh" maxlength="30" style="font-size: 13px; padding: 7px 10px;">
+              </div>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <label for="profileNickname" style="font-size: 12px;" data-i18n="profile.nickname">昵称</label>
+                <input type="text" id="profileNickname" placeholder="展示用名" data-i18n-placeholder="profile.nicknamePh" maxlength="30" style="font-size: 13px; padding: 7px 10px;">
+              </div>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <label for="profileEmail" style="font-size: 12px;" data-i18n="profile.email">邮箱</label>
+                <input type="email" id="profileEmail" placeholder="选填" data-i18n-placeholder="profile.emailPh" maxlength="100" style="font-size: 13px; padding: 7px 10px;">
+              </div>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <label for="profileMobile" style="font-size: 12px;" data-i18n="profile.mobile">手机号</label>
+                <input type="tel" id="profileMobile" placeholder="选填" data-i18n-placeholder="profile.mobilePh" maxlength="11" style="font-size: 13px; padding: 7px 10px;">
+              </div>
+              <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn secondary" style="font-size: 12px; padding: 5px 14px;" onclick="App.toggleProfileEdit()">取消</button>
+                <button class="btn primary" style="font-size: 12px; padding: 5px 14px;" onclick="App.saveProfileEdit()">保存</button>
+              </div>
+              <div id="profileEditError" class="login-error hidden" style="margin-top: 6px;"></div>
             </div>
           </div>
         </div>
@@ -1524,22 +1552,13 @@
         <!-- 记忆管理 -->
         <div class="settings-panel hidden" id="memoryPanel">
           <div class="memory-stats" id="memoryStats">
-            <div class="stat-item">
-              <span class="stat-value">0</span>
-              <span class="stat-label">总记忆数</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-value">0</span>
-              <span class="stat-label">短期记忆</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-value">0</span>
-              <span class="stat-label">长期记忆</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-value">0</span>
-              <span class="stat-label">实体数量</span>
-            </div>
+            <span class="stat-chip"><span class="stat-value">0</span> <span class="stat-label" data-i18n="settings.memory.total">总记忆数</span></span>
+            <span class="stat-divider">·</span>
+            <span class="stat-chip"><span class="stat-value">0</span> <span class="stat-label" data-i18n="settings.memory.shortTerm">短期记忆</span></span>
+            <span class="stat-divider">·</span>
+            <span class="stat-chip"><span class="stat-value">0</span> <span class="stat-label" data-i18n="settings.memory.longTerm">长期记忆</span></span>
+            <span class="stat-divider">·</span>
+            <span class="stat-chip"><span class="stat-value">0</span> <span class="stat-label" data-i18n="settings.memory.entities">实体数量</span></span>
           </div>
           <div class="memory-list-container">
             <div class="memory-input-section">
@@ -1828,8 +1847,8 @@
           <div class="about-section">
             <div class="about-logo-area">
               <div class="about-logo">M</div>
-              <h2 class="about-app-name">忆境 Memora</h2>
-              <span class="about-version">v2.4.0</span>
+              <h2 class="about-app-name">Memora</h2>
+              <span class="about-version">v2.5.0</span>
             </div>
 
             <div class="about-description">
@@ -1886,6 +1905,19 @@
 
               <div class="about-changelog">
               <h4 data-i18n="about.changelog">📋 版本说明</h4>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.5.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li>📝 富文本编辑器 — Apple Design 风格，支持加粗/斜体/列表/链接/图片</li>
+                  <li>🖼️ 笔记图片云同步 — base64 图片自动上传服务器，跨设备无缝访问</li>
+                  <li>🔗 链接插入弹窗 — 自定义模态对话框，支持自定义链接文字</li>
+                  <li>🔐 注册流程简化 — 仅需用户名/手机号/验证码/密码，注册后可编辑个人信息</li>
+                  <li>✏️ 个人资料编辑 — 登录后随时修改姓名/昵称/邮箱/手机号</li>
+                  <li>🚀 正式发布就绪 — 隐藏内部环境切换，默认正式环境</li>
+                  <li>🐛 修复 LLM 测试连接按钮提示未配置的问题</li>
+                </ul>
+              </div>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.4.0</span>
                 <span class="changelog-date">2026-06</span>

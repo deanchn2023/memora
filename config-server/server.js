@@ -324,7 +324,7 @@ app.get('/config/check', authMiddleware, (req, res) => {
 // 1. 先尝试本地 JWT 验证
 // 2. 失败则解码 ADPToolkit JWT payload（内网互通，信任其 token 结构）
 // ADPToolkit 服务器地址（从环境变量读取，支持动态配置）
-const DEFAULT_ADP_SERVER_URL = 'http://21.91.29.59:3000';
+const DEFAULT_ADP_SERVER_URL = 'http://121.5.164.126:3010';
 const ADP_SERVER_URL = process.env.ADP_SERVER_URL || DEFAULT_ADP_SERVER_URL;
 
 /**

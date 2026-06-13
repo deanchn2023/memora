@@ -1,0 +1,467 @@
+/* ============================================
+   RichEditor - Apple Design Language 富文本编辑器
+   ============================================ */
+
+.rich-editor-wrapper {
+  border: 1.5px solid var(--border-color, #d1d1d6);
+  border-radius: var(--radius-md, 10px);
+  overflow: hidden;
+  background: var(--bg-primary, #ffffff);
+  transition: border-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.rich-editor-wrapper.rich-editor-focused {
+  border-color: var(--primary-color, #007AFF);
+  box-shadow: 0 0 0 3px var(--primary-glow, rgba(0, 122, 255, 0.15));
+}
+
+/* ---- 工具栏 ---- */
+.rich-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-bottom: 0.5px solid var(--border-color, #d1d1d6);
+  flex-wrap: wrap;
+  user-select: none;
+}
+
+.rich-editor-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border-color, #d1d1d6);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.rich-editor-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #86868b);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+}
+
+.rich-editor-toolbar-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary, #1d1d1f);
+}
+
+.rich-editor-toolbar-btn.active {
+  background: var(--primary-color, #007AFF);
+  color: #fff;
+}
+
+.rich-editor-toolbar-btn:active {
+  transform: scale(0.92);
+}
+
+/* Compact 模式工具栏 */
+.rich-editor-compact .rich-editor-toolbar {
+  padding: 4px 6px;
+  gap: 1px;
+}
+
+.rich-editor-compact .rich-editor-toolbar-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  border-radius: 5px;
+}
+
+/* ---- 编辑区域 ---- */
+.rich-editor-area {
+  padding: 11px 16px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary, #1d1d1f);
+  outline: none;
+  overflow-y: auto;
+  word-break: break-word;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+  -webkit-user-modify: read-write-plaintext-only;
+  -webkit-user-modify: read-write;
+}
+
+.rich-editor-area:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-tertiary, #aeaeb2);
+  pointer-events: none;
+  position: absolute;
+}
+
+.rich-editor-area:empty {
+  position: relative;
+}
+
+/* 编辑区域内的富文本样式 */
+.rich-editor-area b,
+.rich-editor-area strong {
+  font-weight: 600;
+}
+
+.rich-editor-area i,
+.rich-editor-area em {
+  font-style: italic;
+}
+
+.rich-editor-area u {
+  text-decoration: underline;
+}
+
+.rich-editor-area s,
+.rich-editor-area strike {
+  text-decoration: line-through;
+}
+
+.rich-editor-area ul,
+.rich-editor-area ol {
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.rich-editor-area li {
+  margin: 2px 0;
+}
+
+.rich-editor-area a {
+  color: var(--primary-color, #007AFF);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 122, 255, 0.3);
+  transition: border-color 0.15s;
+}
+
+.rich-editor-area a:hover {
+  border-bottom-color: var(--primary-color, #007AFF);
+}
+
+.rich-editor-area img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 6px 0;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.rich-editor-area img:hover {
+  opacity: 0.9;
+}
+
+.rich-editor-area blockquote {
+  border-left: 3px solid var(--primary-color, #007AFF);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--text-secondary, #86868b);
+  background: var(--primary-light, rgba(0, 122, 255, 0.05));
+  border-radius: 0 6px 6px 0;
+}
+
+/* ---- 笔记内联编辑的富文本样式 ---- */
+.note-rich-editor {
+  border: 1.5px solid var(--primary-color, #007AFF);
+  border-radius: var(--radius-md, 10px);
+  overflow: hidden;
+  box-shadow: 0 0 0 3px var(--primary-glow, rgba(0, 122, 255, 0.15));
+  margin: 8px 0;
+}
+
+.note-rich-editor .rich-editor-area {
+  min-height: 80px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+/* ---- 暗色模式 ---- */
+@media (prefers-color-scheme: dark) {
+  .rich-editor-wrapper {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .rich-editor-toolbar {
+    background: rgba(255, 255, 255, 0.06);
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .rich-editor-toolbar-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* ---- 主题变量覆盖 ---- */
+[data-theme="dark"] .rich-editor-wrapper {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+[data-theme="dark"] .rich-editor-toolbar {
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .rich-editor-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- 链接弹窗 ---- */
+.rich-editor-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: reModalFadeIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.rich-editor-modal {
+  background: var(--bg-primary, #ffffff);
+  border-radius: 14px;
+  padding: 20px 24px 16px;
+  width: 380px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  animation: reModalSlideIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.rich-editor-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin-bottom: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+}
+
+.rich-editor-modal-input {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+  border: 1.5px solid var(--border-color, #d1d1d6);
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-primary, #1d1d1f);
+  background: var(--bg-primary, #ffffff);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  box-sizing: border-box;
+}
+
+.rich-editor-modal-input:focus {
+  border-color: var(--primary-color, #007AFF);
+  box-shadow: 0 0 0 3px var(--primary-glow, rgba(0, 122, 255, 0.15));
+}
+
+.rich-editor-modal-input::placeholder {
+  color: var(--text-tertiary, #aeaeb2);
+}
+
+.rich-editor-modal-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.rich-editor-modal-btn {
+  padding: 7px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+}
+
+.rich-editor-modal-btn-cancel {
+  background: var(--bg-secondary, #f5f5f7);
+  color: var(--text-secondary, #86868b);
+}
+
+.rich-editor-modal-btn-cancel:hover {
+  background: var(--bg-tertiary, #e8e8ed);
+}
+
+.rich-editor-modal-btn-confirm {
+  background: var(--primary-color, #007AFF);
+  color: #ffffff;
+}
+
+.rich-editor-modal-btn-confirm:hover {
+  background: #0066d6;
+}
+
+.rich-editor-modal-btn:active {
+  transform: scale(0.96);
+}
+
+@keyframes reModalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes reModalSlideIn {
+  from { opacity: 0; transform: scale(0.95) translateY(-8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* 暗色模式弹窗 */
+[data-theme="dark"] .rich-editor-modal {
+  background: #2c2c2e;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .rich-editor-modal-input {
+  background: #1c1c1e;
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #f5f5f7;
+}
+
+[data-theme="dark"] .rich-editor-modal-btn-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: #aeaeb2;
+}
+
+[data-theme="dark"] .rich-editor-modal-btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+  .rich-editor-modal {
+    background: #2c2c2e;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  }
+  .rich-editor-modal-input {
+    background: #1c1c1e;
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #f5f5f7;
+  }
+  .rich-editor-modal-btn-cancel {
+    background: rgba(255, 255, 255, 0.1);
+    color: #aeaeb2;
+  }
+  .rich-editor-modal-btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+/* ---- 笔记编辑操作按钮 ---- */
+.note-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 0;
+  margin-top: 4px;
+}
+
+/* ---- 笔记预览富文本内容 ---- */
+.note-preview-content .note-rich-text {
+  font-size: 13px;
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+.note-preview-content .note-rich-text b,
+.note-preview-content .note-rich-text strong {
+  font-weight: 600;
+}
+
+.note-preview-content .note-rich-text i,
+.note-preview-content .note-rich-text em {
+  font-style: italic;
+}
+
+.note-preview-content .note-rich-text ul,
+.note-preview-content .note-rich-text ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+
+.note-preview-content .note-rich-text img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 4px 0;
+}
+
+.note-preview-content .note-rich-text a {
+  color: var(--primary-color, #007AFF);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 122, 255, 0.3);
+}
+
+/* ---- 笔记折叠视图富文本预览 ---- */
+.note-rich-preview {
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.note-rich-preview::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: linear-gradient(transparent, var(--bg-primary, #ffffff));
+  pointer-events: none;
+}
+
+.note-rich-preview img {
+  max-width: 100%;
+  max-height: 80px;
+  border-radius: 6px;
+  margin: 4px 0;
+  object-fit: cover;
+}
+
+.note-rich-preview b,
+.note-rich-preview strong {
+  font-weight: 600;
+}
+
+.note-rich-preview i,
+.note-rich-preview em {
+  font-style: italic;
+}
+
+.note-rich-preview ul,
+.note-rich-preview ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+
+.note-rich-preview a {
+  color: var(--primary-color, #007AFF);
+  text-decoration: none;
+}
+
+/* 暗色模式折叠预览 */
+@media (prefers-color-scheme: dark) {
+  .note-rich-preview::after {
+    background: linear-gradient(transparent, var(--bg-primary, #1c1c1e));
+  }
+}
+
+[data-theme="dark"] .note-rich-preview::after {
+  background: linear-gradient(transparent, var(--bg-primary, #1c1c1e));
+}

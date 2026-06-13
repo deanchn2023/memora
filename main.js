@@ -164,13 +164,12 @@ const { I18n } = require('./src/scripts/i18n');
 let autoBackupTimer = null;
 
 // 默认内置API Key（用户未配置时使用，限制10次/天）
-const DEFAULT_API_KEY = 'sk-b4116cb788d64e3fb20e8e5bd1333168';
-const DEFAULT_BASE_URL = 'https://api.deepseek.com';
+const DEFAULT_API_KEY = 'ark-8884b1e5-d1b2-4e58-9319-0fcfce0543d7-15773';
+const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
 const DEFAULT_MODEL = 'deepseek-v4-flash';
 
 // 大用量 LLM 默认配置（高并发场景：剪贴板分析、记忆提取等高频调用）
-// 默认与小用量一致用 DeepSeek（GLM 不稳定时切换）
-const DEFAULT_HIGHVOL_BASE_URL = 'https://api.deepseek.com';
+const DEFAULT_HIGHVOL_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
 const DEFAULT_HIGHVOL_MODEL = 'deepseek-v4-flash';
 
 // 默认限制（使用内置Key时）
@@ -222,9 +221,9 @@ const DEFAULT_AUTH_SERVERS = {
   },
   production: {
     name: '正式版本',
-    authUrl: 'http://21.91.29.59:3000',       // ADPToolkit（username 登录）
-    configUrl: 'http://121.5.164.126:3450',   // 配置仍走 config-server
-    toolkitUrl: 'http://21.91.29.59:3000',    // ADPToolkit 资源服务器
+    authUrl: 'http://121.5.164.126:3010',    // ADPToolkit（统一认证）
+    configUrl: 'http://121.5.164.126:3450',   // Config Server（配置+同步）
+    toolkitUrl: 'http://121.5.164.126:3010',  // ADPToolkit 资源服务器
     loginPath: '/api/auth/login',              // ADPToolkit 登录路径
     loginField: 'username',                    // 使用 username 登录
     configPath: '/memora/config',              // 配置路径
@@ -435,6 +434,20 @@ async function markAllNotificationsRead() {
 
 function getAuthServer() {
   return AUTH_SERVERS[authState.env || 'beta'];
+}
+
+// 获取认证专用的 URL（send-code/register 等认证接口始终走 ADPToolkit）
+// 只有 ADPToolkit 有完整认证接口（send-code/register/login 等），
+// AnyDev 等资源服务器不具备认证能力
+function getAuthUrlForAuth() {
+  const server = getAuthServer();
+  // 如果 authUrl 指向非 ADPToolkit 服务器（如 AnyDev），fallback 到默认 ADPToolkit 地址
+  if (server.authUrl.includes(':3010') || server.authUrl.includes(':3450')) {
+    return server.authUrl;
+  }
+  // 自定义地址（如 AnyDev :3000）不提供认证接口，回退到 ADPToolkit
+  console.log('[Auth] authUrl is not ADPToolkit, falling back to default:', DEFAULT_AUTH_SERVERS[authState.env || 'beta'].authUrl);
+  return DEFAULT_AUTH_SERVERS[authState.env || 'beta'].authUrl;
 }
 
 // 记忆系统
@@ -2840,6 +2853,11 @@ ipcMain.handle('clear-api-key', async () => {
 
 // 测试 LLM API 连通性（验证 URL + Key + Model 是否配对正确）
 ipcMain.handle('test-llm-connection', async (event, { baseUrl, apiKey, model }) => {
+  // 如果前端未传 apiKey，尝试使用已保存的配置
+  if (!apiKey && baseUrl && model) {
+    const savedConfig = getAPIConfig();
+    if (savedConfig.apiKey) apiKey = savedConfig.apiKey;
+  }
   if (!baseUrl || !apiKey || !model) {
     return { ok: false, error: '缺少必要参数：Base URL、API Key、模型名称均不能为空' };
   }
@@ -3372,7 +3390,7 @@ async function fetchRemoteConfig() {
     const res = await fetch(`${server.configUrl}${server.configPath}`, {
       headers: {
         'Authorization': `Bearer ${authState.token}`,
-        'X-Auth-Server': server.authUrl,  // 传递登录服务器地址，供 config-server 同步配置使用
+        'X-Auth-Server': getAuthUrlForAuth(),  // 传递 ADPToolkit 地址，供 config-server 同步配置使用
       }
     });
 
@@ -3507,9 +3525,10 @@ async function autoLogin() {
   authState.env = savedEnv;
   authState.forceLocalConfig = savedForceLocal;
   const server = getAuthServer();
+  const authUrl = getAuthUrlForAuth();
 
   try {
-    const res = await fetch(`${server.authUrl}${server.validatePath}`, {
+    const res = await fetch(`${authUrl}${server.validatePath}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
 
@@ -3563,23 +3582,24 @@ async function autoLogin() {
   }
 }
 
-// 登录（支持双环境）
+// 登录 — 走 ADPToolkit 认证服务器（与注册一致，用户数据在 ADPToolkit）
 ipcMain.handle('auth:login', async (event, { account, password, env, rememberMe }) => {
   // 设置环境
   authState.env = env || 'beta';
   const server = getAuthServer();
+  const authUrl = getAuthUrlForAuth();
 
-  // ADPToolkit 使用三合一 account 字段，Config Server 使用 email
+  // ADPToolkit 使用 username 字段，Config Server 使用 email
   const loginBody = server.loginField === 'username'
-    ? { account, password }  // ADPToolkit V2 三合一登录
+    ? { username: account, password }  // ADPToolkit 登录（字段名 username）
     : { email: account, password };  // Config Server 自建认证用 email
 
-  const loginUrl = `${server.authUrl}${server.loginPath}`;
+  const loginUrl = `${authUrl}${server.loginPath}`;
   console.log('[Auth] Login attempt:', {
     env: authState.env,
     fullUrl: loginUrl,
     loginField: server.loginField,
-    account: loginBody.account || loginBody.email
+    account: loginBody.username || loginBody.email
   });
 
   // 登录请求（带超时）
@@ -3687,10 +3707,10 @@ ipcMain.handle('auth:logout', async () => {
   return { success: true };
 });
 
-// 发送验证码
+// 发送验证码 — 始终走 ADPToolkit 认证服务器（只有 ADPToolkit 有完整认证接口）
 ipcMain.handle('auth:send-code', async (event, { mobile }) => {
-  const server = getAuthServer();
-  const sendCodeUrl = `${server.authUrl}/api/auth/send-code`;
+  const authUrl = getAuthUrlForAuth();
+  const sendCodeUrl = `${authUrl}/api/auth/send-code`;
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -3702,6 +3722,7 @@ ipcMain.handle('auth:send-code', async (event, { mobile }) => {
     });
     clearTimeout(timeoutId);
     const data = await res.json();
+    console.log('[Auth] Send-code response:', { ok: res.ok, data });
     if (!res.ok) {
       return { success: false, error: data.error || data.message || '发送失败' };
     }
@@ -3712,18 +3733,18 @@ ipcMain.handle('auth:send-code', async (event, { mobile }) => {
   }
 });
 
-// 注册
+// 注册 — 始终走 ADPToolkit 认证服务器
 ipcMain.handle('auth:register', async (event, { username, mobile, sms_code, name, password, nickname, email, env }) => {
-  authState.env = env || 'beta';
-  const server = getAuthServer();
-  const registerUrl = `${server.authUrl}/api/auth/register`;
+  authState.env = env || 'production';
+  const authUrl = getAuthUrlForAuth();
+  const registerUrl = `${authUrl}/api/auth/register`;
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
     const res = await fetch(registerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, mobile, sms_code, name, password, nickname: nickname || '', email: email || '' }),
+      body: JSON.stringify({ username, mobile, sms_code, name: name || username, password, nickname: nickname || '', email: email || '', organization: '注册用户' }),
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -3765,6 +3786,39 @@ ipcMain.handle('auth:register', async (event, { username, mobile, sms_code, name
     return { success: true, user: data.user, env: authState.env };
   } catch (err) {
     console.error('[Auth] Register error:', err.message);
+    return { success: false, error: `网络错误: ${err.message}` };
+  }
+});
+
+// 更新个人信息
+ipcMain.handle('auth:update-profile', async (event, { name, nickname, email, mobile }) => {
+  if (!authState.isLoggedIn || !authState.token) {
+    return { success: false, error: '未登录' };
+  }
+  const server = getAuthServer();
+  const authUrl = getAuthUrlForAuth();
+  try {
+    const updateUrl = `${authUrl}/api/auth/profile`;
+    const res = await fetch(updateUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authState.token}`,
+      },
+      body: JSON.stringify({ name: name || '', nickname: nickname || '', email: email || '', mobile: mobile || '' }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || data.message || '更新失败' };
+    }
+    // 更新本地缓存的用户信息
+    if (data.user) {
+      authState.user = { ...authState.user, ...data.user };
+    }
+    return { success: true, user: authState.user };
+  } catch (err) {
+    console.error('[Auth] Update profile error:', err.message);
     return { success: false, error: `网络错误: ${err.message}` };
   }
 });
@@ -4119,6 +4173,95 @@ function _uploadNoteImageViaHttp(url, localPath, token) {
 }
 
 /**
+ * 上传 base64 data URL 图片到服务器
+ * @param {string} dataUrl - base64 data URL (data:image/png;base64,...)
+ * @returns {Promise<{ok:boolean, server_url?:string, error?:string}>}
+ */
+async function uploadBase64Image(dataUrl) {
+  try {
+    // 解析 data URL
+    const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (!match) return { ok: false, error: 'Invalid data URL' };
+
+    const ext = match[1] === 'jpeg' ? 'jpg' : (match[1] || 'png');
+    const base64Data = match[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // 写入临时文件
+    const tmpDir = app.getPath('temp');
+    const tmpFile = path.join(tmpDir, `memora_html_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`);
+    fs.writeFileSync(tmpFile, buffer);
+
+    try {
+      // 上传到服务器
+      const result = await uploadNoteImage(tmpFile);
+      if (result.ok && result.uploaded?.length > 0) {
+        const server = getAuthServer();
+        const baseUrl = server.configUrl || server.authUrl;
+        const serverPath = result.uploaded[0].server_path;
+        const fullUrl = `${baseUrl}/memora/uploads/note-images/${serverPath}`;
+        return { ok: true, server_url: fullUrl };
+      }
+      return { ok: false, error: result.error || 'Upload failed' };
+    } finally {
+      // 清理临时文件
+      try { fs.unlinkSync(tmpFile); } catch (e) { /* ignore */ }
+    }
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * 处理 htmlContent 中的 base64 图片：提取 → 上传 → 替换为服务端 URL
+ * @param {string} htmlContent - 原始 HTML 内容
+ * @returns {Promise<string>} 处理后的 HTML（base64 图片替换为服务端 URL）
+ */
+async function processHtmlContentForSync(htmlContent) {
+  if (!htmlContent || !htmlContent.includes('data:image')) return htmlContent;
+
+  // 提取所有 base64 图片
+  const imgRegex = /<img([^>]*?)src=["'](data:image\/[^"']+)["']([^>]*?)>/gi;
+  const matches = [];
+  let m;
+  while ((m = imgRegex.exec(htmlContent)) !== null) {
+    matches.push({ full: m[0], pre: m[1], dataUrl: m[2], post: m[3] });
+  }
+
+  if (matches.length === 0) return htmlContent;
+
+  console.log(`[Sync] Processing ${matches.length} base64 images in htmlContent...`);
+
+  // 并行上传（限制并发数）
+  const CONCURRENCY = 3;
+  for (let i = 0; i < matches.length; i += CONCURRENCY) {
+    const batch = matches.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (match) => {
+        const uploadResult = await uploadBase64Image(match.dataUrl);
+        return { match, uploadResult };
+      })
+    );
+
+    for (const { match, uploadResult } of results) {
+      if (uploadResult.ok && uploadResult.server_url) {
+        // 替换为服务端 URL
+        const newImg = `<img${match.pre}src="${uploadResult.server_url}"${match.post}>`;
+        htmlContent = htmlContent.replace(match.full, newImg);
+        console.log('[Sync] ✅ Base64 image uploaded →', uploadResult.server_url.substring(0, 80) + '...');
+      } else {
+        // 上传失败：保留图片标签但用占位符标记（比直接删除好，至少用户知道这里原本有图）
+        const newImg = `<img${match.pre}src="" data-upload-failed="true" alt="图片上传失败"${match.post}>`;
+        htmlContent = htmlContent.replace(match.full, newImg);
+        console.warn('[Sync] ⚠️ Base64 image upload failed:', uploadResult.error);
+      }
+    }
+  }
+
+  return htmlContent;
+}
+
+/**
  * 从服务端下载图片文件
  * @param {string} imageId - 图片 ID（img_xxx）
  * @param {string} savePath - 本地保存绝对路径
@@ -4344,7 +4487,7 @@ ipcMain.handle('sync:full', async (event, data) => {
       const changedNotes = filterIncremental(allNotes, n => n.updatedAt || n.createdAt, n => n.revision);
       console.log('[Sync] Notes total:', allNotes.length, '→ changed:', changedNotes.length);
       if (changedNotes.length > 0) {
-        data.changes.notes = changedNotes
+        data.changes.notes = await Promise.all(changedNotes
           .filter(n => {
             // 过滤无效图片笔记：category=image 但无 imagePath → 降级为 general 或跳过
             if (n.category === 'image' && !n.imagePath) {
@@ -4353,27 +4496,40 @@ ipcMain.handle('sync:full', async (event, data) => {
             }
             return true;
           })
-          .map(n => {
-          // 🔧 修复：image_path 用服务端路径（用于远程访问），非本地路径
-          // 本地路径 images/xxx.png 在服务端无法解析，导致图片 404
-          // serverImagePath 在 saveClipboardImage 时设置（上传成功才有值）
-          // 如果 serverImagePath 为空但 imagePath 是本地路径，则留空等后续上传重试
-          const isLocalPath = n.imagePath && n.imagePath.startsWith('images/');
-          const imagePathForSync = n.serverImagePath || (isLocalPath ? '' : (n.imagePath || ''));
-          return {
-          id: n.id,
-          base_revision: n.revision || 0,
-          title: n.title || '',
-          content: n.content || '',
-          category: n.category || 'default',
-          tags: JSON.stringify(n.tags || []),
-          image_path: imagePathForSync,
-          image_hash: n.imageHash || '',
-          image_width: n.imageWidth || 0,
-          image_height: n.imageHeight || 0,
-          created_at: n.createdAt,
-          updated_at: n.updatedAt || n.createdAt
-        };});
+          .map(async n => {
+            // 🔧 html_content 同步时：提取 base64 内嵌图片 → 上传到服务器 → 替换为服务端 URL
+            // 之前直接剥离 base64 导致富文本图片丢失，现在上传后保留图片可跨设备访问
+            let htmlContentForSync = n.htmlContent || '';
+            if (htmlContentForSync && htmlContentForSync.includes('data:image')) {
+              htmlContentForSync = await processHtmlContentForSync(htmlContentForSync);
+              // 上传成功后写回本地笔记，让本地也用 URL 版本（跨设备可访问）
+              if (htmlContentForSync !== n.htmlContent && notebook) {
+                notebook.updateNote(n.id, { htmlContent: htmlContentForSync });
+              }
+            }
+            // 🔧 修复：image_path 用服务端路径（用于远程访问），非本地路径
+            // 本地路径 images/xxx.png 在服务端无法解析，导致图片 404
+            // serverImagePath 在 saveClipboardImage 时设置（上传成功才有值）
+            // 如果 serverImagePath 为空但 imagePath 是本地路径，则留空等后续上传重试
+            const isLocalPath = n.imagePath && n.imagePath.startsWith('images/');
+            const imagePathForSync = n.serverImagePath || (isLocalPath ? '' : (n.imagePath || ''));
+            return {
+              id: n.id,
+              base_revision: n.revision || 0,
+              title: n.title || '',
+              content: n.content || '',
+              html_content: htmlContentForSync,
+              category: n.category || 'default',
+              tags: JSON.stringify(n.tags || []),
+              image_path: imagePathForSync,
+              image_hash: n.imageHash || '',
+              image_width: n.imageWidth || 0,
+              image_height: n.imageHeight || 0,
+              created_at: n.createdAt,
+              updated_at: n.updatedAt || n.createdAt
+            };
+          })
+        );
         console.log('[Sync] Supplemented', changedNotes.length, 'notes (incremental)');
       }
     }
@@ -4528,11 +4684,17 @@ ipcMain.handle('sync:full', async (event, data) => {
             } else {
               // 没有在 changes 中：强制添加这条笔记的变更
               if (!data.changes.notes) data.changes.notes = [];
+              // 🔧 提取 base64 内嵌图片 → 上传到服务器 → 替换为服务端 URL
+              let pushHtmlContent = note.htmlContent || '';
+              if (pushHtmlContent && pushHtmlContent.includes('data:image')) {
+                pushHtmlContent = await processHtmlContentForSync(pushHtmlContent);
+              }
               data.changes.notes.push({
                 id: note.id,
                 base_revision: note.revision || 0,
                 title: note.title || '',
                 content: note.content || '',
+                html_content: pushHtmlContent,
                 category: note.category || 'default',
                 tags: JSON.stringify(note.tags || []),
                 image_path: imgInfo.server_path,
@@ -4678,6 +4840,7 @@ ipcMain.handle('sync:full', async (event, data) => {
                 id: note.id,
                 title: note.title,
                 content: note.content,
+                htmlContent: note.html_content || '',
                 category: note.category,
                 tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []),
                 imagePath: addImagePath,
@@ -4705,9 +4868,15 @@ ipcMain.handle('sync:full', async (event, data) => {
                   resolvedImagePath = `images/${localFilename}`;
                 }
               }
+              // htmlContent 策略：本地 base64 版本优先保留（file:// 页面无法可靠加载 http:// 图片）
+              // 仅在本地没有 htmlContent 时才用服务端版本
+              const serverHtml = note.html_content || '';
+              const localHtml = existing.htmlContent || '';
+              const resolvedHtmlContent = localHtml || serverHtml;
               notebook.updateNote(note.id, {
                 title: note.title,
                 content: note.content,
+                htmlContent: resolvedHtmlContent,
                 category: note.category,
                 tags: typeof note.tags === 'string' ? JSON.parse(note.tags) : (note.tags || []),
                 imagePath: resolvedImagePath,

@@ -62,7 +62,7 @@ const DATA_TYPE_FIELDS = {
   tasks: ['title', 'description', 'status', 'priority', 'due_date', 'source', 'raw_text',
     'estimated_duration', 'actual_duration', 'pomodoro_sessions', 'reminders',
     'calendar_event_id', 'completed_at', 'extra', 'deleted_at'],
-  notes: ['title', 'content', 'category', 'tags', 'color', 'pinned', 'image_path', 'image_hash', 'image_width', 'image_height', 'deleted_at'],
+  notes: ['title', 'content', 'html_content', 'category', 'tags', 'color', 'pinned', 'image_path', 'image_hash', 'image_width', 'image_height', 'deleted_at'],
   knowledge_nodes: ['name', 'type', 'domain', 'health', 'extra', 'deleted_at'],
   knowledge_edges: ['source_id', 'target_id', 'type', 'weight', 'extra', 'deleted_at'],
   clipboard_memories: ['content', 'memory_type', 'business_category', 'confidence', 'source', 'deleted_at']
@@ -231,6 +231,7 @@ module.exports = function(db) {
       revision INTEGER NOT NULL DEFAULT 1,
       title TEXT NOT NULL DEFAULT '',
       content TEXT DEFAULT '',
+      html_content TEXT DEFAULT '',
       category TEXT DEFAULT 'default',
       tags TEXT DEFAULT '[]',
       color TEXT DEFAULT '',
@@ -378,7 +379,8 @@ module.exports = function(db) {
     { table: 'user_notes', column: 'image_path', type: 'TEXT DEFAULT ""' },
     { table: 'user_notes', column: 'image_hash', type: 'TEXT DEFAULT ""' },
     { table: 'user_notes', column: 'image_width', type: 'INTEGER DEFAULT 0' },
-    { table: 'user_notes', column: 'image_height', type: 'INTEGER DEFAULT 0' }
+    { table: 'user_notes', column: 'image_height', type: 'INTEGER DEFAULT 0' },
+    { table: 'user_notes', column: 'html_content', type: 'TEXT DEFAULT ""' }
   ];
   for (const m of MIGRATIONS) {
     try {

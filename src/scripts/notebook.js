@@ -100,6 +100,7 @@ class Notebook {
     const newNote = {
       id: note.id || (Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9)),
       content: note.content,
+      htmlContent: note.htmlContent || null,
       title: note.title || this.extractTitle(note.content),
       category: note.category || 'general',
       tags: note.tags || [],

@@ -26,6 +26,10 @@ const App = {
   _adpRenderPending: false,
   _adpConfigSource: '',
   _adpReplyMsgId: '',        // reply 消息的 MessageId，用于区分 text.delta 归属
+  _aiTaskEditor: null,       // AI任务输入富文本编辑器实例
+  _noteEditor: null,         // 新建/编辑笔记富文本编辑器实例
+  _noteEditorMode: 'add',    // 笔记编辑器模式：'add' 或 'edit'
+  _noteEditorTargetId: null, // 编辑笔记时的目标 ID
   // 对话会话管理
   _chatSessions: [],        // 所有对话会话
   _activeSessionId: null,   // 当前活跃的会话ID
@@ -292,6 +296,22 @@ const App = {
     
     document.addEventListener('showTaskModal', (e) => this.showTaskModal(e.detail));
     
+    // 初始化 AI 任务输入富文本编辑器
+    const aiEditorContainer = document.getElementById('aiTaskInputEditor');
+    if (aiEditorContainer && window.RichEditor) {
+      this._aiTaskEditor = new window.RichEditor(aiEditorContainer, {
+        placeholder: '输入任务描述，例如：明天下午给客户发报价，需要准备PPT和合同...',
+        minHeight: 160,
+        maxHeight: 400,
+        compact: false,
+      });
+    }
+    
+    // 新建/编辑笔记弹窗
+    document.getElementById('closeNoteEditorBtn')?.addEventListener('click', () => this.hideNoteEditorModal());
+    document.getElementById('cancelNoteEditor')?.addEventListener('click', () => this.hideNoteEditorModal());
+    document.getElementById('saveNoteEditor')?.addEventListener('click', () => this.saveNoteFromEditor());
+    
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this.hideTaskModal();
@@ -299,6 +319,7 @@ const App = {
         this.hideSettingsModal();
         this.hidePromptEditor();
         this.hideOptimizerDetail();
+        this.hideNoteEditorModal();
       }
     });
     
@@ -686,7 +707,11 @@ const App = {
 
       const button = e.target.closest('.note-btn');
       const previewContent = e.target.closest('.note-preview-content');
+      const richEditor = e.target.closest('.note-rich-editor');
       
+      // 如果点击的是富文本编辑器区域，不折叠
+      if (richEditor) return;
+
       // 如果点击的是按钮
       if (button) {
         e.stopPropagation();
@@ -708,13 +733,18 @@ const App = {
             break;
         }
       } 
-      // 如果点击的是预览内容区域，复制内容
+      // 如果点击的是预览内容区域，复制内容（编辑模式下不触发）
       else if (previewContent) {
         e.stopPropagation();
-        this.copyNoteFromPreview(noteId);
+        const isEditing = noteItem.querySelector('.note-rich-editor');
+        if (!isEditing) {
+          this.copyNoteFromPreview(noteId);
+        }
       }
       else {
-        // 点击笔记项展开/收起预览
+        // 点击笔记项展开/收起预览（编辑模式下不折叠）
+        const isEditing = noteItem.querySelector('.note-rich-editor');
+        if (isEditing) return;
         this.toggleNotePreview(noteId);
       }
     });
@@ -911,6 +941,30 @@ const App = {
       // 加载服务器地址
       this._loadServerUrls();
 
+      // 管理员显示服务器地址管理区域
+      const isAdmin = state.user?.role === 'admin';
+      const serverUrlsSection = document.querySelector('.server-urls-section');
+      if (serverUrlsSection) {
+        if (isAdmin) {
+          serverUrlsSection.classList.remove('hidden');
+          serverUrlsSection.style.display = '';
+        } else {
+          serverUrlsSection.classList.add('hidden');
+          serverUrlsSection.style.display = 'none';
+        }
+      }
+      // 管理员显示配置来源切换
+      const configSourceSection = document.querySelector('.login-profile-config-source');
+      if (configSourceSection) {
+        if (isAdmin) {
+          configSourceSection.classList.remove('hidden');
+          configSourceSection.style.display = '';
+        } else {
+          configSourceSection.classList.add('hidden');
+          configSourceSection.style.display = 'none';
+        }
+      }
+
       // 更新头部用户徽章
       this._updateHeaderUserBadge(true, state.user);
     } else {
@@ -1016,7 +1070,7 @@ const App = {
   async handleOrgLogin() {
     const account = document.getElementById('loginAccount').value.trim();
     const password = document.getElementById('loginPassword').value;
-    const env = document.getElementById('loginEnv')?.value || 'beta';
+    const env = document.getElementById('loginEnv')?.value || 'production';
     const rememberMe = document.getElementById('loginRememberMe')?.checked !== false;
     const errorEl = document.getElementById('loginError');
     const btn = document.getElementById('orgLoginBtn');
@@ -1065,6 +1119,10 @@ const App = {
 
   async handleOrgLogout() {
     if (!window.electronAPI) return;
+
+    // 先关闭个人信息编辑区
+    const profileEdit = document.getElementById('profileEditSection');
+    if (profileEdit) profileEdit.classList.add('hidden');
 
     const result = await window.electronAPI.authLogout();
     if (result.success) {
@@ -1182,15 +1240,21 @@ const App = {
     const smsCode = document.getElementById('regSmsCode').value.trim();
     const name = document.getElementById('regName').value.trim();
     const password = document.getElementById('regPassword').value;
+    const passwordConfirm = document.getElementById('regPasswordConfirm').value;
     const nickname = document.getElementById('regNickname').value.trim();
     const email = document.getElementById('regEmail').value.trim();
-    const env = document.getElementById('loginEnv')?.value || 'beta';
+    const env = document.getElementById('loginEnv')?.value || 'production';
     const errorEl = document.getElementById('registerError');
     const btn = document.getElementById('regSubmitBtn');
 
     // 校验
-    if (!username || !mobile || !smsCode || !name || !password) {
+    if (!username || !mobile || !smsCode || !password) {
       errorEl.textContent = '请填写所有必填项';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (password !== passwordConfirm) {
+      errorEl.textContent = '两次输入的密码不一致';
       errorEl.classList.remove('hidden');
       return;
     }
@@ -1221,8 +1285,8 @@ const App = {
 
     try {
       const result = await window.electronAPI.authRegister({
-        username, mobile, sms_code: smsCode, name, password,
-        nickname, email, env
+        username, mobile, sms_code: smsCode, name: name || username, password,
+        nickname: nickname || '', email, env
       });
 
       if (result.success) {
@@ -1234,7 +1298,7 @@ const App = {
         this._updateHeaderUserBadge(true, result.user);
         this._updateLoginProfileEnv(result.env);
         // 清空注册表单
-        ['regUsername','regMobile','regSmsCode','regName','regPassword','regNickname','regEmail'].forEach(id => {
+        ['regUsername','regMobile','regSmsCode','regName','regPassword','regPasswordConfirm','regNickname','regEmail'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.value = '';
         });
@@ -1417,6 +1481,66 @@ const App = {
     const area = document.getElementById('serverUrlsEditArea');
     if (!area) return;
     area.classList.toggle('expanded');
+  },
+
+  // === 个人信息编辑 ===
+
+  toggleProfileEdit() {
+    const section = document.getElementById('profileEditSection');
+    if (!section) return;
+    const isHidden = section.classList.contains('hidden');
+    if (isHidden) {
+      // 打开时填充当前用户信息
+      if (window.electronAPI?.authGetState) {
+        window.electronAPI.authGetState().then(state => {
+          if (state.user) {
+            document.getElementById('profileName').value = state.user.name || '';
+            document.getElementById('profileNickname').value = state.user.nickname || '';
+            document.getElementById('profileEmail').value = state.user.email || '';
+            document.getElementById('profileMobile').value = state.user.mobile || '';
+          }
+        });
+      }
+    }
+    section.classList.toggle('hidden');
+  },
+
+  async saveProfileEdit() {
+    const name = document.getElementById('profileName').value.trim();
+    const nickname = document.getElementById('profileNickname').value.trim();
+    const email = document.getElementById('profileEmail').value.trim();
+    const mobile = document.getElementById('profileMobile').value.trim();
+    const errorEl = document.getElementById('profileEditError');
+
+    if (mobile && !/^1[3-9]\d{9}$/.test(mobile)) {
+      errorEl.textContent = '手机号格式不正确';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errorEl.textContent = '邮箱格式不正确';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.authUpdateProfile({ name, nickname, email, mobile });
+      if (result.success) {
+        this.showToast('个人信息已更新');
+        this.toggleProfileEdit();
+        // 刷新用户显示
+        if (result.user) {
+          document.getElementById('orgUserName').textContent = result.user.name || result.user.username || '-';
+          this._updateHeaderUserBadge(true, result.user);
+        }
+      } else {
+        errorEl.textContent = result.error || '更新失败';
+        errorEl.classList.remove('hidden');
+      }
+    } catch (err) {
+      errorEl.textContent = `更新失败: ${err.message}`;
+      errorEl.classList.remove('hidden');
+    }
   },
 
   async _loadServerUrlsToLogin() {
@@ -1679,9 +1803,13 @@ const App = {
     }
   },
 
-  _downloadUpdate(downloadUrl) {
-    // 通过 IPC 用外部浏览器打开下载链接
-    const server = 'http://121.5.164.126:3450';
+  async _downloadUpdate(downloadUrl) {
+    // 动态获取 Config Server 地址
+    let server = 'http://121.5.164.126:3450'; // fallback
+    try {
+      const state = await window.electronAPI?.authGetState?.();
+      if (state?.configUrl) server = state.configUrl;
+    } catch (_) {}
     const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : server + downloadUrl;
     if (window.electronAPI?.openExternal) {
       window.electronAPI.openExternal(fullUrl);
@@ -4868,7 +4996,6 @@ ${JSON.stringify(reportData, null, 2)}`;
       model = document.getElementById('highvolModel').value;
       // 大用量留空时回退到小用量
       if (!baseUrl) baseUrl = document.getElementById('apiBaseUrl').value;
-      if (!apiKey) apiKey = document.getElementById('apiKey').value;
       if (!model) model = document.getElementById('apiModel').value;
     } else {
       baseUrl = document.getElementById('apiBaseUrl').value;
@@ -4876,8 +5003,17 @@ ${JSON.stringify(reportData, null, 2)}`;
       model = document.getElementById('apiModel').value;
     }
 
-    if (!baseUrl || !apiKey || !model) {
-      resultEl.innerHTML = '<span style="color: var(--danger);">⚠️ 请填写 Base URL、API Key 和模型名称</span>';
+    // DOM 中 apiKey 密码框不回显已保存值，测试时主进程会自动使用已保存的 key
+    if (!apiKey || !baseUrl || !model) {
+      try {
+        const savedConfig = await window.electronAPI.getAPIConfig();
+        if (!baseUrl && savedConfig.baseUrl) baseUrl = savedConfig.baseUrl;
+        if (!model && savedConfig.model) model = savedConfig.model;
+      } catch (e) { /* ignore */ }
+    }
+
+    if (!baseUrl || !model) {
+      resultEl.innerHTML = '<span style="color: var(--danger);">⚠️ 请先配置 Base URL 和模型名称</span>';
       return;
     }
 
@@ -5059,10 +5195,13 @@ ${JSON.stringify(reportData, null, 2)}`;
     
     // 加载统计信息
     const stats = await window.electronAPI.getMemoryStats();
-    document.querySelector('#memoryStats .stat-item:nth-child(1) .stat-value').textContent = stats.total || 0;
-    document.querySelector('#memoryStats .stat-item:nth-child(2) .stat-value').textContent = stats.byType?.short || 0;
-    document.querySelector('#memoryStats .stat-item:nth-child(3) .stat-value').textContent = stats.byType?.long || 0;
-    document.querySelector('#memoryStats .stat-item:nth-child(4) .stat-value').textContent = stats.entityCount || 0;
+    const statValues = document.querySelectorAll('#memoryStats .stat-chip .stat-value');
+    if (statValues.length >= 4) {
+      statValues[0].textContent = stats.total || 0;
+      statValues[1].textContent = stats.byType?.short || 0;
+      statValues[2].textContent = stats.byType?.long || 0;
+      statValues[3].textContent = stats.entityCount || 0;
+    }
     
     if (!append) this._memoryPage = 0;
 
@@ -5628,10 +5767,17 @@ ${JSON.stringify(reportData, null, 2)}`;
                <div class="note-image-placeholder">🖼️ 加载中...</div>
              </div>`
           : '';
-        // 图文混合笔记：同时显示文本和图片标记
+        // 折叠视图：有 htmlContent 时使用富文本（含图片），否则纯文本
+        const hasHtmlContent = note.htmlContent && note.htmlContent.trim();
         const contentPreview = isPureImage
           ? `<p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}</p>`
+          : hasHtmlContent
+          ? `<div class="note-content note-rich-preview">${note.htmlContent}</div>`
           : `<p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>`;
+        // 预览区内容：优先使用 htmlContent 富文本
+        const previewInnerContent = (note.htmlContent && note.htmlContent.trim())
+          ? `<div class="note-rich-text">${note.htmlContent}</div>`
+          : this.escapeHtml(note.content);
         // 预览区：图文混合时同时展示文本和图片
         const notePreview = isPureImage
           ? `<div class="note-preview hidden" id="note-preview-${note.id}">
@@ -5640,12 +5786,12 @@ ${JSON.stringify(reportData, null, 2)}`;
              </div>`
           : hasImage
           ? `<div class="note-preview hidden" id="note-preview-${note.id}">
-               <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
+               <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${previewInnerContent}</div>
                <div class="note-preview-image" data-image-path="${this.escapeHtml(note.imagePath)}"></div>
-               <div class="note-preview-hint">点击复制文本 | 双击图片可放大</div>
+               <div class="note-preview-hint">点击复制文本 | 双击编辑</div>
              </div>`
           : `<div class="note-preview hidden" id="note-preview-${note.id}">
-               <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
+               <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${previewInnerContent}</div>
                <div class="note-preview-hint">点击复制 | 双击编辑</div>
              </div>`;
         // 纯图片笔记隐藏"转为待办"和"提炼记忆"按钮
@@ -6013,31 +6159,80 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
 
   async addNote() {
-    const content = prompt('请输入笔记内容：');
-    if (!content || !content.trim()) return;
+    this._noteEditorMode = 'add';
+    this._noteEditorTargetId = null;
+    this.showNoteEditorModal('新建笔记', '');
+  },
+  
+  showNoteEditorModal(title, content) {
+    document.getElementById('noteEditorTitle').textContent = title || '新建笔记';
+    const container = document.getElementById('noteEditorContainer');
+    
+    // 初始化编辑器
+    if (this._noteEditor) {
+      this._noteEditor.destroy();
+    }
+    if (window.RichEditor) {
+      this._noteEditor = new window.RichEditor(container, {
+        placeholder: '输入笔记内容，支持富文本格式...',
+        minHeight: 200,
+        maxHeight: 500,
+      });
+      if (content) {
+        this._noteEditor.setText(content);
+      }
+    }
+    
+    document.getElementById('noteEditorModal')?.classList.remove('hidden');
+    if (this._noteEditor) this._noteEditor.focus();
+  },
+  
+  hideNoteEditorModal() {
+    document.getElementById('noteEditorModal')?.classList.add('hidden');
+    if (this._noteEditor) {
+      this._noteEditor.destroy();
+      this._noteEditor = null;
+    }
+  },
+  
+  async saveNoteFromEditor() {
+    if (!this._noteEditor) return;
+    
+    const text = this._noteEditor.getText().trim();
+    if (!text) {
+      this.showToast('请输入笔记内容', 'error');
+      return;
+    }
+    
+    const html = this._noteEditor.getHTML();
     
     try {
       if (window.electronAPI) {
-        // 自动分类
-        const category = this.autoClassifyNote(content);
-        
-        const result = await window.electronAPI.notebookAddNote({
-          content: content,
-          category: category
-        });
-        
-        if (result.success) {
-          if (result.duplicate) {
-            this.showToast('今天已有相同内容，已跳过', 'info');
-          } else {
-            this.incrementNewNoteCount();
-            this.showToast(`笔记已添加（${this.getNoteCategoryLabel(category)}）`);
+        if (this._noteEditorMode === 'add') {
+          const category = this.autoClassifyNote(text);
+          const result = await window.electronAPI.notebookAddNote({
+            content: text,
+            htmlContent: html,
+            category: category
+          });
+          
+          if (result.success) {
+            if (result.duplicate) {
+              this.showToast('今天已有相同内容，已跳过', 'info');
+            } else {
+              this.incrementNewNoteCount();
+              this.showToast(`笔记已添加（${this.getNoteCategoryLabel(category)}）`);
+            }
           }
+        } else if (this._noteEditorMode === 'edit' && this._noteEditorTargetId) {
+          await this.updateNoteContent(this._noteEditorTargetId, text, html);
         }
+        this.hideNoteEditorModal();
+        this.loadNotes();
       }
     } catch (error) {
-      console.error('添加笔记失败:', error);
-      this.showToast('添加笔记失败');
+      console.error('保存笔记失败:', error);
+      this.showToast('保存笔记失败', 'error');
     }
   },
   
@@ -6654,40 +6849,99 @@ ${JSON.stringify(reportData, null, 2)}`;
   
   enterEditMode(noteId) {
     const previewContent = document.querySelector(`.note-preview-content[data-note-id="${noteId}"]`);
-    if (previewContent) {
-      previewContent.contentEditable = true;
-      previewContent.focus();
-      previewContent.classList.add('editing');
-      
-      // 监听编辑完成（失去焦点或按Ctrl+Enter）
-      const finishEdit = () => {
-        previewContent.contentEditable = false;
-        previewContent.classList.remove('editing');
-        previewContent.removeEventListener('blur', finishEdit);
-        previewContent.removeEventListener('keydown', handleKeydown);
-        
-        const newContent = previewContent.textContent;
-        this.updateNoteContent(noteId, newContent);
-      };
-      
-      const handleKeydown = (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-          finishEdit();
-        }
-      };
-      
-      previewContent.addEventListener('blur', finishEdit);
-      previewContent.addEventListener('keydown', handleKeydown);
+    if (!previewContent) return;
+
+    // 检查是否已有内联富文本编辑器
+    if (previewContent.closest('.note-rich-editor')) return;
+
+    const previewContainer = previewContent.closest('.note-preview');
+    if (!previewContainer) return;
+
+    // 保存原始内容用于取消
+    const originalHTML = previewContent.innerHTML;
+    const originalText = previewContent.textContent;
+
+    // 隐藏原始内容
+    previewContent.style.display = 'none';
+
+    // 创建富文本编辑器容器
+    const editorWrapper = document.createElement('div');
+    editorWrapper.className = 'note-rich-editor';
+    editorWrapper.dataset.noteId = noteId;
+    previewContainer.insertBefore(editorWrapper, previewContent);
+
+    // 初始化富文本编辑器
+    const editor = new window.RichEditor(editorWrapper, {
+      placeholder: '编辑笔记内容...',
+      minHeight: 100,
+      maxHeight: 350,
+      compact: true,
+    });
+
+    // 设置内容（优先使用 innerHTML，保留富文本格式）
+    if (originalHTML && originalHTML.trim()) {
+      editor.setHTML(originalHTML);
+    } else {
+      editor.setText(originalText);
     }
+
+    // 添加操作按钮
+    const actionBar = document.createElement('div');
+    actionBar.className = 'note-edit-actions';
+    actionBar.innerHTML = `
+      <button class="btn primary small note-edit-save" style="margin:4px;">保存 (Ctrl+Enter)</button>
+      <button class="btn secondary small note-edit-cancel" style="margin:4px;">取消 (Esc)</button>
+    `;
+    previewContainer.insertBefore(actionBar, editorWrapper.nextSibling);
+
+    editor.focus();
+
+    const finishEdit = (save) => {
+      if (save) {
+        const html = editor.getHTML();
+        const text = editor.getText();
+        // 保存富文本内容
+        this.updateNoteContent(noteId, text, html);
+      }
+      // 恢复原始显示
+      editor.destroy();
+      editorWrapper.remove();
+      actionBar.remove();
+      previewContent.style.display = '';
+      if (save) {
+        // 刷新笔记列表显示更新后的内容
+        this.loadNotes();
+      }
+    };
+
+    actionBar.querySelector('.note-edit-save').addEventListener('click', () => finishEdit(true));
+    actionBar.querySelector('.note-edit-cancel').addEventListener('click', () => finishEdit(false));
+
+    // 键盘快捷键
+    const handleKeydown = (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        finishEdit(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finishEdit(false);
+      }
+    };
+    editorWrapper.addEventListener('keydown', handleKeydown);
   },
   
-  async updateNoteContent(noteId, newContent) {
+  async updateNoteContent(noteId, newContent, htmlContent) {
     if (window.electronAPI) {
       try {
-        await window.electronAPI.notebookUpdateNote(noteId, { 
+        const updates = { 
           content: newContent, 
-          title: this.extractNoteTitle(newContent) 
-        });
+          title: this.extractNoteTitle(newContent)
+        };
+        // 如果有富文本内容，也保存
+        if (htmlContent !== undefined) {
+          updates.htmlContent = htmlContent;
+        }
+        await window.electronAPI.notebookUpdateNote(noteId, updates);
         this.showToast('笔记已更新');
       } catch (error) {
         console.error('更新笔记失败:', error);
@@ -6697,14 +6951,18 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
   
   async editNote(id) {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.notebookGetNote(id);
-      if (result.note) {
-        const newContent = prompt('编辑笔记内容:', result.note.content);
-        if (newContent !== null) {
-          await window.electronAPI.notebookUpdateNote(id, { content: newContent, title: this.extractNoteTitle(newContent) });
-          this.loadNotes();
-          this.showToast('笔记已更新');
+    // 先尝试内联编辑（双击展开后的笔记）
+    const previewContent = document.querySelector(`.note-preview-content[data-note-id="${id}"]`);
+    if (previewContent && previewContent.closest('.note-preview') && !previewContent.closest('.note-preview').classList.contains('hidden')) {
+      this.enterEditMode(id);
+    } else {
+      // 使用弹窗编辑
+      if (window.electronAPI) {
+        const result = await window.electronAPI.notebookGetNote(id);
+        if (result.note) {
+          this._noteEditorMode = 'edit';
+          this._noteEditorTargetId = id;
+          this.showNoteEditorModal('编辑笔记', result.note.htmlContent || result.note.content);
         }
       }
     }
@@ -6879,7 +7137,15 @@ ${JSON.stringify(reportData, null, 2)}`;
     const noteList = document.getElementById('notebookList');
     
     if (result.notes && result.notes.length > 0) {
-      noteList.innerHTML = result.notes.map(note => `
+      noteList.innerHTML = result.notes.map(note => {
+        const hasHtmlContent = note.htmlContent && note.htmlContent.trim();
+        const contentPreview = hasHtmlContent
+          ? `<div class="note-content note-rich-preview">${note.htmlContent}</div>`
+          : `<p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>`;
+        const previewInnerContent = hasHtmlContent
+          ? `<div class="note-rich-text">${note.htmlContent}</div>`
+          : this.escapeHtml(note.content);
+        return `
         <div class="note-item" data-id="${note.id}" data-category="${note.category}" data-content-length="${note.content.length}" draggable="true">
           <input type="checkbox" class="note-checkbox" data-note-id="${note.id}">
           <div class="note-drag-handle" title="拖拽到左侧分类可修改分类">⠿</div>
@@ -6888,9 +7154,9 @@ ${JSON.stringify(reportData, null, 2)}`;
               <h3 class="note-title">${this.escapeHtml(note.title)}</h3>
               <span class="note-category note-category-clickable" data-id="${note.id}" data-category="${note.category}" title="点击修改分类">${this.getNoteCategoryLabel(note.category)}</span>
             </div>
-            <p class="note-content">${this.escapeHtml(note.content.substring(0, 200))}${note.content.length > 200 ? '...' : ''}</p>
+            ${contentPreview}
             <div class="note-preview hidden" id="note-preview-${note.id}">
-              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${this.escapeHtml(note.content)}</div>
+              <div class="note-preview-content" contenteditable="false" data-note-id="${note.id}">${previewInnerContent}</div>
               <div class="note-preview-hint">点击复制 | 双击编辑</div>
             </div>
             <div class="note-footer">
@@ -6906,7 +7172,8 @@ ${JSON.stringify(reportData, null, 2)}`;
             </div>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
       this.bindNoteDragEvents();
       this.bindNoteCheckboxEvents();
     } else {
@@ -7335,6 +7602,8 @@ ${JSON.stringify(reportData, null, 2)}`;
   hideTaskModal() {
     document.getElementById('taskModal')?.classList.add('hidden');
     this.editingTask = null;
+    // 清除 AI 编辑器内容
+    if (this._aiTaskEditor) this._aiTaskEditor.clear();
   },
 
   // 渲染任务关联人物（来自画像）
@@ -7472,7 +7741,7 @@ ${JSON.stringify(reportData, null, 2)}`;
   
   // AI分析任务输入
   async analyzeTaskInput() {
-    const input = document.getElementById('aiTaskInput').value.trim();
+    const input = this._aiTaskEditor ? this._aiTaskEditor.getText().trim() : (document.getElementById('aiTaskInput')?.value?.trim() || '');
     if (!input) {
       this.showToast('请输入任务描述', 'error');
       return;
@@ -7539,18 +7808,22 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
   
   async saveAIToNote() {
-    const input = document.getElementById('aiTaskInput').value.trim();
-    if (!input) {
+    const textContent = this._aiTaskEditor ? this._aiTaskEditor.getText().trim() : (document.getElementById('aiTaskInput')?.value?.trim() || '');
+    const htmlContent = this._aiTaskEditor ? this._aiTaskEditor.getHTML() : undefined;
+    // 富文本可能只有图片没有文字，此时 htmlContent 有内容但 textContent 为空
+    const hasContent = textContent || (htmlContent && htmlContent.trim() && htmlContent.trim() !== '<br>');
+    if (!hasContent) {
       this.showToast('请输入内容', 'error');
       return;
     }
     
     try {
       if (window.electronAPI) {
-        const category = this.autoClassifyNote(input);
+        const category = this.autoClassifyNote(textContent || '图片笔记');
         
         const result = await window.electronAPI.notebookAddNote({
-          content: input,
+          content: textContent || '图片笔记',
+          htmlContent: htmlContent,
           category: category
         });
         
@@ -7561,7 +7834,8 @@ ${JSON.stringify(reportData, null, 2)}`;
             this.incrementNewNoteCount();
             this.showToast(`已保存到记事本（${this.getNoteCategoryLabel(category)}）`);
           }
-          document.getElementById('aiTaskInput').value = '';
+          document.getElementById('aiTaskInput') && (document.getElementById('aiTaskInput').value = '');
+          if (this._aiTaskEditor) this._aiTaskEditor.clear();
         }
       }
     } catch (error) {
@@ -7571,7 +7845,7 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
   
   async extractAIMemory() {
-    const input = document.getElementById('aiTaskInput').value.trim();
+    const input = this._aiTaskEditor ? this._aiTaskEditor.getText().trim() : (document.getElementById('aiTaskInput')?.value?.trim() || '');
     if (!input) {
       this.showToast('请输入内容', 'error');
       return;
@@ -7585,7 +7859,8 @@ ${JSON.stringify(reportData, null, 2)}`;
         
         if (memoryResult.success && memoryResult.memory) {
           this.showToast('已提炼并保存到记忆');
-          document.getElementById('aiTaskInput').value = '';
+          document.getElementById('aiTaskInput') && (document.getElementById('aiTaskInput').value = '');
+          if (this._aiTaskEditor) this._aiTaskEditor.clear();
         } else {
           this.showToast('提炼记忆失败', 'error');
         }
@@ -7597,7 +7872,7 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
 
   async saveAIAsQuestion() {
-    const input = document.getElementById('aiTaskInput').value.trim();
+    const input = this._aiTaskEditor ? this._aiTaskEditor.getText().trim() : (document.getElementById('aiTaskInput')?.value?.trim() || '');
     if (!input) {
       this.showToast('请输入问题内容', 'error');
       return;
@@ -7613,7 +7888,8 @@ ${JSON.stringify(reportData, null, 2)}`;
         });
         if (result.success) {
           this.showToast('❓ 问题已记录到知识库');
-          document.getElementById('aiTaskInput').value = '';
+          document.getElementById('aiTaskInput') && (document.getElementById('aiTaskInput').value = '');
+          if (this._aiTaskEditor) this._aiTaskEditor.clear();
         } else {
           this.showToast('记录问题失败', 'error');
         }
@@ -9474,6 +9750,12 @@ ${JSON.stringify(reportData, null, 2)}`;
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
       const key = el.getAttribute('data-i18n-placeholder');
       if (key) el.placeholder = i.t(key);
+    });
+
+    // 处理 data-i18n-title 属性（更新 title/tooltip）
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const key = el.getAttribute('data-i18n-title');
+      if (key) el.title = i.t(key);
     });
 
     // 更新语言切换按钮文本
