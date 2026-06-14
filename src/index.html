@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="styles/insight.css">
   <link rel="stylesheet" href="styles/richEditor.css">
   <link rel="stylesheet" href="styles/relationship.css">
+  <link rel="stylesheet" href="styles/expert.css">
   <script src="scripts/i18n.js"></script>
   <script src="scripts/richEditor.js"></script>
   <script src="scripts/relationship.js"></script>
@@ -226,6 +227,11 @@
               </div>
               <!-- 对话主区域 -->
               <div class="chat-main" id="chatMain">
+                <div class="chat-header" id="chatHeader" style="display:none;">
+                  <span id="chatHeaderTitle">专家团</span>
+                  <button class="group-chat-exit-btn group-chat-terminate-btn" id="terminateGroupChatBtn" style="display:none;">⏹ 终止任务</button>
+                  <button class="group-chat-exit-btn" id="exitGroupChatBtn" style="display:none;">退出群聊</button>
+                </div>
                 <div class="chat-messages" id="chatMessages">
                   <!-- 功能提示卡片 -->
                   <div class="feature-cards">
@@ -1151,6 +1157,7 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="llm" data-i18n="settings.tab.llm">LLM</button>
           <button class="settings-tab" data-tab="agent" data-i18n="settings.tab.agent">Agent</button>
+          <button class="settings-tab" data-tab="expert" data-i18n="settings.tab.expert">专家</button>
           <button class="settings-tab" data-tab="prompt" data-i18n="settings.tab.prompts">Prompt</button>
           <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">画像</button>
           <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆</button>
@@ -1383,6 +1390,28 @@
           </div>
         </div>
         
+        <!-- 专家配置 -->
+        <div class="settings-panel hidden" id="expertPanel">
+          <div class="expert-section">
+            <div class="expert-panel-header">
+              <h4>🤖 专家管理</h4>
+              <button class="btn primary" id="addExpertBtn" style="font-size:12px;padding:4px 12px;">+ 新增</button>
+            </div>
+            <div id="expertList"></div>
+          </div>
+          <div class="expert-section">
+            <div class="expert-panel-header">
+              <h4>🏆 专家团管理</h4>
+              <button class="btn primary" id="addGroupBtn" style="font-size:12px;padding:4px 12px;">+ 新增</button>
+            </div>
+            <div id="expertGroupList"></div>
+          </div>
+          <div class="expert-preview">
+            <div class="expert-section-title">预览（与 AI 助手页面一致）</div>
+            <div class="preview-row" id="expertPreview"></div>
+          </div>
+        </div>
+
         <!-- Prompt -->
         <div class="settings-panel hidden" id="promptPanel">
           <div class="prompt-manager-header">
@@ -2145,6 +2174,8 @@
 <script src="scripts/localFiles.js"></script>
 <script src="scripts/insight.js"></script>
 <script src="scripts/audit.js"></script>
+<script src="scripts/expert.js"></script>
+<script src="scripts/expertSettings.js"></script>
 <script src="scripts/app.js"></script>
 <script>
   console.log('[HTML] All scripts loaded');

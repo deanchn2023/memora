@@ -5363,18 +5363,27 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   // 支持两种调用方式：
   // 1. 旧方式：data 是纯文本字符串
   // 2. 新方式：data = { message, attachments } — 附件信息结构化传递给 ADP V2 Contents 数组
-  let message, attachments;
+  // 3. v2.6 专家模式：data = { message, appKey, adpUrl, _expertMode } — 专家级配置覆盖
+  let message, attachments, expertAppKey, expertAdpUrl;
   if (typeof data === 'string') {
     message = data;
     attachments = [];
   } else {
     message = data.message || '';
     attachments = data.attachments || [];
+    expertAppKey = data.appKey || '';   // v2.6: 专家级 AppKey
+    expertAdpUrl = data.adpUrl || '';   // v2.6: 专家级 URL
   }
 
-  // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
+  // v2.6: 专家模式优先使用专家配置的 appKey/url
   let appKey, url, configSource = 'default';
-  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+  if (expertAppKey) {
+    // 专家模式：使用专家配置的 appKey
+    appKey = expertAppKey;
+    url = expertAdpUrl ? normalizeADPUrl(expertAdpUrl) : 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+    configSource = 'expert';
+  } else if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+    // v2.0: 登录状态优先使用服务器配置（除非用户强制使用本地配置）
     appKey = remoteConfig.adp.app_key;
     url = remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
     configSource = appKey ? 'cloud' : 'default';
@@ -5654,7 +5663,21 @@ ipcMain.handle('send-adp-message', async (event, data) => {
 
     // 所有上传方式都失败：文件无法传给 ADP
     // 🔧 修复：不能将文件二进制内容当文本发送给 ADP（会导致 InvalidRequest）
-    // 降级策略：在文本消息中告知用户文件未上传成功
+    // 降级策略 1：如果有 textContent，直接注入文本（适用于 PDF 等可提取文本的文件）
+    if (att.textContent && att.textContent.trim()) {
+      const maxLen = 50000;
+      const textContent = att.textContent.length > maxLen
+        ? att.textContent.substring(0, maxLen) + '\n...（文件过长，已截断）'
+        : att.textContent;
+      contents.push({
+        Type: 'text',
+        Text: `【附件文件：${att.name}】\n\`\`\`\n${textContent}\n\`\`\``
+      });
+      console.log('[ADP Chat] ✅ Fallback: injected file text content (upload failed):', att.name, 'length:', textContent.length);
+      continue;
+    }
+
+    // 降级策略 2：告知用户文件未上传成功
     console.warn('[ADP Chat] All upload methods failed for file:', att.name,
       '- COS creds:', hasADPCOSCreds ? 'available' : 'NOT configured',
       '- File Share:', fileUrl ? 'ok' : 'failed');
@@ -5903,6 +5926,1018 @@ ipcMain.handle('adp:stop-message', async () => {
   }
   return { success: false, error: '没有进行中的请求' };
 });
+
+// ===== 专家系统 IPC 通道 =====
+const EXPERTS_FILE = path.join(app.getPath('userData'), 'experts.json');
+
+function _loadExpertsData() {
+  try {
+    if (fs.existsSync(EXPERTS_FILE)) {
+      const data = fs.readFileSync(EXPERTS_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (e) {
+    console.error('[Experts] Failed to load experts data:', e);
+  }
+  return { experts: [], groups: [], version: '2.6.0' };
+}
+
+function _saveExpertsData(data) {
+  try {
+    fs.writeFileSync(EXPERTS_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    console.error('[Experts] Failed to save experts data:', e);
+    return false;
+  }
+}
+
+// Migration: create default experts from hardcoded cards
+function _migrateDefaultExperts() {
+  const data = _loadExpertsData();
+  if (data.experts && data.experts.length > 0) return data;
+  
+  const now = new Date().toISOString();
+  let globalAppKey = getSetting('adp_app_key') || DEFAULT_ADP_APP_KEY;
+  if (authState.isLoggedIn && remoteConfig?.adp?.app_key) {
+    globalAppKey = remoteConfig.adp.app_key;
+  }
+  
+  data.experts = [
+    {
+      id: 'expert_default_task',
+      name: '智能任务分析',
+      intro: '帮你分析和管理待办事项',
+      icon: '📝',
+      adpUrl: '',
+      appKey: globalAppKey,
+      quickAccesses: [
+        { id: 'qa_1', icon: '🎯', label: '今日排程', prompt: '今天该做什么？帮我排个优先级' },
+        { id: 'qa_2', icon: '📊', label: '生成日报', prompt: '生成今天的工作日报' },
+        { id: 'qa_3', icon: '📚', label: '整理笔记', prompt: '帮我整理一下最近的笔记' },
+        { id: 'qa_4', icon: '🧠', label: '整理记忆', prompt: '帮我整理一下记忆，看看哪些需要保留' },
+        { id: 'qa_5', icon: '🔥', label: '紧急事项', prompt: '最紧急的事项是什么？' },
+        { id: 'qa_6', icon: '⏰', label: '时间建议', prompt: '给我一些时间管理建议' },
+      ],
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: 'expert_default_bidding',
+      name: '招投标支持',
+      intro: '招投标文档智能生成',
+      icon: '📋',
+      adpUrl: '',
+      appKey: globalAppKey,
+      quickAccesses: [
+        { id: 'qa_1', icon: '📊', label: '技术偏离表', prompt: '请帮我生成技术偏离表' },
+        { id: 'qa_2', icon: '📄', label: '技术标书', prompt: '请帮我生成技术标书' },
+        { id: 'qa_3', icon: '📋', label: '投标方案PPT', prompt: '请帮我生成投标方案PPT' },
+        { id: 'qa_4', icon: '✅', label: '点对点应答', prompt: '请帮我生成点对点应答' },
+        { id: 'qa_5', icon: '📝', label: 'SOW', prompt: '请帮我生成SOW（工作说明书）' },
+        { id: 'qa_6', icon: '✔️', label: '验收标准', prompt: '请帮我生成验收标准' },
+        { id: 'qa_7', icon: '🏢', label: '私有化部署方案', prompt: '请帮我生成私有化部署方案' },
+      ],
+      sortOrder: 1,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: 'expert_default_knowledge',
+      name: '知识助手',
+      intro: '产品知识与助销资料',
+      icon: '📚',
+      adpUrl: '',
+      appKey: globalAppKey,
+      quickAccesses: [
+        { id: 'qa_1', icon: '📄', label: '文档列表', prompt: '获取文档列表' },
+        { id: 'qa_2', icon: '🚀', label: '产品升级规划', prompt: 'ADP 产品升级规划等产品知识' },
+        { id: 'qa_3', icon: '💡', label: '产品功能介绍', prompt: '介绍一下 ADP 平台的核心功能' },
+        { id: 'qa_4', icon: '🔧', label: '技术架构', prompt: 'ADP 的技术架构是怎样的？' },
+        { id: 'qa_5', icon: '📖', label: '最佳实践', prompt: 'ADP 项目实施的最佳实践有哪些？' },
+        { id: 'qa_6', icon: '❓', label: '常见问题', prompt: 'ADP 常见问题及解决方案' },
+      ],
+      sortOrder: 2,
+      createdAt: now,
+      updatedAt: now
+    }
+  ];
+  
+  _saveExpertsData(data);
+  console.log('[Experts] Migrated 3 default experts');
+  return data;
+}
+
+ipcMain.handle('experts:get-all', async () => {
+  const data = _migrateDefaultExperts();
+  return { success: true, experts: data.experts || [], groups: data.groups || [] };
+});
+
+ipcMain.handle('experts:save', async (event, expert) => {
+  const data = _loadExpertsData();
+  if (!data.experts) data.experts = [];
+  
+  if (expert.id) {
+    const idx = data.experts.findIndex(e => e.id === expert.id);
+    if (idx !== -1) {
+      data.experts[idx] = { ...data.experts[idx], ...expert, updatedAt: new Date().toISOString() };
+    } else {
+      data.experts.push(expert);
+    }
+  } else {
+    expert.id = 'expert_' + Date.now();
+    expert.createdAt = new Date().toISOString();
+    expert.updatedAt = expert.createdAt;
+    data.experts.push(expert);
+  }
+  
+  _saveExpertsData(data);
+  return { success: true, expert };
+});
+
+ipcMain.handle('experts:delete', async (event, expertId) => {
+  const data = _loadExpertsData();
+  data.experts = (data.experts || []).filter(e => e.id !== expertId);
+  if (data.groups) {
+    data.groups.forEach(g => {
+      g.expertIds = (g.expertIds || []).filter(id => id !== expertId);
+      if (g.hostExpertId === expertId) {
+        g.hostExpertId = g.expertIds[0] || null;
+      }
+    });
+  }
+  _saveExpertsData(data);
+  return { success: true };
+});
+
+ipcMain.handle('experts:reorder', async (event, orderedIds) => {
+  const data = _loadExpertsData();
+  const idOrder = {};
+  orderedIds.forEach((id, idx) => idOrder[id] = idx);
+  data.experts.sort((a, b) => (idOrder[a.id] ?? 999) - (idOrder[b.id] ?? 999));
+  data.experts.forEach((e, idx) => e.sortOrder = idx);
+  _saveExpertsData(data);
+  return { success: true };
+});
+
+ipcMain.handle('expert-groups:get-all', async () => {
+  const data = _loadExpertsData();
+  return { success: true, groups: data.groups || [] };
+});
+
+ipcMain.handle('expert-groups:save', async (event, group) => {
+  const data = _loadExpertsData();
+  if (!data.groups) data.groups = [];
+  
+  if (group.id) {
+    const idx = data.groups.findIndex(g => g.id === group.id);
+    if (idx !== -1) {
+      data.groups[idx] = { ...data.groups[idx], ...group, updatedAt: new Date().toISOString() };
+    } else {
+      data.groups.push(group);
+    }
+  } else {
+    group.id = 'group_' + Date.now();
+    group.createdAt = new Date().toISOString();
+    group.updatedAt = group.createdAt;
+    data.groups.push(group);
+  }
+  
+  _saveExpertsData(data);
+  return { success: true, group };
+});
+
+ipcMain.handle('expert-groups:delete', async (event, groupId) => {
+  const data = _loadExpertsData();
+  data.groups = (data.groups || []).filter(g => g.id !== groupId);
+  _saveExpertsData(data);
+  return { success: true };
+});
+
+ipcMain.handle('expert-groups:reorder', async (event, orderedIds) => {
+  const data = _loadExpertsData();
+  const idOrder = {};
+  orderedIds.forEach((id, idx) => idOrder[id] = idx);
+  data.groups.sort((a, b) => (idOrder[a.id] ?? 999) - (idOrder[b.id] ?? 999));
+  data.groups.forEach((g, idx) => g.sortOrder = idx);
+  _saveExpertsData(data);
+  return { success: true };
+});
+
+// ===== v2.6.1 群聊后台执行引擎 =====
+// 主进程管理群聊状态机，即使渲染进程切走页面也继续执行
+const _groupChatEngines = new Map(); // chatId → GroupChatEngine
+
+class GroupChatEngine {
+  constructor(chatId, config) {
+    this.chatId = chatId;
+    this.config = config; // { groupId, groupName, expertIds, hostExpertId, hostPrompt, executionStrategy, experts: Map<id, {appKey,adpUrl,name,icon,intro}> }
+    this.phase = 'idle'; // 'idle' | 'host_analysis' | 'experts_exec' | 'host_summary' | 'complete' | 'error'
+    this.messages = [];
+    this.abortController = null;
+    this.startedAt = new Date().toISOString();
+    this.userMessage = '';
+  }
+
+  // 调用单个专家（流式输出，实时推送到前端）
+  async _callExpert(prompt, expertId, phase) {
+    const expert = this.config.experts[expertId];
+    if (!expert) throw new Error(`专家 ${expertId} 不存在`);
+
+    console.log(`[GroupChatEngine] _callExpert: expertId=${expertId}, name=${expert.name}, phase=${phase}`);
+
+    let appKey = expert.appKey;
+    let url = expert.adpUrl ? normalizeADPUrl(expert.adpUrl) : 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+
+    if (!appKey) {
+      const adpConfig = getSetting('adp_config') || {};
+      appKey = adpConfig.app_key || DEFAULT_ADP_APP_KEY;
+      if (authState.isLoggedIn && remoteConfig?.adp?.app_key) appKey = remoteConfig.adp.app_key;
+      url = adpConfig.url ? normalizeADPUrl(adpConfig.url) : url;
+    }
+
+    // 🔧 修复：ConversationId 必须匹配 ^[a-zA-Z0-9_-]{2,64}$
+    const sanitizeId = (id) => id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+    const conversationId = `grp_${sanitizeId(this.config.groupId)}_${phase}_${Date.now()}`;
+    const visitorId = `memora_exp_${sanitizeId(expertId)}`;
+    const requestBody = {
+      AppKey: appKey,
+      ConversationId: conversationId,
+      VisitorId: visitorId,
+      Contents: [{ Type: 'text', Text: prompt }],
+      RequestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`.slice(0, 64),
+      Stream: 'enable'
+    };
+
+    const controller = new AbortController();
+    // 🔧 修复：并行模式下 abortController 互相覆盖，改用 Map 存储
+    if (!this._abortControllers) this._abortControllers = new Map();
+    this._abortControllers.set(expertId + '_' + phase, controller);
+    this.abortController = controller; // 兼容：cancel() 方法仍用最新值
+
+    // 发送"开始处理"事件
+    const isHost = (expertId === this.config.hostExpertId);
+    this._sendEvent('expert-start', {
+      expertId,
+      expertName: expert.name,
+      expertIcon: expert.icon,
+      isHost,
+      phase,
+      message: isHost ? '⭐ 主持人正在分析...' : `${expert.icon} ${expert.name} 正在处理...`
+    });
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // 收集完整文本，同时流式推送增量到前端
+      let fullText = '';
+      let thinkingText = '';
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let lastStreamPush = 0;
+      let firstDeltaLogged = false;
+
+      console.log(`[GroupChatEngine] SSE stream started for ${expert.name} (${phase})`);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            const dataStr = line.slice(5).trim();
+            if (!dataStr || dataStr === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              // 🔧 关键修复：ADP V2 text.delta 字段格式与一对一聊天一致
+              // 支持：parsed.Text / parsed.Content[0].Text / parsed.payload.content[0].text
+              let deltaText = '';
+              if (currentEvent === 'text.delta') {
+                deltaText = parsed.Text || (parsed.Content && parsed.Content[0] && parsed.Content[0].Text) || parsed.payload?.content?.[0]?.text || '';
+              } else if (currentEvent === 'message.added' || currentEvent === 'content.added') {
+                deltaText = (parsed.Content && parsed.Content[0] && parsed.Content[0].Text) || parsed.Text || parsed.payload?.content?.[0]?.text || '';
+              } else if (currentEvent === 'text.replace' && parsed.Text) {
+                // text.replace：用新文本替换旧内容
+                fullText = parsed.Text;
+                deltaText = '';
+              } else if (currentEvent === 'thought') {
+                const thoughtText = parsed.Text || parsed.Content || parsed.payload?.content?.[0]?.text || '';
+                if (thoughtText) thinkingText += thoughtText;
+              } else if (currentEvent === 'message.done') {
+                const doneText = (parsed.Message && parsed.Message.Content && parsed.Message.Content[0] && parsed.Message.Content[0].Text) || parsed.Text || '';
+                if (doneText && !fullText) fullText = doneText;
+              } else if (currentEvent === 'error') {
+                throw new Error(parsed.Message || parsed.message || parsed.error?.message || 'ADP 调用错误');
+              }
+
+              if (deltaText) {
+                fullText += deltaText;
+                // 🔧 诊断日志：首个 delta
+                if (!firstDeltaLogged) {
+                  firstDeltaLogged = true;
+                  console.log(`[GroupChatEngine] 🔤 First delta for ${expert.name} (${phase}):`, deltaText.substring(0, 100), '| event:', currentEvent);
+                }
+                // 流式推送：每 80ms 或每 30 字符推送一次，更丝滑的流式体验
+                const now = Date.now();
+                if (now - lastStreamPush > 80 || fullText.length % 30 === 0) {
+                  this._sendEvent('expert-stream', {
+                    expertId,
+                    expertName: expert.name,
+                    expertIcon: expert.icon,
+                    isHost,
+                    phase,
+                    incremental: deltaText,
+                    fullText
+                  });
+                  lastStreamPush = now;
+                }
+              }
+            } catch (e) {
+              if (e.message && (e.message.includes('ADP 调用错误') || e.message.includes('ADP 返回错误'))) throw e;
+            }
+          }
+        }
+      }
+
+      // 最终流式推送
+      this._sendEvent('expert-stream', {
+        expertId,
+        expertName: expert.name,
+        expertIcon: expert.icon,
+        isHost,
+        phase,
+        incremental: '',
+        fullText: fullText || thinkingText
+      });
+
+      console.log(`[GroupChatEngine] ✅ SSE stream completed for ${expert.name} (${phase}), fullText length: ${fullText.length}, thinkingText length: ${thinkingText.length}`);
+
+      return fullText || thinkingText || '（无输出）';
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error('已取消');
+      throw e;
+    } finally {
+      this.abortController = null;
+      // 清理对应专家的 abortController
+      if (this._abortControllers) this._abortControllers.delete(expertId + '_' + phase);
+    }
+  }
+
+  // 发送事件到渲染进程
+  _sendEvent(eventType, data = {}) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('expert-chat:event', {
+        chatId: this.chatId,
+        type: eventType,
+        ...data,
+        // 🔧 修复：如果 data 中已有 phase（来自 _callExpert 的精确 phase），不覆盖
+        // 只有没有 phase 时才用 this.phase（如 phase-start 等全局事件）
+        phase: data.phase || this.phase,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  // 解析主持人分配（增强版：支持精确匹配+名称模糊匹配+兜底全分配）
+  _parseHostAssignments(hostResult) {
+    const nonHostIds = this.config.expertIds.filter(id => id !== this.config.hostExpertId);
+
+    try {
+      const jsonMatch = hostResult.match(/\{[\s\S]*"assignments"[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.assignments && Array.isArray(parsed.assignments) && parsed.assignments.length > 0) {
+          const assignments = [];
+          const assignedIds = new Set();
+
+          for (const a of parsed.assignments) {
+            let expertId = a.expert_id;
+            let matched = false;
+
+            // 1. 精确 ID 匹配
+            if (expertId && nonHostIds.includes(expertId)) {
+              matched = true;
+            }
+
+            // 2. 名称模糊匹配
+            if (!matched && a.expert_id) {
+              for (const eid of nonHostIds) {
+                const expert = this.config.experts[eid];
+                if (expert && (expert.name === a.expert_id || expert.name.includes(a.expert_id) || a.expert_id.includes(expert.name))) {
+                  expertId = eid;
+                  matched = true;
+                  break;
+                }
+              }
+            }
+
+            if (matched && expertId) {
+              assignments.push({ expertId, task: a.task || '请协助处理用户请求' });
+              assignedIds.add(expertId);
+            }
+          }
+
+          // 3. 如果有专家没被分配到任务，但主持人建议了分配，自动补上
+          for (const eid of nonHostIds) {
+            if (!assignedIds.has(eid)) {
+              const expert = this.config.experts[eid];
+              assignments.push({
+                expertId: eid,
+                task: `请从你的专业角度（${expert?.name || '专家'}）协助处理用户请求`
+              });
+            }
+          }
+
+          if (assignments.length > 0) return assignments;
+        }
+      }
+    } catch (e) {
+      console.warn('[GroupChatEngine] Failed to parse host assignments:', e);
+    }
+
+    // 兜底：分配给所有非主持人专家
+    console.log('[GroupChatEngine] Fallback: assigning all experts');
+    return nonHostIds.map(id => ({
+      expertId: id,
+      task: '请协助处理用户的请求'
+    }));
+  }
+
+  // 运行完整群聊流程
+  async execute(userMessage) {
+    this.userMessage = userMessage;
+    const hostExpert = this.config.experts[this.config.hostExpertId];
+    if (!hostExpert) {
+      this.phase = 'error';
+      this._sendEvent('error', { message: '主持人不存在' });
+      return;
+    }
+
+    try {
+      // 阶段一：主持人分析
+      this.phase = 'host_analysis';
+      this._sendEvent('phase-start', { message: '⭐ 主持人正在分析...' });
+
+      const memberExperts = this.config.expertIds
+        .filter(id => id !== this.config.hostExpertId)
+        .map(id => this.config.experts[id])
+        .filter(Boolean);
+
+      const customPrompt = this.config.hostPrompt?.trim();
+      const strategy = this.config.executionStrategy === 'parallel' ? '并行' : '串行';
+
+      // 构建专家能力详情
+      const buildCap = (e, role) => {
+        const intro = e.intro || '暂无介绍';
+        return `### ${e.icon} ${e.name}（${role}）\n专业领域：${intro}\nID：${e.id}`;
+      };
+      const hostCapabilities = buildCap(hostExpert, '主持人');
+      const memberCapabilities = memberExperts.map(m => buildCap(m, '成员')).join('\n');
+
+      const defaultPrompt = `你是专家团「${this.config.groupName}」的主持人，负责协调团队处理用户请求。
+
+## 执行策略：${strategy}
+
+## 团队能力
+${hostCapabilities}
+
+${memberCapabilities}
+
+## 用户的请求
+${userMessage}
+
+## 你的任务
+1. 深入分析用户请求，拆解为具体子任务
+2. 根据每位专家的专业领域，精准匹配子任务——每个子任务只分配给最擅长的专家
+3. 为每个专家编写详细任务指令，包含：上下文背景、具体要求、期望输出格式
+4. 不需要参与的专家不要分配任务（避免浪费调用）
+5. 以你的专业角度先给出初步判断和分析框架
+
+⚠️ 任务分配关键规则：
+- 你必须在 assignments 中使用上面列出的精确 expert_id（如"${this.config.expertIds.filter(id => id !== this.config.hostExpertId)[0] || ''}"）
+- 每个专家的 task 必须具体、可执行，包含足够的上下文让专家独立完成
+- 不要给专家分配超出其专业领域的任务
+- 如果某位专家的专业领域完全不相关，不要强行分配
+- 如果所有专家都需要参与，就全部列出
+- 不要遗漏任何应该参与的专家
+- task 描述应包含：用户的具体需求点 + 你对该需求的分析 + 你期望该专家输出的内容/格式
+
+输出格式（必须严格遵循，只输出JSON，禁止markdown和解释）：
+{
+  "analysis": "你对用户请求的深度分析，包括核心需求拆解、关键问题识别",
+  "initial_thought": "你的初步判断、建议方向和整体策略",
+  "assignments": [
+    {"expert_id": "精确的专家ID", "task": "具体任务描述：背景是什么，需要你做什么，输出什么格式的结果"}
+  ]
+}`;
+      const hostPrompt = customPrompt ? `${customPrompt}\n\n${defaultPrompt}` : defaultPrompt;
+
+      const hostResult = await this._callExpert(hostPrompt, this.config.hostExpertId, 'host_analysis');
+      
+      const hostMsg = {
+        expertId: this.config.hostExpertId,
+        expertName: hostExpert.name,
+        expertIcon: hostExpert.icon,
+        isHost: true,
+        phase: 'host_analysis',
+        content: hostResult
+      };
+      this.messages.push(hostMsg);
+      this._sendEvent('expert-complete', hostMsg);
+
+      // 解析分配
+      const assignments = this._parseHostAssignments(hostResult);
+
+      // 阶段二：专家执行
+      this.phase = 'experts_exec';
+
+      if (this.config.executionStrategy === 'parallel') {
+        // 并行模式
+        const promises = assignments.map(a => {
+          const memberExpert = this.config.experts[a.expertId];
+          if (!memberExpert) return Promise.resolve(null);
+          const memberPrompt = `你是专家「${memberExpert.name}」，专业领域：${memberExpert.intro || '通用'}。
+
+专家团主持人「${hostExpert.name}」根据你的专业能力，分配给你以下任务：
+
+${a.task}
+
+用户的原始请求：${userMessage}
+
+请根据你的专业领域和上面的任务要求，完成你的工作。输出要具体、完整、可直接使用。`;
+          return this._callExpert(memberPrompt, a.expertId, 'member_exec')
+            .then(result => ({ assignment: a, expert: memberExpert, result }))
+            .catch(err => ({ assignment: a, expert: memberExpert, result: null, error: err }));
+        });
+
+        const results = await Promise.allSettled(promises);
+        const expertResults = [];
+
+        for (const settled of results) {
+          if (settled.status === 'fulfilled' && settled.value) {
+            const { assignment, expert, result, error } = settled.value;
+            const msg = {
+              expertId: assignment.expertId,
+              expertName: expert.name,
+              expertIcon: expert.icon,
+              isHost: false,
+              phase: 'member_exec',
+              content: result || `⚠️ 调用失败：${error?.message || '未知错误'}`,
+              isError: !result
+            };
+            this.messages.push(msg);
+            this._sendEvent('expert-complete', msg);
+            if (result) {
+              expertResults.push({ expertId: assignment.expertId, expertName: expert.name, expertIcon: expert.icon, result });
+            }
+          }
+        }
+
+        // 阶段三：主持人总结
+        await this._runHostSummary(userMessage, expertResults, hostExpert);
+
+      } else {
+        // 串行模式
+        const expertResults = [];
+        for (const assignment of assignments) {
+          const memberExpert = this.config.experts[assignment.expertId];
+          if (!memberExpert) continue;
+
+          this._sendEvent('phase-start', { message: `${memberExpert.icon} ${memberExpert.name} 正在处理...` });
+
+          const memberPrompt = `你是专家「${memberExpert.name}」，专业领域：${memberExpert.intro || '通用'}。
+
+专家团主持人「${hostExpert.name}」根据你的专业能力，分配给你以下任务：
+
+${assignment.task}
+
+用户的原始请求：${userMessage}
+
+请根据你的专业领域和上面的任务要求，完成你的工作。输出要具体、完整、可直接使用。`;
+
+          try {
+            const result = await this._callExpert(memberPrompt, assignment.expertId, 'member_exec');
+            const msg = {
+              expertId: assignment.expertId,
+              expertName: memberExpert.name,
+              expertIcon: memberExpert.icon,
+              isHost: false,
+              phase: 'member_exec',
+              content: result
+            };
+            this.messages.push(msg);
+            this._sendEvent('expert-complete', msg);
+            expertResults.push({ expertId: assignment.expertId, expertName: memberExpert.name, expertIcon: memberExpert.icon, result });
+          } catch (e) {
+            const msg = {
+              expertId: assignment.expertId,
+              expertName: memberExpert.name,
+              expertIcon: memberExpert.icon,
+              isHost: false,
+              phase: 'member_exec',
+              content: `⚠️ 调用失败：${e.message}`,
+              isError: true
+            };
+            this.messages.push(msg);
+            this._sendEvent('expert-complete', msg);
+          }
+        }
+
+        // 阶段三：主持人总结
+        await this._runHostSummary(userMessage, expertResults, hostExpert);
+      }
+
+      this.phase = 'complete';
+      this._sendEvent('chat-complete', { userMessage, messages: this.messages });
+
+    } catch (e) {
+      this.phase = 'error';
+      this._sendEvent('error', { message: e.message });
+    } finally {
+      _groupChatEngines.delete(this.chatId);
+    }
+  }
+
+  // 主持人总结
+  async _runHostSummary(userMessage, expertResults, hostExpert) {
+    this.phase = 'host_summary';
+    this._sendEvent('phase-start', { message: '⭐ 主持人正在汇总...' });
+
+    const resultsSummary = expertResults.map(r => `${r.expertIcon} ${r.expertName}：${r.result || '（无输出）'}`).join('\n\n');
+    const failedExperts = expertResults.filter(r => r.isError);
+    const failedNote = failedExperts.length > 0 
+      ? `\n\n⚠️ 注意：以下专家调用失败：${failedExperts.map(e => e.expertName).join('、')}，以下结论缺少他们的输入。`
+      : '';
+
+    const summaryPrompt = `以下是各专家的工作结果：
+${resultsSummary}
+${failedNote}
+
+请你：
+1. 综合各专家结果，整理成结构化总结
+2. 检查是否有遗漏或冲突
+3. 给出最终结论
+4. 判断任务是否已完成：如果用户的问题已经得到完整回答，明确声明"任务已完成"；如果需要进一步讨论，说明还需要什么
+5. 如果专家输出中包含文件/文档，在总结末尾列出"📋 产出文件清单"，每行格式：[文件名](文件链接)
+
+⚠️ 作为主持人，你有权判断任务是否结束。如果所有专家的输出已经充分回答了用户的问题，请在结论中明确写出"✅ 任务已完成"。`;
+
+    try {
+      const result = await this._callExpert(summaryPrompt, this.config.hostExpertId, 'host_summary');
+      const msg = {
+        expertId: this.config.hostExpertId,
+        expertName: hostExpert.name,
+        expertIcon: hostExpert.icon,
+        isHost: true,
+        phase: 'host_summary',
+        content: result
+      };
+      this.messages.push(msg);
+      this._sendEvent('expert-complete', msg);
+    } catch (e) {
+      const msg = {
+        expertId: this.config.hostExpertId,
+        expertName: hostExpert.name,
+        expertIcon: hostExpert.icon,
+        isHost: true,
+        phase: 'host_summary',
+        content: `⚠️ 汇总失败：${e.message}`,
+        isError: true
+      };
+      this.messages.push(msg);
+      this._sendEvent('expert-complete', msg);
+    }
+  }
+
+  // 取消执行
+  cancel() {
+    // 🔧 修复：并行模式下需要取消所有进行中的请求
+    if (this._abortControllers && this._abortControllers.size > 0) {
+      for (const controller of this._abortControllers.values()) {
+        try { controller.abort(); } catch (_) {}
+      }
+      this._abortControllers.clear();
+    }
+    if (this.abortController) {
+      try { this.abortController.abort(); } catch (_) {}
+    }
+    this.phase = 'idle';
+    _groupChatEngines.delete(this.chatId);
+  }
+}
+
+// 启动群聊后台执行
+ipcMain.handle('expert-chat:start', async (event, { chatId, config, userMessage, attachments: rawAttachments }) => {
+  if (_groupChatEngines.has(chatId)) {
+    return { success: false, error: '该群聊已在执行中' };
+  }
+
+  // 🔧 关键修复：处理附件 — 复用 send-adp-message 的文件上传流程
+  // 将附件通过 COS/Claw 上传获取 URL，注入到消息文本中
+  let enrichedMessage = userMessage || '';
+  const attachments = rawAttachments || [];
+
+  if (attachments.length > 0) {
+    console.log('[GroupChat] Processing', attachments.length, 'attachments for group chat');
+
+    // 获取 COS 上传凭证
+    const tcSecretId = remoteConfig?.tencent_cloud?.secret_id || getSetting('adp_tc_secret_id') || '';
+    const tcSecretKey = remoteConfig?.tencent_cloud?.secret_key || getSetting('adp_tc_secret_key') || '';
+    const botBizId = remoteConfig?.tencent_cloud?.bot_biz_id || getSetting('adp_bot_biz_id') || '';
+    const hasADPCOSCreds = !!(tcSecretId && tcSecretKey && botBizId);
+
+    // File Share 降级方案
+    const fileShareBaseUrl = getAuthServer()?.toolkitUrl;
+    const fileShareApiKey = remoteConfig?.file_share?.api_key || getSetting('file_share_api_key') || DEFAULT_FILE_SHARE_API_KEY;
+
+    const IMG_EXTS = ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'heic', 'heif'];
+    const TEXT_EXTS = ['txt', 'md', 'markdown', 'csv', 'log', 'json', 'yaml', 'yml'];
+
+    for (const att of attachments) {
+      const ext = (att.name.split('.').pop() || '').toLowerCase();
+      const isImage = IMG_EXTS.includes(ext);
+      const isPlainText = TEXT_EXTS.includes(ext);
+
+      // 方案 0：纯文本文件直接注入（最稳妥）
+      if (isPlainText && att.textContent && att.textContent.trim()) {
+        const maxLen = 50000;
+        const textContent = att.textContent.length > maxLen
+          ? att.textContent.substring(0, maxLen) + '\n...（文件过长，已截断）'
+          : att.textContent;
+        enrichedMessage += `\n\n【附件文件：${att.name}】\n\`\`\`\n${textContent}\n\`\`\``;
+        console.log('[GroupChat] ✅ Plain text injected:', att.name);
+        continue;
+      }
+
+      // 方案 A：COS 上传（Claw 模式 Markdown 链接）
+      if (hasADPCOSCreds && att.buffer) {
+        try {
+          let fileBuffer;
+          if (Array.isArray(att.buffer)) {
+            fileBuffer = Buffer.from(att.buffer);
+          } else if (att.buffer instanceof ArrayBuffer || (att.buffer?.buffer instanceof ArrayBuffer)) {
+            fileBuffer = Buffer.from(att.buffer instanceof ArrayBuffer ? att.buffer : att.buffer.buffer);
+          } else if (att.buffer?.length > 0) {
+            fileBuffer = Buffer.from(att.buffer);
+          } else {
+            throw new Error(`Empty buffer for ${att.name}`);
+          }
+
+          if (fileBuffer.length === 0) throw new Error(`Zero-length buffer for ${att.name}`);
+
+          const fileTypeMap = { pdf: 'pdf', doc: 'doc', docx: 'docx', ppt: 'ppt', pptx: 'pptx', xls: 'xls', xlsx: 'xlsx', txt: 'txt', md: 'md', png: 'png', jpg: 'jpg', jpeg: 'jpeg', gif: 'gif', bmp: 'bmp', webp: 'webp' };
+          const adpFileType = fileTypeMap[ext] || ext;
+          const cosResult = await uploadFileToADPCOS(fileBuffer, att.name, adpFileType, att.size, botBizId, tcSecretId, tcSecretKey);
+          const fileUrl = cosResult.fileUrl || `https://${cosResult.bucket}.${cosResult.type || 'cos'}.${cosResult.region}.myqcloud.com${cosResult.uploadPath}`;
+
+          if (isImage) {
+            enrichedMessage += `\n\n![](${fileUrl})`;
+          } else {
+            enrichedMessage += `\n\n[${att.name}](${fileUrl})\n\n请阅读以上文档链接中的内容并据此回答。`;
+          }
+          console.log('[GroupChat] ✅ COS uploaded (Claw mode):', att.name, 'URL:', fileUrl.substring(0, 80) + '...');
+          continue;
+        } catch (cosErr) {
+          console.warn('[GroupChat] COS upload failed:', cosErr.message);
+        }
+      }
+
+      // 方案 B：File Share 上传
+      if (fileShareBaseUrl && fileShareApiKey && att.buffer) {
+        try {
+          let fileBuffer;
+          if (Array.isArray(att.buffer)) fileBuffer = Buffer.from(att.buffer);
+          else if (att.buffer instanceof ArrayBuffer || (att.buffer?.buffer instanceof ArrayBuffer)) fileBuffer = Buffer.from(att.buffer instanceof ArrayBuffer ? att.buffer : att.buffer.buffer);
+          else if (att.buffer?.length > 0) fileBuffer = Buffer.from(att.buffer);
+
+          if (fileBuffer && fileBuffer.length > 0) {
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('file', fileBuffer, { filename: att.name, contentType: att.mimeType || 'application/octet-stream' });
+            const shareRes = await fetch(`${fileShareBaseUrl}/api/file-share/upload`, {
+              method: 'POST', headers: { 'X-API-Key': fileShareApiKey, ...form.getHeaders() }, body: form, signal: AbortSignal.timeout(30000)
+            });
+            if (shareRes.ok) {
+              const shareData = await shareRes.json();
+              const fileUrl = shareData.url || shareData.fileUrl;
+              if (fileUrl) {
+                if (isImage) {
+                  enrichedMessage += `\n\n![](${fileUrl})`;
+                } else {
+                  enrichedMessage += `\n\n[${att.name}](${fileUrl})\n\n请阅读以上文档链接中的内容并据此回答。`;
+                }
+                console.log('[GroupChat] ✅ File Share uploaded:', att.name);
+                continue;
+              }
+            }
+          }
+        } catch (fsErr) {
+          console.warn('[GroupChat] File Share upload failed:', fsErr.message);
+        }
+      }
+
+      // 方案 C：文本内容注入降级（适用于 PDF 等可提取文本的文件）
+      if (att.textContent && att.textContent.trim()) {
+        const maxLen = 50000;
+        const textContent = att.textContent.length > maxLen
+          ? att.textContent.substring(0, maxLen) + '\n...（文件过长，已截断）'
+          : att.textContent;
+        enrichedMessage += `\n\n【附件文件：${att.name}】\n\`\`\`\n${textContent}\n\`\`\``;
+        console.log('[GroupChat] ✅ Fallback: text content injected:', att.name);
+        continue;
+      }
+
+      // 方案 D：所有方式失败，告知用户
+      if (!isImage) {
+        enrichedMessage += `\n\n[系统提示：文件 "${att.name}" 未能上传。${!hasADPCOSCreds ? '请在设置中配置腾讯云 SecretId/SecretKey/BotBizId 以启用文件上传功能。' : '文件上传服务暂时不可用，请稍后重试。'}]`;
+      }
+    }
+  }
+
+  const engine = new GroupChatEngine(chatId, config);
+  _groupChatEngines.set(chatId, engine);
+
+  // 异步执行，不阻塞 IPC 返回
+  engine.execute(enrichedMessage).catch(e => {
+    console.error('[GroupChatEngine] Unhandled error:', e);
+  });
+
+  return { success: true, chatId };
+});
+
+// 获取群聊执行状态
+ipcMain.handle('expert-chat:get-status', async (event, { chatId }) => {
+  const engine = _groupChatEngines.get(chatId);
+  if (!engine) return { success: true, status: 'not_found' };
+  return {
+    success: true,
+    status: engine.phase,
+    chatId: engine.chatId,
+    messageCount: engine.messages.length,
+    startedAt: engine.startedAt
+  };
+});
+
+// 取消群聊执行
+ipcMain.handle('expert-chat:cancel', async (event, { chatId }) => {
+  const engine = _groupChatEngines.get(chatId);
+  if (!engine) return { success: false, error: '群聊不存在' };
+  engine.cancel();
+  return { success: true };
+});
+
+// 群聊记录持久化（存储在 experts.json 中）
+ipcMain.handle('expert-chat:save-record', async (event, { record }) => {
+  const data = _loadExpertsData();
+  if (!data.chatRecords) data.chatRecords = [];
+  record.id = record.id || `cr_${Date.now()}`;
+  record.savedAt = new Date().toISOString();
+  data.chatRecords.unshift(record);
+  // 保留最近 200 条
+  if (data.chatRecords.length > 200) data.chatRecords = data.chatRecords.slice(0, 200);
+  _saveExpertsData(data);
+  return { success: true, id: record.id };
+});
+
+ipcMain.handle('expert-chat:get-records', async (event, { groupId }) => {
+  const data = _loadExpertsData();
+  let records = data.chatRecords || [];
+  if (groupId) records = records.filter(r => r.groupId === groupId);
+  return { success: true, records };
+});
+
+ipcMain.handle('expert-chat:delete-record', async (event, { recordId }) => {
+  const data = _loadExpertsData();
+  if (data.chatRecords) {
+    data.chatRecords = data.chatRecords.filter(r => r.id !== recordId);
+    _saveExpertsData(data);
+  }
+  return { success: true };
+});
+
+// v2.6: LLM 优化主持人 Prompt
+ipcMain.handle('experts:optimize-host-prompt', async (event, { basePrompt, groupName, groupIntro }) => {
+  // 获取 ADP 配置（复用现有逻辑）
+  let appKey, url;
+  if (authState.isLoggedIn && remoteConfig?.adp && !authState.forceLocalConfig) {
+    appKey = remoteConfig.adp.app_key;
+    url = remoteConfig.adp.url || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  } else {
+    appKey = getSetting('adp_app_key');
+    url = getSetting('adp_url') || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+  }
+  url = normalizeADPUrl(url);
+
+  if (!appKey) {
+    return { success: false, error: '未配置 ADP AppKey，无法使用 AI 优化' };
+  }
+
+  const optimizeSystemPrompt = `你是一位专业的 AI Prompt 工程师。你的任务是将以下专家团主持人的基础 Prompt 优化为更专业、更精准的版本。
+
+优化要求：
+1. 保留所有专家的 ID、名称和核心能力描述，不可遗漏
+2. 根据每个专家的专业领域，给出更具体的协同建议（哪些类型的任务适合分配给哪个专家）
+3. 如果专家团有简介，结合简介深化主持人的角色定位
+4. 优化任务分配策略的描述，让主持人更清楚如何拆解不同类型的用户请求
+5. 保持输出格式约束不变（JSON 格式要求）
+6. Prompt 语言简洁有力，避免冗余，总长度不超过 1500 字
+
+只输出优化后的 Prompt 文本，不要加任何解释、注释或 markdown 格式。`;
+
+  const conversationId = `opt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const visitorId = 'memora_prompt_optimizer';
+  const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+  const requestBody = {
+    AppKey: appKey,
+    ConversationId: conversationId,
+    VisitorId: visitorId,
+    Contents: [{ Type: 'text', Text: basePrompt }],
+    RequestId: requestId,
+    Stream: 'enable',
+    SystemRole: optimizeSystemPrompt
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(60000)
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `ADP 请求失败: ${response.status}` };
+    }
+
+    // 非流式读取完整响应
+    const fullText = await _collectSSEText(response);
+    if (!fullText || fullText.trim().length < 50) {
+      return { success: false, error: 'AI 返回内容过短，请重试' };
+    }
+
+    return { success: true, optimizedPrompt: fullText.trim() };
+  } catch (err) {
+    console.error('[Experts] Optimize host prompt failed:', err);
+    return { success: false, error: `优化失败: ${err.message}` };
+  }
+});
+
+// 辅助：收集 SSE 流式响应的完整文本
+async function _collectSSEText(response) {
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = '';
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data:')) {
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') return fullText;
+        try {
+          const json = JSON.parse(data);
+          // V2 格式
+          if (json.type === 'text.delta' && json.data?.text) {
+            fullText += json.data.text;
+          } else if (json.type === 'message.done' || json.type === 'response.completed') {
+            return fullText;
+          }
+          // V1 格式兼容
+          if (json.event === 'reply' && json.payload?.content) {
+            fullText += json.payload.content;
+            if (json.payload.is_final) return fullText;
+          }
+        } catch (e) { /* 忽略非 JSON 行 */ }
+      }
+    }
+  }
+  return fullText;
+}
 
 // 记忆系统相关
 ipcMain.handle('get-memories', async (event, options) => {

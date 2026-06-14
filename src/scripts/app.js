@@ -117,6 +117,16 @@ const App = {
       console.error('[App] Audit.init() failed:', e);
     }
 
+    // v2.6: 初始化专家系统
+    try {
+      if (window.ExpertSystem) {
+        window.ExpertSystem.init();
+        console.log('[App] ExpertSystem.init() completed');
+      }
+    } catch (e) {
+      console.error('[App] ExpertSystem.init() failed:', e);
+    }
+
     // 恢复视觉偏好（主题、字体大小、效果开关）
     this._restoreVisualPrefs();
     
@@ -514,6 +524,9 @@ const App = {
     document.getElementById('stopAIMessageBtn')?.addEventListener('click', () => this.stopADPGeneration());
     // 新建对话
     document.getElementById('newChatBtn')?.addEventListener('click', () => this.createNewChatSession());
+    // v2.6: 退出群聊
+    document.getElementById('exitGroupChatBtn')?.addEventListener('click', () => this._exitGroupChatMode());
+    document.getElementById('terminateGroupChatBtn')?.addEventListener('click', () => this._terminateGroupChat());
     // 对话搜索
     const chatSearchInput = document.getElementById('chatSearchInput');
     const chatSearchClear = document.getElementById('chatSearchClear');
@@ -801,6 +814,7 @@ const App = {
       this._settingsTabLoaded[tabName] = true;
       if (tabName === 'llm') this._loadApiConfig();
       if (tabName === 'agent') this._loadAdpConfig();
+      if (tabName === 'expert') this._loadExpertSettings();
       if (tabName === 'memory') this.loadMemories();
       if (tabName === 'profile') this.loadProfileEditor();
       if (tabName === 'prompt') this.loadPromptFiles();
@@ -826,6 +840,12 @@ const App = {
       // v2.0: 登录状态时 API 面板显示提示
       this._updateConfigServerHints(config.fromServer);
     });
+  },
+
+  _loadExpertSettings() {
+    if (!window.ExpertSettings) return;
+    window.ExpertSettings.init();
+    window.ExpertSettings.render();
   },
 
   _loadAdpConfig() {
@@ -1962,6 +1982,16 @@ const App = {
     // 功能卡片点击切换快捷问题
     this._initFeatureCards();
 
+    // v2.6: 专家系统渲染卡片
+    if (window.ExpertSystem?._initialized) {
+      window.ExpertSystem.renderCards();
+    }
+
+    // 🔧 修复：切回 AI 页面时，重放暂存的群聊事件
+    if (this._pendingGroupChatEvents?.length > 0) {
+      setTimeout(() => this._replayPendingGroupChatEvents(), 100);
+    }
+
     // 同步：拉取云端最新会话列表
     this._syncPullConversations();
     
@@ -2024,9 +2054,16 @@ const App = {
     container.addEventListener('click', (e) => {
       const card = e.target.closest('.feature-card');
       if (!card) return;
+      
+      // v2.6: 专家系统卡片点击
+      if (window.ExpertSystem) {
+        window.ExpertSystem.handleCardClick(card);
+        return;
+      }
+      
+      // 兼容旧逻辑
       const category = card.dataset.category;
       if (!category) return;
-      // 切换 active 状态
       container.querySelectorAll('.feature-card').forEach(c => c.classList.remove('active'));
       card.classList.add('active');
       this._switchQuickQuestions(category);
@@ -2037,6 +2074,11 @@ const App = {
   _switchQuickQuestions(category) {
     const container = document.getElementById('quickCapsules');
     if (!container) return;
+
+    // v2.6: 如果专家系统已激活，快捷访问由专家系统管理
+    if (window.ExpertSystem?.getActiveExpert() || window.ExpertSystem?.getActiveGroup()) {
+      return;
+    }
 
     const questions = {
       task: [
@@ -2104,6 +2146,82 @@ const App = {
     
     // 需要有消息或附件
     if (!message && this._chatAttachments.length === 0) return;
+
+    // v2.6: 专家团群聊模式
+    if (window.ExpertSystem?.isGroupChatActive?.() || window.ExpertSystem?.getActiveGroup?.()) {
+      const group = window.ExpertSystem.getActiveGroup();
+      if (group && !window.ExpertSystem.isGroupChatActive()) {
+        // 首次发送，启动群聊
+        input.value = '';
+        input.style.height = 'auto';
+
+        // 🔧 修复：必须先创建会话，否则 _markChatSessionAsGroup 找不到 session
+        if (!this._activeSessionId) {
+          this.createNewChatSession();
+        }
+
+        // 🔧 修复：群聊需要独立的 ConversationId，避免与普通对话上下文串扰
+        window.electronAPI?.newADPChat?.();
+
+        // 构建附件信息用于显示
+        const attachments = [...this._chatAttachments];
+        let attachmentsHtml = '';
+        if (attachments.length > 0) {
+          attachmentsHtml = '<div class="message-attachments">';
+          for (const att of attachments) {
+            const icon = this.getFileIcon(att.type, att.name);
+            const filePath = att.file?.path || '';
+            attachmentsHtml += `<span class="message-attachment-item" data-att-name="${this.escapeHtml(att.name)}" data-att-path="${this.escapeHtml(filePath)}"><span class="msg-att-icon">${icon}</span>${this.escapeHtml(att.name)}</span>`;
+          }
+          attachmentsHtml += '</div>';
+        }
+
+        // 添加用户消息到聊天区
+        const chatMessages = document.getElementById('chatMessages');
+        const userMsg = document.createElement('div');
+        userMsg.className = 'message user';
+        userMsg.dataset.sendTime = new Date().toISOString();
+        const msgContent = this.escapeHtml(message || '发送了文件') + (attachmentsHtml ? `\n${attachmentsHtml}` : '');
+        userMsg.innerHTML = `
+          <div class="message-avatar">${this._userAvatarSvg}</div>
+          <div class="message-content">
+            <p>${this.escapeHtml(message || '发送了文件')}</p>
+            ${attachmentsHtml}
+            <div class="message-actions user-msg-actions">
+              <button class="msg-action-btn copy-user-msg" title="复制"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+              <button class="msg-action-btn edit-user-msg" title="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+            </div>
+            <span class="message-time">${this._formatChatTime(new Date())}</span>
+          </div>`;
+        chatMessages.appendChild(userMsg);
+        userMsg.dataset._actionsBound = 'true';
+        this._bindUserMsgActions(userMsg.querySelector('.message-content'));
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        // 🔧 关键修复：专家团模式下，附件通过 IPC 传给主进程处理
+        // 主进程会走和一对一聊天相同的 COS/Claw 上传流程，获取文件 URL 后注入消息
+        let attachmentData = [];
+        if (attachments.length > 0) {
+          attachmentData = await this.buildAttachmentData(attachments);
+        }
+
+        this.clearChatAttachments();
+
+        // v2.6.1: 使用 IPC 后台执行引擎（传递附件数据，主进程处理上传）
+        this._startBackgroundGroupChat(message, group, attachmentData);
+        return;
+      }
+      // 群聊进行中，不允许发送新消息
+      this._showToast?.('群聊进行中，请等待完成', 'info');
+      return;
+    }
+
+    // v2.6: 单专家模式（非专家团）— 确保正确走 ADP 流程，支持文档附件
+    const activeExpert = window.ExpertSystem?.getActiveExpert?.();
+    if (activeExpert && !window.ExpertSystem?.getActiveGroup?.()) {
+      // 继续正常的 ADP 流程（下方代码会处理）
+      // 但要确保 expertConfig 被正确注入
+    }
 
     // 对话会话管理：如果没有活跃会话，自动创建
     if (!this._activeSessionId) {
@@ -2255,10 +2373,18 @@ const App = {
         }
 
         // 启动流式请求 — 传递结构化数据（message + attachments）
-        result = await window.electronAPI.sendADPMessage({
+        // v2.6: 专家模式传递专家级 appKey/url
+        const expertConfig = window.ExpertSystem?.getActiveADPConfig?.();
+        const adpMessageData = {
           message: message,
           attachments: attachmentData
-        });
+        };
+        if (expertConfig?.appKey) {
+          adpMessageData.appKey = expertConfig.appKey;
+          adpMessageData.adpUrl = expertConfig.url;
+          adpMessageData._expertMode = true;
+        }
+        result = await window.electronAPI.sendADPMessage(adpMessageData);
 
         // 文档解析阶段已结束，移除上传进度监听并隐藏状态行
         window.electronAPI.removeADPUploadListeners?.();
@@ -4749,6 +4875,297 @@ const App = {
     } else {
       this._renderChatSessionList();
     }
+  },
+
+  // v2.6: 退出群聊模式
+  _exitGroupChatMode() {
+    if (window.ExpertSystem) {
+      window.ExpertSystem._activeGroupId = null;
+      window.ExpertSystem._groupChatActive = false;
+      window.ExpertSystem._groupChatPhase = 'idle';
+      window.ExpertSystem._groupChatExecutingInBackground = false;
+    }
+    const chatHeader = document.getElementById('chatHeader');
+    if (chatHeader) chatHeader.style.display = 'none';
+    const exitBtn = document.getElementById('exitGroupChatBtn');
+    if (exitBtn) exitBtn.style.display = 'none';
+    const terminateBtn = document.getElementById('terminateGroupChatBtn');
+    if (terminateBtn) terminateBtn.style.display = 'none';
+    window.ExpertSystem?.hideBackgroundIndicator();
+    // 🔧 修复：退出群聊时取消后台任务 + 清理监听
+    if (this._activeBackgroundChatId) {
+      window.electronAPI?.expertChatCancel?.({ chatId: this._activeBackgroundChatId });
+      window.electronAPI?.removeExpertChatListeners?.();
+      this._activeBackgroundChatId = null;
+    }
+    // 清理流式气泡映射
+    this._expertBubbleMap?.clear();
+    // 🔧 修复：重置 ADP ConversationId，避免下次普通对话串群聊上下文
+    window.electronAPI?.newADPChat?.();
+    // 恢复普通模式
+    this._saveCurrentSessionMessages();
+  },
+
+  // 人类终止群聊任务（保留群聊模式，只终止当前执行）
+  async _terminateGroupChat() {
+    if (!this._activeBackgroundChatId) {
+      this._showToast?.('当前没有正在执行的任务', 'info');
+      return;
+    }
+
+    // 确认终止
+    const confirmed = confirm('确定终止当前专家团任务吗？已完成的输出会保留。');
+    if (!confirmed) return;
+
+    // 取消后台任务
+    await window.electronAPI?.expertChatCancel?.({ chatId: this._activeBackgroundChatId });
+    window.electronAPI?.removeExpertChatListeners?.();
+
+    // 添加终止提示到聊天区
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+      const terminateMsg = document.createElement('div');
+      terminateMsg.className = 'message assistant expert-message';
+      terminateMsg.innerHTML = `
+        <div class="expert-msg-header">
+          <span class="expert-avatar">⏹</span>
+          <span class="expert-name" style="color:#FF9500">任务已终止</span>
+        </div>
+        <div class="message-content">
+          <div class="expert-msg-text" style="color:var(--text-secondary);font-style:italic;">用户手动终止了专家团任务，已完成的输出已保留。</div>
+        </div>`;
+      chatMessages.appendChild(terminateMsg);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // 重置状态但保留群聊模式（用户可以继续发消息）
+    if (window.ExpertSystem) {
+      window.ExpertSystem._groupChatActive = false;
+      window.ExpertSystem._groupChatPhase = 'idle';
+      window.ExpertSystem._groupChatExecutingInBackground = false;
+    }
+    this._expertBubbleMap?.clear();
+    this._activeBackgroundChatId = null;
+    window.ExpertSystem?.hideBackgroundIndicator();
+
+    // 隐藏终止按钮，保留退出按钮
+    const terminateBtn = document.getElementById('terminateGroupChatBtn');
+    if (terminateBtn) terminateBtn.style.display = 'none';
+
+    this._showToast?.('任务已终止', 'info');
+    this._saveCurrentSessionMessages();
+  },
+
+  // v2.6.1: IPC 后台群聊执行
+  _activeBackgroundChatId: null,
+  _pendingGroupChatEvents: [],  // chatMessages 不在 DOM 时暂存事件
+
+  async _startBackgroundGroupChat(userMessage, group, attachments = []) {
+    // 构建专家配置映射
+    const expertsMap = {};
+    for (const eid of (group.expertIds || [])) {
+      const expert = window.ExpertSystem?.getExpertById?.(eid);
+      if (expert) {
+        expertsMap[eid] = { appKey: expert.appKey, adpUrl: expert.adpUrl, name: expert.name, icon: expert.icon, intro: expert.intro };
+      }
+    }
+
+    const chatId = `gc_${group.id}_${Date.now()}`;
+    this._activeBackgroundChatId = chatId;
+    this._pendingGroupChatEvents = [];
+
+    // 标记群聊激活
+    if (window.ExpertSystem) {
+      window.ExpertSystem._groupChatActive = true;
+      window.ExpertSystem._groupChatPhase = 'host_analysis';
+      window.ExpertSystem._groupChatMessages = [];
+      window.ExpertSystem._groupChatExecutingInBackground = true;
+      window.ExpertSystem._markChatSessionAsGroup(group, this);
+    }
+
+    // 🔧 修复：先移除旧监听再注册新的，避免重复
+    window.electronAPI?.removeExpertChatListeners?.();
+    if (window.electronAPI?.onExpertChatEvent) {
+      window.electronAPI.onExpertChatEvent((data) => {
+        if (data.chatId !== this._activeBackgroundChatId) return;
+        this._handleBackgroundChatEvent(data);
+      });
+    }
+
+    // 启动后台执行（传递附件数据，主进程处理 COS 上传）
+    const result = await window.electronAPI?.expertChatStart?.({
+      chatId,
+      config: {
+        groupId: group.id,
+        groupName: group.name,
+        expertIds: group.expertIds || [],
+        hostExpertId: group.hostExpertId,
+        hostPrompt: group.hostPrompt || '',
+        executionStrategy: group.executionStrategy || 'serial',
+        experts: expertsMap
+      },
+      userMessage,
+      attachments
+    });
+
+    if (!result?.success) {
+      this._showToast?.('启动群聊失败：' + (result?.error || '未知错误'), 'error');
+      if (window.ExpertSystem) {
+        window.ExpertSystem._groupChatActive = false;
+        window.ExpertSystem._groupChatPhase = 'idle';
+        window.ExpertSystem._groupChatExecutingInBackground = false;
+      }
+    }
+  },
+
+  _handleBackgroundChatEvent(data) {
+    const chatMessages = document.getElementById('chatMessages');
+    const { type, expertId, expertName, expertIcon, isHost, content, phase, isError, message: statusMsg, incremental, fullText } = data;
+
+    // 🔧 诊断日志
+    console.log('[GroupChat] Event:', type, '| expert:', expertName, '| phase:', phase, '| hasContent:', !!content, '| hasFullText:', !!fullText);
+
+    // 🔧 修复：chatMessages 不在 DOM 时暂存事件，等用户切回 AI 页面时重放
+    if (!chatMessages && type !== 'error' && type !== 'chat-complete') {
+      this._pendingGroupChatEvents.push(data);
+      return;
+    }
+
+    if (type === 'phase-start') {
+      // 显示后台指示器
+      window.ExpertSystem?.showBackgroundIndicator(statusMsg);
+      return;
+    }
+
+    // 新增：专家开始处理 — 创建消息气泡
+    if (type === 'expert-start') {
+      const statusMessage = statusMsg || (isHost ? '⭐ 主持人正在分析...' : `${expertIcon || '🤖'} ${expertName || '专家'} 正在处理...`);
+      window.ExpertSystem?.showBackgroundIndicator(statusMessage);
+      if (!chatMessages || !expertId) return;
+
+      const expert = { id: expertId, name: expertName || '专家', icon: expertIcon || '🤖' };
+      const placeholder = isHost ? '⭐ 主持人正在分析...' : `${expertIcon || '🤖'} ${expertName || '专家'} 正在处理...`;
+      const msgEl = window.ExpertSystem?._addExpertMessageBubble?.(chatMessages, expert, isHost, placeholder);
+      // 记录气泡元素，供后续 expert-stream 更新
+      this._expertBubbleMap = this._expertBubbleMap || new Map();
+      this._expertBubbleMap.set(expertId + '_' + phase, msgEl);
+      return;
+    }
+
+    // 新增：专家流式输出 — 实时更新气泡内容
+    if (type === 'expert-stream') {
+      if (!chatMessages || !expertId) return;
+
+      this._expertBubbleMap = this._expertBubbleMap || new Map();
+      const bubbleKey = expertId + '_' + phase;
+      let msgEl = this._expertBubbleMap.get(bubbleKey);
+
+      if (msgEl && fullText) {
+        // 实时更新流式文本
+        const contentEl = msgEl.querySelector('.message-content');
+        if (contentEl) {
+          // 保留流式文本，不添加复制按钮（等 expert-complete 再加）
+          const existingCopyBtn = contentEl.querySelector('.expert-copy-btn');
+          const existingTime = contentEl.querySelector('.message-time');
+          const renderedHtml = window.ExpertSystem?._renderMarkdown?.(fullText) || this.escapeHtml(fullText);
+          contentEl.innerHTML = `<div class="expert-msg-text">${renderedHtml}</div>`;
+          // 恢复复制按钮和时间戳（如果已存在）
+          if (existingCopyBtn) contentEl.appendChild(existingCopyBtn);
+          if (existingTime) contentEl.appendChild(existingTime);
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+      }
+      return;
+    }
+
+    if (type === 'expert-complete') {
+      window.ExpertSystem?.hideBackgroundIndicator();
+      if (!chatMessages || !expertId) return;
+
+      this._expertBubbleMap = this._expertBubbleMap || new Map();
+      const bubbleKey = expertId + '_' + phase;
+      const existingBubble = this._expertBubbleMap.get(bubbleKey);
+
+      if (existingBubble) {
+        // 流式模式：气泡已存在，更新最终内容并添加操作按钮
+        window.ExpertSystem?._updateExpertMessageBubble?.(existingBubble, content, isError);
+        this._expertBubbleMap.delete(bubbleKey);
+      } else {
+        // 非流式模式：创建新气泡
+        const expert = { id: expertId, name: expertName || '专家', icon: expertIcon || '🤖' };
+        const msgEl = window.ExpertSystem?._addExpertMessageBubble?.(chatMessages, expert, isHost, '');
+        window.ExpertSystem?._updateExpertMessageBubble?.(msgEl, content, isError);
+      }
+      
+      if (window.ExpertSystem) {
+        window.ExpertSystem._groupChatMessages.push({
+          expertId, expertName, expertIcon, isHost, phase, content, isError
+        });
+      }
+      this._saveCurrentSessionMessages();
+      return;
+    }
+
+    if (type === 'chat-complete') {
+      window.ExpertSystem?.hideBackgroundIndicator();
+      if (window.ExpertSystem) {
+        window.ExpertSystem._groupChatActive = false;
+        window.ExpertSystem._groupChatPhase = 'idle';
+        window.ExpertSystem._groupChatExecutingInBackground = false;
+        window.ExpertSystem._persistChatRecord(data.userMessage);
+      }
+      // 清理流式气泡映射
+      this._expertBubbleMap?.clear();
+      // 重放暂存事件
+      this._replayPendingGroupChatEvents();
+      this._saveCurrentSessionMessages();
+      window.electronAPI?.removeExpertChatListeners?.();
+      this._activeBackgroundChatId = null;
+      // 群聊完成后隐藏终止按钮
+      const terminateBtn = document.getElementById('terminateGroupChatBtn');
+      if (terminateBtn) terminateBtn.style.display = 'none';
+      return;
+    }
+
+    if (type === 'error') {
+      window.ExpertSystem?.hideBackgroundIndicator();
+      this._showToast?.('群聊出错：' + (data.message || '未知错误'), 'error');
+      if (window.ExpertSystem) {
+        window.ExpertSystem._groupChatActive = false;
+        window.ExpertSystem._groupChatPhase = 'idle';
+        window.ExpertSystem._groupChatExecutingInBackground = false;
+      }
+      this._expertBubbleMap?.clear();
+      this._replayPendingGroupChatEvents();
+      window.electronAPI?.removeExpertChatListeners?.();
+      this._activeBackgroundChatId = null;
+      // 隐藏终止按钮
+      const terminateBtn = document.getElementById('terminateGroupChatBtn');
+      if (terminateBtn) terminateBtn.style.display = 'none';
+    }
+  },
+
+  // 重放暂存的群聊事件（用户切回 AI 页面时）
+  _replayPendingGroupChatEvents() {
+    if (!this._pendingGroupChatEvents?.length) return;
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+
+    for (const data of this._pendingGroupChatEvents) {
+      const { type, expertId, expertName, expertIcon, isHost, content, phase, isError } = data;
+      if (type === 'expert-complete' && expertId) {
+        const expert = { id: expertId, name: expertName || '专家', icon: expertIcon || '🤖' };
+        const msgEl = window.ExpertSystem?._addExpertMessageBubble?.(chatMessages, expert, isHost, '');
+        window.ExpertSystem?._updateExpertMessageBubble?.(msgEl, content, isError);
+        if (window.ExpertSystem) {
+          window.ExpertSystem._groupChatMessages.push({
+            expertId, expertName, expertIcon, isHost, phase, content, isError
+          });
+        }
+      }
+    }
+    this._pendingGroupChatEvents = [];
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   },
 
   _saveCurrentSessionMessages() {

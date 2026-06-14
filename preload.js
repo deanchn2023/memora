@@ -38,6 +38,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
   newADPChat: () => ipcRenderer.invoke('adp:new-chat'),
   setADPConversationId: (convId) => ipcRenderer.invoke('adp:set-conversation-id', convId),
   clearADPConfig: () => ipcRenderer.invoke('clear-adp-config'),
+  // 专家系统
+  expertsGetAll: () => ipcRenderer.invoke('experts:get-all'),
+  expertsSave: (expert) => ipcRenderer.invoke('experts:save', expert),
+  expertsDelete: (expertId) => ipcRenderer.invoke('experts:delete', expertId),
+  expertsReorder: (orderedIds) => ipcRenderer.invoke('experts:reorder', orderedIds),
+  expertGroupsGetAll: () => ipcRenderer.invoke('expert-groups:get-all'),
+  expertGroupsSave: (group) => ipcRenderer.invoke('expert-groups:save', group),
+  expertGroupsDelete: (groupId) => ipcRenderer.invoke('expert-groups:delete', groupId),
+  expertGroupsReorder: (orderedIds) => ipcRenderer.invoke('expert-groups:reorder', orderedIds),
+  // v2.6.1 群聊后台执行
+  expertChatStart: (data) => ipcRenderer.invoke('expert-chat:start', data),
+  expertChatGetStatus: (data) => ipcRenderer.invoke('expert-chat:get-status', data),
+  expertChatCancel: (data) => ipcRenderer.invoke('expert-chat:cancel', data),
+  expertChatSaveRecord: (data) => ipcRenderer.invoke('expert-chat:save-record', data),
+  expertChatGetRecords: (data) => ipcRenderer.invoke('expert-chat:get-records', data),
+  expertChatDeleteRecord: (data) => ipcRenderer.invoke('expert-chat:delete-record', data),
+  expertsOptimizeHostPrompt: (data) => ipcRenderer.invoke('experts:optimize-host-prompt', data),
+  onExpertChatEvent: (callback) => {
+    ipcRenderer.on('expert-chat:event', (event, data) => callback(data));
+  },
+  removeExpertChatListeners: () => {
+    ipcRenderer.removeAllListeners('expert-chat:event');
+  },
   onADPSSEEvent: (callback) => {
     ipcRenderer.on('adp:sse-event', (event, data) => callback(data));
   },
