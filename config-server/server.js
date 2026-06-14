@@ -178,7 +178,7 @@ function getDefaultConfig() {
       agent_name: '我的AI助手'
     },
     file_share: {
-      api_key: 'adp_976dc93397e49e036c8559dc36f3ac71c4aa3765838189db939ba63577dfe544'
+      api_key: process.env.FILE_SHARE_API_KEY || ''
     },
     tencent_cloud: {
       secret_id: '',

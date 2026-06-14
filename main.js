@@ -1,5 +1,8 @@
 const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, powerMonitor } = require('electron');
 
+// 加载 .env 环境变量（开发时使用，打包后 .env 不存在则忽略）
+try { require('dotenv').config(); } catch (_) {}
+
 // 防止 EPIPE 崩溃：stdout/stderr 管道关闭时（如终端关闭），console.log 写入会抛出 EPIPE
 process.stdout.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
 process.stderr.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
@@ -210,27 +213,27 @@ let authState = {
 let remoteConfig = null;  // 服务器配置（仅内存，不写磁盘，退出登录即清空）
 let configPollTimer = null;  // 配置定期同步计时器
 
-// 环境配置（默认值）
+// 环境配置（默认值 — 敏感地址从环境变量读取，不硬编码到安装包）
 const DEFAULT_AUTH_SERVERS = {
   beta: {
     name: 'Beta 版本（测试）',
-    authUrl: 'http://121.5.164.126:3010',    // ADPToolkit（统一认证）
-    configUrl: 'http://121.5.164.126:3450',   // Config Server（配置+同步）
-    toolkitUrl: 'http://121.5.164.126:3010',  // ADPToolkit 资源服务器
-    loginPath: '/api/auth/login',              // ADPToolkit 登录路径
-    loginField: 'username',                    // ADPToolkit 用 username 登录
-    configPath: '/memora/config',              // 配置路径
-    validatePath: '/api/auth/me'               // ADPToolkit 验证路径
+    authUrl: process.env.AUTH_SERVER_URL || '',
+    configUrl: process.env.CONFIG_SERVER_URL || '',
+    toolkitUrl: process.env.TOOLKIT_SERVER_URL || '',
+    loginPath: '/api/auth/login',
+    loginField: 'username',
+    configPath: '/memora/config',
+    validatePath: '/api/auth/me'
   },
   production: {
     name: '正式版本',
-    authUrl: 'http://121.5.164.126:3010',    // ADPToolkit（统一认证）
-    configUrl: 'http://121.5.164.126:3450',   // Config Server（配置+同步）
-    toolkitUrl: 'http://121.5.164.126:3010',  // ADPToolkit 资源服务器
-    loginPath: '/api/auth/login',              // ADPToolkit 登录路径
-    loginField: 'username',                    // 使用 username 登录
-    configPath: '/memora/config',              // 配置路径
-    validatePath: '/api/auth/me'               // ADPToolkit 验证路径
+    authUrl: process.env.AUTH_SERVER_URL || '',
+    configUrl: process.env.CONFIG_SERVER_URL || '',
+    toolkitUrl: process.env.TOOLKIT_SERVER_URL || '',
+    loginPath: '/api/auth/login',
+    loginField: 'username',
+    configPath: '/memora/config',
+    validatePath: '/api/auth/me'
   }
 };
 
@@ -2965,7 +2968,7 @@ const DEFAULT_ADP_ACTIVATION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
 const DEFAULT_ADP_EVOLUTION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
 const DEFAULT_ADP_CONFLICT_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
 // File Share 服务默认 API Key
-const DEFAULT_FILE_SHARE_API_KEY = 'adp_976dc93397e49e036c8559dc36f3ac71c4aa3765838189db939ba63577dfe544';
+const DEFAULT_FILE_SHARE_API_KEY = process.env.FILE_SHARE_API_KEY || '';
 
 // ===== ADP 文件上传到 COS（官方规范流程）=====
 // 参考文档：https://cloud.tencent.com/document/product/1759/108903

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "cos-nodejs-sdk-v5": "^2.15.4",
+    "dotenv": "^17.4.2",
     "form-data": "^4.0.5",
     "sql.js": "^1.14.1",
     "uuid": "^9.0.0",
@@ -32,7 +33,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["universal"]
+          "arch": [
+            "universal"
+          ]
         }
       ],
       "icon": "build/icon.png",
@@ -42,7 +45,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.png",
@@ -51,7 +56,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerLanguages": ["zh_CN", "en_US"],
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
       "language": 2052,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,

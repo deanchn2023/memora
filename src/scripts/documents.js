@@ -4,7 +4,7 @@
  */
 
 const Documents = {
-  BASE_URL: 'http://121.5.164.126:3010', // 默认使用外网可访问的 Beta 地址
+  BASE_URL: '', // 动态获取，不硬编码
   currentType: 'cloud', // cloud | local | artifacts
   cloudSubType: 'documents', // documents | cases | demos | learning
   currentSort: 'latest', // latest | hot

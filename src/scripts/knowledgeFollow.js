@@ -3,8 +3,8 @@
  * 负责：搜索交互、ADP SSE 流式渲染、推荐列表、公开资源搜索、意图识别展示、三面板拖拽布局
  */
 
-// 文档资源服务器地址：动态从登录配置获取 toolkitUrl，未登录时用默认值
-const DEFAULT_TOOLKIT_URL = 'http://121.5.164.126:3010';
+// 文档资源服务器地址：动态从登录配置获取 toolkitUrl，未登录时为空
+const DEFAULT_TOOLKIT_URL = '';
 let TOOLKIT_BASE_URL = DEFAULT_TOOLKIT_URL;
 
 // 从登录配置同步服务器地址（优先使用 toolkitUrl，而非 authUrl）

@@ -1912,7 +1912,7 @@ const App = {
 
   async _downloadUpdate(downloadUrl) {
     // 动态获取 Config Server 地址
-    let server = 'http://121.5.164.126:3450'; // fallback
+    let server = ''; // 不硬编码，从登录状态获取
     try {
       const state = await window.electronAPI?.authGetState?.();
       if (state?.configUrl) server = state.configUrl;
