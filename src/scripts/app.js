@@ -25,6 +25,7 @@ const App = {
   _adpCurrentBubble: null,
   _adpRenderPending: false,
   _adpConfigSource: '',
+  _adpCurrentMessageEl: null,
   _adpReplyMsgId: '',        // reply 消息的 MessageId，用于区分 text.delta 归属
   _aiTaskEditor: null,       // AI任务输入富文本编辑器实例
   _noteEditor: null,         // 新建/编辑笔记富文本编辑器实例
@@ -300,7 +301,7 @@ const App = {
     const aiEditorContainer = document.getElementById('aiTaskInputEditor');
     if (aiEditorContainer && window.RichEditor) {
       this._aiTaskEditor = new window.RichEditor(aiEditorContainer, {
-        placeholder: '输入任务描述，例如：明天下午给客户发报价，需要准备PPT和合同...',
+        placeholder: '输入描述，例如：明天下午给客户发报价... 按 Tab 键 AI 续写 ✨',
         minHeight: 160,
         maxHeight: 400,
         compact: false,
@@ -854,8 +855,33 @@ const App = {
       document.getElementById('adpUrl').value = config.url || '';
       document.getElementById('adpAgentName').value = config.agentName || '';
       
-      // 显示详细配置来源信息
+      // === 高阶配置卡片状态 ===
       const src = config.configSource || {};
+      const hasCustomAgentKey = ['knowledgeAppKey','searchAppKey','clusteringAppKey','graphAppKey','activationAppKey','evolutionAppKey','conflictAppKey'].some(k => src[k] === 'custom' || src[k] === 'server');
+      const advCard = document.getElementById('agentAdvancedCard');
+      const advBadge = document.getElementById('agentAdvancedBadge');
+      if (advCard) {
+        if (hasCustomAgentKey) {
+          advCard.classList.add('has-custom');
+          if (advBadge) advBadge.textContent = '已自定义部分 Agent';
+        } else {
+          advCard.classList.remove('has-custom');
+          if (advBadge) advBadge.textContent = '各 Agent 独立配置';
+        }
+        // 有自定义配置时自动展开，否则折叠
+        if (hasCustomAgentKey) {
+          advCard.classList.add('expanded');
+        } else {
+          advCard.classList.remove('expanded');
+        }
+      }
+      // 显示通用 AppKey 自动应用提示
+      const autoFillHint = document.getElementById('adpAutoFillHint');
+      if (autoFillHint) {
+        autoFillHint.style.display = (config.appKey && !hasCustomAgentKey) ? 'block' : 'none';
+      }
+      
+      // 显示详细配置来源信息
       const sourceLabel = { server: '🏢 组织配置', custom: '✏️ 自定义', default: '📦 内置默认' };
       const appKeySrc = sourceLabel[src.appKey] || '未知';
       const knowledgeSrc = sourceLabel[src.knowledgeAppKey] || '未知';
@@ -878,10 +904,6 @@ const App = {
           const isServerSource = src.tcSecretId === 'server';
           cosBadge.textContent = '已配置 · ' + (isServerSource ? '组织同步' : '本地');
           cosBadge.classList.add('configured');
-          // 云端配置时自动展开显示已同步的值
-          if (isServerSource) {
-            cosCard.classList.add('expanded');
-          }
           // 添加来源标签
           const existingLabel = cosCard.querySelector('.cos-source-label');
           if (existingLabel) existingLabel.remove();
@@ -892,7 +914,6 @@ const App = {
         } else {
           cosBadge.textContent = '未配置';
           cosBadge.classList.remove('configured');
-          cosCard.classList.add('expanded'); // 未配置时自动展开提示用户
           // 移除来源标签
           const existingLabel = cosCard.querySelector('.cos-source-label');
           if (existingLabel) existingLabel.remove();
@@ -1494,10 +1515,28 @@ const App = {
       if (window.electronAPI?.authGetState) {
         window.electronAPI.authGetState().then(state => {
           if (state.user) {
-            document.getElementById('profileName').value = state.user.name || '';
-            document.getElementById('profileNickname').value = state.user.nickname || '';
-            document.getElementById('profileEmail').value = state.user.email || '';
-            document.getElementById('profileMobile').value = state.user.mobile || '';
+            const u = state.user;
+            document.getElementById('orgProfileName').value = u.name || '';
+            document.getElementById('orgProfileNickname').value = u.nickname || '';
+            document.getElementById('orgProfileEmail').value = u.email || '';
+            document.getElementById('orgProfileMobile').value = u.mobile || '';
+            // 扩展字段
+            const genderEl = document.getElementById('orgProfileGender');
+            if (genderEl) genderEl.value = u.gender != null ? String(u.gender) : '';
+            const birthEl = document.getElementById('orgProfileBirthDate');
+            if (birthEl) birthEl.value = u.birth_date || '';
+            const professionEl = document.getElementById('orgProfileProfession');
+            if (professionEl) professionEl.value = u.profession || '';
+            const orgEl = document.getElementById('orgProfileOrganization');
+            if (orgEl) orgEl.value = u.organization || '';
+            const industryEl = document.getElementById('orgProfileIndustry');
+            if (industryEl) industryEl.value = u.industry || '';
+            const regionEl = document.getElementById('orgProfileRegion');
+            if (regionEl) regionEl.value = u.region || '';
+            const addressEl = document.getElementById('orgProfileAddress');
+            if (addressEl) addressEl.value = u.address || '';
+            const avatarEl = document.getElementById('orgProfileAvatar');
+            if (avatarEl) avatarEl.value = u.avatar || '';
           }
         });
       }
@@ -1505,11 +1544,20 @@ const App = {
     section.classList.toggle('hidden');
   },
 
+  toggleProfileMoreFields() {
+    const more = document.getElementById('orgProfileMoreFields');
+    const btn = document.getElementById('orgProfileToggleMore');
+    if (!more || !btn) return;
+    const isHidden = more.classList.contains('hidden');
+    more.classList.toggle('hidden');
+    btn.textContent = isHidden ? '▲ 收起更多信息' : '▼ 更多信息';
+  },
+
   async saveProfileEdit() {
-    const name = document.getElementById('profileName').value.trim();
-    const nickname = document.getElementById('profileNickname').value.trim();
-    const email = document.getElementById('profileEmail').value.trim();
-    const mobile = document.getElementById('profileMobile').value.trim();
+    const name = document.getElementById('orgProfileName').value.trim();
+    const nickname = document.getElementById('orgProfileNickname').value.trim();
+    const email = document.getElementById('orgProfileEmail').value.trim();
+    const mobile = document.getElementById('orgProfileMobile').value.trim();
     const errorEl = document.getElementById('profileEditError');
 
     if (mobile && !/^1[3-9]\d{9}$/.test(mobile)) {
@@ -1523,8 +1571,27 @@ const App = {
       return;
     }
 
+    // 收集所有字段
+    const profileData = { name, nickname, email, mobile };
+    const genderEl = document.getElementById('orgProfileGender');
+    if (genderEl && genderEl.value !== '') profileData.gender = parseInt(genderEl.value);
+    const birthEl = document.getElementById('orgProfileBirthDate');
+    if (birthEl && birthEl.value) profileData.birth_date = birthEl.value;
+    const professionEl = document.getElementById('orgProfileProfession');
+    if (professionEl && professionEl.value.trim()) profileData.profession = professionEl.value.trim();
+    const orgEl = document.getElementById('orgProfileOrganization');
+    if (orgEl && orgEl.value.trim()) profileData.organization = orgEl.value.trim();
+    const industryEl = document.getElementById('orgProfileIndustry');
+    if (industryEl && industryEl.value.trim()) profileData.industry = industryEl.value.trim();
+    const regionEl = document.getElementById('orgProfileRegion');
+    if (regionEl && regionEl.value.trim()) profileData.region = regionEl.value.trim();
+    const addressEl = document.getElementById('orgProfileAddress');
+    if (addressEl && addressEl.value.trim()) profileData.address = addressEl.value.trim();
+    const avatarEl = document.getElementById('orgProfileAvatar');
+    if (avatarEl && avatarEl.value.trim()) profileData.avatar = avatarEl.value.trim();
+
     try {
-      const result = await window.electronAPI.authUpdateProfile({ name, nickname, email, mobile });
+      const result = await window.electronAPI.authUpdateProfile(profileData);
       if (result.success) {
         this.showToast('个人信息已更新');
         this.toggleProfileEdit();
@@ -1533,6 +1600,26 @@ const App = {
           document.getElementById('orgUserName').textContent = result.user.name || result.user.username || '-';
           this._updateHeaderUserBadge(true, result.user);
         }
+        // 同步到本地 profile.json，确保画像页面也能读取
+        if (window.electronAPI?.profile?.update) {
+          const localProfile = await window.electronAPI.profile.get();
+          localProfile.user = localProfile.user || {};
+          if (name) localProfile.user.name = name;
+          if (nickname) localProfile.user.nickname = nickname;
+          if (email) localProfile.user.email = email;
+          if (mobile) localProfile.user.mobile = mobile;
+          if (profileData.gender !== undefined) localProfile.user.gender = profileData.gender;
+          if (profileData.birth_date) localProfile.user.birth_date = profileData.birth_date;
+          if (profileData.profession) localProfile.user.profession = profileData.profession;
+          if (profileData.organization) localProfile.user.organization = profileData.organization;
+          if (profileData.industry) localProfile.user.industry = profileData.industry;
+          if (profileData.region) localProfile.user.region = profileData.region;
+          if (profileData.address) localProfile.user.address = profileData.address;
+          if (profileData.avatar) localProfile.user.avatar = profileData.avatar;
+          await window.electronAPI.profile.update(localProfile);
+        }
+        // 清除画像标签页缓存，确保下次查看时刷新
+        this._settingsTabLoaded.profile = false;
       } else {
         errorEl.textContent = result.error || '更新失败';
         errorEl.classList.remove('hidden');
@@ -2192,6 +2279,7 @@ const App = {
           this._adpRenderPending = false;
           this._adpConfigSource = result.configSource || '';
           this._adpReplyMsgId = '';
+          this._adpCurrentMessageEl = messageContent;
           // 保存 conversationId 到当前会话，用于切换对话时恢复（必须立即持久化）
           if (result.conversationId && this._activeSessionId) {
             const session = this._chatSessions.find(s => s.id === this._activeSessionId);
@@ -2202,9 +2290,10 @@ const App = {
             }
           }
           this._adpTimerStart = Date.now();
+          const _timerMsgEl = messageContent;
           this._adpTimerInterval = setInterval(() => {
             const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
-            const el = document.getElementById('adpProgressTimer');
+            const el = _timerMsgEl?.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
             if (el) el.textContent = elapsed + 's';
           }, 1000);
 
@@ -2363,6 +2452,10 @@ const App = {
           throw new Error(result.error || 'Agent 调用失败');
         }
       }
+      // Agent 非流式/流式完成后保存会话消息
+      this._saveCurrentSessionMessages();
+      const msgContent = assistantMessage?.querySelector('.message-content');
+      if (msgContent) this._syncPushCurrentConversation(msgContent);
     } catch (error) {
       console.error('[AI] Error:', error);
       this._agentStreamListening = false;
@@ -2371,6 +2464,8 @@ const App = {
       const messageContent = assistantMessage.querySelector('.message-content');
       messageContent.innerHTML = `<p class="error-text">抱歉，发生了错误：${this.escapeHtml(error.message)}</p>
         <p class="error-hint">请检查 API 配置或网络连接</p>`;
+      // 即使出错也保存，避免丢失之前的消息
+      this._saveCurrentSessionMessages();
     }
     
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -2381,7 +2476,7 @@ const App = {
     // 获取纯文本内容，排除复制按钮、反馈按钮等非内容元素
     const clone = messageContent.cloneNode(true);
     // 移除不需要复制的元素
-    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions').forEach(el => el.remove());
+    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-open-artifact-btn, .agent-artifact-btns, .adp-file-save-btn, .adp-file-open-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions').forEach(el => el.remove());
     // 使用 textContent 获取纯文本（不含格式），再清理多余空白
     const text = (clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     console.log('[Copy] Text length:', text.length, 'Preview:', text.slice(0, 100));
@@ -2833,15 +2928,7 @@ const App = {
         }
       });
     });
-    messageContent.querySelectorAll('.adp-file-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const url = card.dataset.url;
-        const name = card.dataset.name;
-        if ((url && url !== '#') || card.dataset.filepath) {
-          this._downloadFileToArtifacts(url, name, card);
-        }
-      });
-    });
+    this._bindFileCardActions(messageContent);
 
     // 绑定按钮事件
     const copyBtn = messageContent.querySelector('.copy-btn');
@@ -2894,6 +2981,10 @@ const App = {
 
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // 流式完成后保存会话消息（与 _finishADPMessage 保持一致）
+    this._saveCurrentSessionMessages();
+    this._syncPushCurrentConversation(messageContent);
   },
 
   // ===== ADP SSE 流式渲染（参考 ADP Agent SDK） =====
@@ -3003,7 +3094,7 @@ const App = {
                     const iconMap = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
                     const ic = iconMap[ext] || '📄';
                     return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}">
-                      <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">💾 保存</span></div>`;
+                      <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-save-btn" data-action="save">💾 保存</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`;
                   }).join('');
                   this._addADPStepDetail(msgId, cards, 'file');
                 }
@@ -3175,15 +3266,7 @@ const App = {
       this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(this._adpCurrentText, this._adpThinkingText);
 
       // 绑定文件卡片点击事件
-      this._adpCurrentBubble.querySelectorAll('.adp-file-card').forEach(card => {
-        card.addEventListener('click', () => {
-          const url = card.dataset.url;
-          const name = card.dataset.name;
-          if ((url && url !== '#') || card.dataset.filepath) {
-            this._downloadFileToArtifacts(url, name, card);
-          }
-        });
-      });
+      this._bindFileCardActions(this._adpCurrentBubble);
 
       // 🔧 绑定链接点击事件（替代 inline onclick，更安全可靠）
       this._adpCurrentBubble.querySelectorAll('.adp-link').forEach(link => {
@@ -3217,18 +3300,12 @@ const App = {
         const iconMap = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
         const ic = iconMap[ext] || '📄';
         return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}">
-          <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">💾 保存</span></div>`;
+          <span class="adp-file-icon">${ic}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-save-btn" data-action="save">💾 保存</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`;
       }).join('');
       const filesEl = document.createElement('div');
       filesEl.className = 'adp-files-section';
       filesEl.innerHTML = filesHtml;
-      filesEl.querySelectorAll('.adp-file-card').forEach(card => {
-        card.addEventListener('click', () => {
-          const url = card.dataset.url;
-          const name = card.dataset.name;
-          if ((url && url !== '#') || card.dataset.filepath) this._downloadFileToArtifacts(url, name, card);
-        });
-      });
+      this._bindFileCardActions(filesEl);
       messageContent.appendChild(filesEl);
     }
 
@@ -3251,6 +3328,7 @@ const App = {
     // 清理状态
     this._adpStreaming = false;
     this._adpCurrentBubble = null;
+    this._adpCurrentMessageEl = null;
     this._updateStreamingUI(false);
     window.electronAPI?.removeADPListeners?.();
     if (this._adpStreamResolve) {
@@ -3464,10 +3542,11 @@ const App = {
   // ---- 进度步骤 ----
 
   _addADPProgressStep(msgId, icon, text, status, msgType) {
-    const stepsEl = document.getElementById('adpProgressSteps');
+    const container = this._adpCurrentMessageEl;
+    const stepsEl = container?.querySelector('#adpProgressSteps') || document.getElementById('adpProgressSteps');
     if (!stepsEl) return;
     this._adpToolStepCount++;
-    const progressEl = document.getElementById('adpProgress');
+    const progressEl = container?.querySelector('#adpProgress') || document.getElementById('adpProgress');
     if (progressEl && progressEl.classList.contains('collapsed')) {
       const titleEl = progressEl.querySelector('.adp-progress-title');
       if (titleEl) titleEl.textContent = `已完成 ${this._adpToolStepCount} 个步骤`;
@@ -3543,13 +3622,7 @@ const App = {
     } else if (contentType === 'file') {
       detailEl.innerHTML = content;
       // 绑定文件卡片事件
-      detailEl.querySelectorAll('.adp-file-card').forEach(card => {
-        card.addEventListener('click', () => {
-          const url = card.dataset.url;
-          const name = card.dataset.name;
-          if ((url && url !== '#') || card.dataset.filepath) this._downloadFileToArtifacts(url, name, card);
-        });
-      });
+      this._bindFileCardActions(detailEl);
     } else {
       detailEl.innerHTML = `<div class="adp-step-detail-text">${this.escapeHtml(content).replace(/\n/g, '<br>')}</div>`;
     }
@@ -3578,10 +3651,11 @@ const App = {
       clearInterval(this._adpTimerInterval);
       this._adpTimerInterval = null;
     }
-    const progressEl = document.getElementById('adpProgress');
+    const container = this._adpCurrentMessageEl;
+    const progressEl = container?.querySelector('#adpProgress') || document.getElementById('adpProgress');
     if (!progressEl) return;
     progressEl.classList.add('collapsed');
-    const stepsEl = document.getElementById('adpProgressSteps');
+    const stepsEl = container?.querySelector('#adpProgressSteps') || document.getElementById('adpProgressSteps');
     if (stepsEl) stepsEl.style.display = 'none';
     const titleEl = progressEl.querySelector('.adp-progress-title');
     const actualStepCount = stepsEl?.querySelectorAll('.adp-progress-step').length ?? this._adpToolStepCount;
@@ -3599,8 +3673,42 @@ const App = {
         if (tEl) tEl.textContent = collapsed ? `已完成 ${(stepsEl?.querySelectorAll('.adp-progress-step').length ?? this._adpToolStepCount)} 个步骤` : '智能体处理中';
       };
     }
-    const timerEl = document.getElementById('adpProgressTimer');
-    if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - this._adpTimerStart) / 1000)}s`;
+    const timerEl = container?.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+    if (timerEl && this._adpTimerStart) timerEl.textContent = `${Math.floor((Date.now() - this._adpTimerStart) / 1000)}s`;
+  },
+
+  /**
+   * 折叠恢复的历史消息中的 ADP 进度指示器
+   * 恢复的 HTML 中进度指示器仍为"智能体处理中"状态，需要统一折叠
+   */
+  _collapseRestoredADPProgress(container) {
+    const progressEls = container.querySelectorAll('.adp-progress');
+    progressEls.forEach(progressEl => {
+      // 如果已经是折叠状态，跳过
+      if (progressEl.classList.contains('collapsed')) return;
+      progressEl.classList.add('collapsed');
+      const stepsEl = progressEl.querySelector('.adp-progress-steps');
+      if (stepsEl) stepsEl.style.display = 'none';
+      const titleEl = progressEl.querySelector('.adp-progress-title');
+      const actualStepCount = stepsEl?.querySelectorAll('.adp-progress-step').length || 0;
+      if (titleEl) titleEl.textContent = actualStepCount > 0 ? `已完成 ${actualStepCount} 个步骤` : '已完成';
+      const spinnerEl = progressEl.querySelector('.adp-progress-spinner');
+      if (spinnerEl) spinnerEl.style.display = 'none';
+      const timerEl = progressEl.querySelector('.adp-progress-timer');
+      if (timerEl) timerEl.style.display = 'none';
+      // 绑定展开/折叠切换
+      const headerEl = progressEl.querySelector('.adp-progress-header');
+      if (headerEl) {
+        headerEl.style.cursor = 'pointer';
+        headerEl.onclick = () => {
+          progressEl.classList.toggle('collapsed');
+          const collapsed = progressEl.classList.contains('collapsed');
+          if (stepsEl) stepsEl.style.display = collapsed ? 'none' : 'flex';
+          const tEl = progressEl.querySelector('.adp-progress-title');
+          if (tEl) tEl.textContent = collapsed ? `已完成 ${(stepsEl?.querySelectorAll('.adp-progress-step').length || 0)} 个步骤` : '智能体处理中';
+        };
+      }
+    });
   },
 
   // ---- ADP Markdown 渲染（简化版，参考 Agent SDK） ----
@@ -3695,7 +3803,7 @@ const App = {
     mdLinks.forEach((link, idx) => {
       const ph = `__MDLINK_${idx}__`, su = this.escapeHtml(link.url), sd = this.escapeHtml(link.display);
       html = html.replace(ph, link.isHtml
-        ? `<div class="adp-file-card" data-url="${su}" data-name="${this.escapeHtml(link.fileName)}"><span class="adp-file-icon">🌐</span><span class="adp-file-name">${sd}</span><span class="adp-file-open">↗ 打开</span></div>`
+        ? `<div class="adp-file-card" data-url="${su}" data-name="${this.escapeHtml(link.fileName)}"><span class="adp-file-icon">🌐</span><span class="adp-file-name">${sd}</span><span class="adp-file-save-btn" data-action="save">💾 保存</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`
         : `<a href="${su}" class="adp-link" data-url="${su}">${sd}</a>`);
     });
 
@@ -3707,7 +3815,7 @@ const App = {
           const fn = f.file_path?.split('/').pop() || '文件';
           const ext = fn.split('.').pop()?.toLowerCase();
           const im = { html: '🌐', pdf: '📖', xlsx: '📊', csv: '📋', png: '🖼', jpg: '🖼' };
-          return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-open">💾 保存</span></div>`;
+          return `<div class="adp-file-card" data-url="${this.escapeHtml(f.url || '#')}" data-name="${this.escapeHtml(fn)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fn)}</span><span class="adp-file-save-btn" data-action="save">💾 保存</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`;
         }).join(''));
       } else html = html.replace(ph, '');
     });
@@ -3725,7 +3833,7 @@ const App = {
       const ext = fp.name.split('.').pop()?.toLowerCase();
       const im = { html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', svg: '🖼', md: '📝' };
       // 文件路径不是可下载 URL，用 data-filepath 标记，后续可走 ADP 文件下载
-      html = html.replace(ph, `<div class="adp-file-card" data-url="#" data-name="${this.escapeHtml(fp.name)}" data-filepath="${this.escapeHtml(fp.path)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fp.name)}</span><span class="adp-file-open">💾 保存</span></div>`);
+      html = html.replace(ph, `<div class="adp-file-card" data-url="#" data-name="${this.escapeHtml(fp.name)}" data-filepath="${this.escapeHtml(fp.path)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fp.name)}</span><span class="adp-file-save-btn" data-action="save">💾 保存</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`);
     });
 
     // 🔧 还原 Markdown 表格
@@ -3782,10 +3890,10 @@ const App = {
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
       const isHtml = lang.toLowerCase() === 'html' || lang.toLowerCase() === 'htm';
       const isDocument = isHtml || ['json', 'xml', 'svg', 'css', 'md', 'markdown'].includes(lang.toLowerCase());
-      const saveBtn = isDocument
-        ? `<button class="agent-save-artifact-btn" data-action="save-artifact" data-lang="${this.escapeHtml(lang)}" data-filename="" title="保存到 Agent 产物">💾 保存</button>`
+      const artifactBtns = isDocument
+        ? `<div class="agent-artifact-btns"><button class="agent-save-artifact-btn" data-action="save-artifact" data-lang="${this.escapeHtml(lang)}" data-filename="" title="保存到 Agent 产物">💾 保存</button><button class="agent-open-artifact-btn" data-action="open-artifact" data-lang="${this.escapeHtml(lang)}" title="在浏览器中打开" style="display:none;">↗ 打开</button></div>`
         : '';
-      return `<pre><code>${code.trim()}</code></pre>${saveBtn}`;
+      return `<pre><code>${code.trim()}</code></pre>${artifactBtns}`;
     });
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -4442,6 +4550,13 @@ const App = {
       console.error('[Chat] Failed to load sessions:', e);
       this._chatSessions = [];
     }
+
+    // 恢复活跃会话的消息到 DOM（初始化时必须调用，否则消息区域为空）
+    if (this._activeSessionId) {
+      this._restoreSessionMessages(this._activeSessionId);
+      // 标记当前会话为选中状态
+      this._renderChatSessionList();
+    }
   },
 
   _saveChatSessions() {
@@ -4718,6 +4833,8 @@ const App = {
 
     if (savedHtml) {
       chatMessages.insertAdjacentHTML('beforeend', savedHtml);
+      // 🔧 修复：恢复的历史消息中，ADP 进度指示器需折叠为完成状态
+      this._collapseRestoredADPProgress(chatMessages);
     } else {
       // 无保存的消息，显示欢迎语
       chatMessages.insertAdjacentHTML('beforeend', `
@@ -4903,13 +5020,14 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       // 保存ADP配置
       const adpAppKey = document.getElementById('adpAppKey').value;
-      const adpKnowledgeAppKey = document.getElementById('adpKnowledgeAppKey').value;
-      const adpSearchAppKey = document.getElementById('adpSearchAppKey').value;
-      const adpClusteringAppKey = document.getElementById('adpClusteringAppKey').value;
-      const adpGraphAppKey = document.getElementById('adpGraphAppKey').value;
-      const adpActivationAppKey = document.getElementById('adpActivationAppKey').value;
-      const adpEvolutionAppKey = document.getElementById('adpEvolutionAppKey').value;
-      const adpConflictAppKey = document.getElementById('adpConflictAppKey').value;
+      // 各 Agent AppKey：留空时自动使用通用 AppKey
+      const adpKnowledgeAppKey = document.getElementById('adpKnowledgeAppKey').value || adpAppKey;
+      const adpSearchAppKey = document.getElementById('adpSearchAppKey').value || adpAppKey;
+      const adpClusteringAppKey = document.getElementById('adpClusteringAppKey').value || adpAppKey;
+      const adpGraphAppKey = document.getElementById('adpGraphAppKey').value || adpAppKey;
+      const adpActivationAppKey = document.getElementById('adpActivationAppKey').value || adpAppKey;
+      const adpEvolutionAppKey = document.getElementById('adpEvolutionAppKey').value || adpAppKey;
+      const adpConflictAppKey = document.getElementById('adpConflictAppKey').value || adpAppKey;
       const fileShareApiKey = document.getElementById('fileShareApiKey').value;
       const adpTcSecretId = document.getElementById('adpTcSecretId').value;
       const adpTcSecretKey = document.getElementById('adpTcSecretKey').value;
@@ -4936,6 +5054,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       // Phase 3: 保存用户画像
       await this.saveProfileFromEditor();
+      // 清除画像标签页缓存，确保下次打开时重新加载
+      this._settingsTabLoaded.profile = false;
     }
     
     this.hideSettingsModal();
@@ -6174,7 +6294,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
     if (window.RichEditor) {
       this._noteEditor = new window.RichEditor(container, {
-        placeholder: '输入笔记内容，支持富文本格式...',
+        placeholder: '输入笔记内容，按 Tab 键 AI 续写 ✨',
         minHeight: 200,
         maxHeight: 500,
       });
@@ -7557,11 +7677,317 @@ ${JSON.stringify(reportData, null, 2)}`;
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   },
 
+  showCreateMenu(e) {
+    // 移除已有菜单
+    const existing = document.getElementById('createMenuOverlay');
+    if (existing) { existing.remove(); return; }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'createMenuOverlay';
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.3); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5000; animation: fadeIn 0.15s ease;
+    `;
+
+    const menu = document.createElement('div');
+    menu.style.cssText = `
+      background: var(--bg-card); border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+      padding: 8px; min-width: 240px; max-width: 320px;
+      animation: panelFadeIn 0.2s cubic-bezier(0.2,0.8,0.2,1);
+    `;
+
+    const items = [
+      { id: 'task', icon: '✅', label: '新建任务', desc: '添加待办事项和提醒' },
+      { id: 'note', icon: '📝', label: '新建记事本', desc: '快速记录想法和笔记' },
+      { id: 'question', icon: '❓', label: '新建问题', desc: '记录需要探索的问题' },
+      { id: 'memory', icon: '🧠', label: '新建记忆', desc: '保存重要信息到记忆库' }
+    ];
+
+    menu.innerHTML = items.map(item => `
+      <div class="create-menu-item" data-type="${item.id}" style="
+        display: flex; align-items: center; gap: 12px;
+        padding: 14px 16px; border-radius: 12px; cursor: pointer;
+        transition: background 0.15s ease;
+      ">
+        <span style="font-size: 24px; line-height: 1;">${item.icon}</span>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 14px; font-weight: 600; color: var(--text-primary);">${item.label}</div>
+          <div style="font-size: 11px; color: var(--text-tertiary); margin-top: 2px;">${item.desc}</div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-quaternary)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    `).join('');
+
+    overlay.appendChild(menu);
+    document.body.appendChild(overlay);
+
+    // 悬停效果
+    menu.querySelectorAll('.create-menu-item').forEach(item => {
+      item.addEventListener('mouseenter', () => {
+        item.style.background = 'var(--bg-tertiary)';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.background = 'transparent';
+      });
+    });
+
+    // 点击选项
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (ev) => {
+      if (ev.target === overlay) { close(); return; }
+      const menuItem = ev.target.closest('.create-menu-item');
+      if (!menuItem) return;
+      const type = menuItem.dataset.type;
+      close();
+      switch (type) {
+        case 'task':
+          this.showTaskModal();
+          break;
+        case 'note':
+          this.addNote();
+          break;
+        case 'question':
+          if (window.knowledgeDistillation) {
+            window.knowledgeDistillation.showAddQuestionModal();
+          } else {
+            this.showQuickQuestionModal();
+          }
+          break;
+        case 'memory':
+          this.showQuickMemoryModal();
+          break;
+      }
+    });
+  },
+
+  showQuickQuestionModal() {
+    let overlay = document.getElementById('quickQuestionOverlay');
+    if (overlay) overlay.remove();
+
+    overlay = document.createElement('div');
+    overlay.id = 'quickQuestionOverlay';
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5000; animation: fadeIn 0.15s ease;
+    `;
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      width: 420px; max-width: 90%; background: var(--bg-card);
+      border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
+    `;
+
+    dialog.innerHTML = `
+      <div style="padding: 20px 24px 8px; display: flex; align-items: center; justify-content: space-between;">
+        <h3 style="font-size: 17px; font-weight: 600; color: var(--text-primary); margin: 0;">❓ 记录问题</h3>
+        <button class="quick-q-close" style="background: none; border: none; font-size: 18px; color: var(--text-tertiary); cursor: pointer; padding: 4px;">✕</button>
+      </div>
+      <div style="padding: 8px 24px 20px;">
+        <textarea id="quickQuestionInput" placeholder="输入你想记录的问题..." style="
+          width: 100%; min-height: 120px; padding: 12px; border-radius: 10px;
+          border: 1px solid var(--border-light); background: var(--bg-secondary);
+          color: var(--text-primary); font-size: 14px; resize: vertical;
+          font-family: inherit; line-height: 1.6; box-sizing: border-box;
+        "></textarea>
+        <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <input id="quickQuestionDomain" type="text" placeholder="问题领域（可选，如：技术、业务）" style="
+            flex: 1; padding: 10px 12px; border-radius: 10px;
+            border: 1px solid var(--border-light); background: var(--bg-secondary);
+            color: var(--text-primary); font-size: 13px; box-sizing: border-box;
+          ">
+        </div>
+      </div>
+      <div style="display: flex; border-top: 0.5px solid var(--border-light);">
+        <button class="quick-q-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
+          font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+          border-right: 0.5px solid var(--border-light);">取消</button>
+        <button class="quick-q-save" style="flex:1; padding: 14px; border: none; background: transparent;
+          font-size: 14px; font-weight: 600; color: var(--primary-color); cursor: pointer;">保存</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+
+    dialog.querySelector('.quick-q-close').addEventListener('click', close);
+    dialog.querySelector('.quick-q-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    dialog.querySelector('.quick-q-save').addEventListener('click', async () => {
+      const content = document.getElementById('quickQuestionInput').value.trim();
+      if (!content) { this.showToast('请输入问题内容', 'error'); return; }
+      const domain = document.getElementById('quickQuestionDomain').value.trim() || '未分类';
+
+      try {
+        if (window.electronAPI?.knowledgeAddAtom) {
+          const result = await window.electronAPI.knowledgeAddAtom({
+            content, domain, type: 'question', importance: 0.7
+          });
+          if (result.success) {
+            this.showToast('❓ 问题已记录到知识库', 'success');
+            close();
+          } else {
+            this.showToast('记录问题失败', 'error');
+          }
+        }
+      } catch (err) {
+        this.showToast('记录问题失败: ' + err.message, 'error');
+      }
+    });
+
+    document.getElementById('quickQuestionInput')?.focus();
+  },
+
+  showQuickMemoryModal() {
+    let overlay = document.getElementById('quickMemoryOverlay');
+    if (overlay) overlay.remove();
+
+    overlay = document.createElement('div');
+    overlay.id = 'quickMemoryOverlay';
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5000; animation: fadeIn 0.15s ease;
+    `;
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      width: 420px; max-width: 90%; background: var(--bg-card);
+      border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
+    `;
+
+    dialog.innerHTML = `
+      <div style="padding: 20px 24px 8px; display: flex; align-items: center; justify-content: space-between;">
+        <h3 style="font-size: 17px; font-weight: 600; color: var(--text-primary); margin: 0;">🧠 新建记忆</h3>
+        <button class="quick-m-close" style="background: none; border: none; font-size: 18px; color: var(--text-tertiary); cursor: pointer; padding: 4px;">✕</button>
+      </div>
+      <div style="padding: 8px 24px 20px;">
+        <textarea id="quickMemoryInput" placeholder="输入记忆内容..." style="
+          width: 100%; min-height: 120px; padding: 12px; border-radius: 10px;
+          border: 1px solid var(--border-light); background: var(--bg-secondary);
+          color: var(--text-primary); font-size: 14px; resize: vertical;
+          font-family: inherit; line-height: 1.6; box-sizing: border-box;
+        "></textarea>
+        <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <select id="quickMemoryType" style="
+            flex: 1; padding: 10px 12px; border-radius: 10px;
+            border: 1px solid var(--border-light); background: var(--bg-secondary);
+            color: var(--text-primary); font-size: 13px; cursor: pointer;
+          ">
+            <option value="short">短期记忆</option>
+            <option value="long">长期记忆</option>
+          </select>
+          <select id="quickMemoryCategory" style="
+            flex: 1; padding: 10px 12px; border-radius: 10px;
+            border: 1px solid var(--border-light); background: var(--bg-secondary);
+            color: var(--text-primary); font-size: 13px; cursor: pointer;
+          ">
+            <option value="knowledge">知识</option>
+            <option value="experience">经验</option>
+            <option value="insight">洞察</option>
+            <option value="fact">事实</option>
+          </select>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 12px; cursor: pointer; font-size: 13px; color: var(--text-secondary);">
+          <input type="checkbox" id="quickMemoryAI" checked style="accent-color: var(--primary-color);">
+          🧠 AI 自动整理后再保存
+        </label>
+      </div>
+      <div style="display: flex; border-top: 0.5px solid var(--border-light);">
+        <button class="quick-m-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
+          font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+          border-right: 0.5px solid var(--border-light);">取消</button>
+        <button class="quick-m-save" style="flex:1; padding: 14px; border: none; background: transparent;
+          font-size: 14px; font-weight: 600; color: var(--primary-color); cursor: pointer;">保存</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+
+    dialog.querySelector('.quick-m-close').addEventListener('click', close);
+    dialog.querySelector('.quick-m-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    dialog.querySelector('.quick-m-save').addEventListener('click', async () => {
+      const input = document.getElementById('quickMemoryInput').value.trim();
+      if (!input) { this.showToast('请输入记忆内容', 'error'); return; }
+      const type = document.getElementById('quickMemoryType').value;
+      const category = document.getElementById('quickMemoryCategory').value;
+      const useAI = document.getElementById('quickMemoryAI').checked;
+      const saveBtn = dialog.querySelector('.quick-m-save');
+      saveBtn.textContent = '⏳ 保存中...';
+      saveBtn.style.pointerEvents = 'none';
+
+      try {
+        if (window.electronAPI) {
+          if (useAI) {
+            const orgResult = await window.electronAPI.aiOrganizeMemory(input);
+            if (orgResult.success && orgResult.organized) {
+              const org = orgResult.organized;
+              const finalType = type === 'long' ? 'long' : (org.memory_type || type);
+              await window.electronAPI.addMemory({
+                content: org.organized_content,
+                type: finalType,
+                category: org.category || category,
+                business_category: org.business_category || 'other',
+                confidence: org.confidence || 0.8,
+                metadata: {
+                  source: 'quick_create',
+                  tags: org.tags || [],
+                  key_points: org.key_points || [],
+                  original_content: input,
+                  created_at: new Date().toISOString()
+                }
+              });
+            } else {
+              await window.electronAPI.addMemory({
+                content: input, type, category, business_category: 'other',
+                confidence: 1.0, metadata: { source: 'quick_create', ai_organize_failed: true, created_at: new Date().toISOString() }
+              });
+            }
+          } else {
+            await window.electronAPI.addMemory({
+              content: input, type, category, business_category: 'other',
+              confidence: 1.0, metadata: { source: 'quick_create', created_at: new Date().toISOString() }
+            });
+          }
+          this.showToast('🧠 记忆已保存', 'success');
+          close();
+          this.loadMemories?.();
+        }
+      } catch (err) {
+        this.showToast('保存记忆失败: ' + err.message, 'error');
+        saveBtn.textContent = '保存';
+        saveBtn.style.pointerEvents = '';
+      }
+    });
+
+    document.getElementById('quickMemoryInput')?.focus();
+  },
+
   showTaskModal(task = null) {
     console.log('[App] showTaskModal called with:', task);
     this.editingTask = task;
     
     const modal = document.getElementById('taskModal');
+    const modalContent = modal?.querySelector('.modal-content');
+    if (modalContent) {
+      modalContent.style.width = '70%';
+      modalContent.style.maxWidth = '900px';
+    }
     const titleInput = document.getElementById('taskTitle');
     const descInput = document.getElementById('taskDesc');
     const dueInput = document.getElementById('taskDue');
@@ -7580,7 +8006,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       durationInput.value = task.estimatedDuration;
       priorityInput.value = task.priority;
     } else {
-      document.getElementById('modalTitle').textContent = '新建任务';
+      document.getElementById('modalTitle').textContent = '新建任务/记事本/问题/记忆';
       titleInput.value = task?.title || '';
       descInput.value = task?.description || '';
       
@@ -7747,10 +8173,33 @@ ${JSON.stringify(reportData, null, 2)}`;
       return;
     }
     
+    const btn = document.getElementById('aiAnalyzeBtn');
+    const originalText = btn?.textContent || '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '🤖 分析中...';
+    }
+
+    // 显示分析进度
+    const resultArea = document.getElementById('aiAnalysisResult');
+    const analysisContent = document.getElementById('analysisContent');
+    if (resultArea) {
+      resultArea.classList.remove('hidden');
+      if (analysisContent) {
+        analysisContent.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;color:var(--primary-color);">
+            <div class="ai-analysis-spinner" style="width:16px;height:16px;border:2px solid var(--border-light);border-top-color:var(--primary-color);border-radius:50%;animation:aiSpin 0.8s linear infinite;"></div>
+            <span>正在分析内容，识别待办事项...</span>
+          </div>
+          <style>@keyframes aiSpin{to{transform:rotate(360deg)}}</style>
+        `;
+      }
+    }
+    const confidenceEl = document.getElementById('analysisConfidence');
+    if (confidenceEl) confidenceEl.textContent = '分析中...';
+
     try {
       if (window.electronAPI) {
-        this.showToast('正在分析...', 'info');
-        
         // 调用AI分析
         const result = await window.electronAPI.analyzeTask(input);
         
@@ -7773,10 +8222,10 @@ ${JSON.stringify(reportData, null, 2)}`;
           }
           
           // 显示分析结果
-          document.getElementById('aiAnalysisResult')?.classList.remove('hidden');
-          document.getElementById('analysisConfidence').textContent = `置信度: ${Math.round(result.task.confidence * 100)}%`;
+          if (confidenceEl) confidenceEl.textContent = `置信度: ${Math.round(result.task.confidence * 100)}%`;
           
           let analysisHtml = `<div style="margin-top: 8px;">`;
+          analysisHtml += `<div style="color:var(--success-color);font-weight:500;margin-bottom:6px;">✅ 分析完成</div>`;
           if (result.task.isAllDay) {
             analysisHtml += `<div>📅 识别为全天任务</div>`;
             document.getElementById('isAllDay').checked = true;
@@ -7791,19 +8240,33 @@ ${JSON.stringify(reportData, null, 2)}`;
           }
           analysisHtml += `</div>`;
           
-          document.getElementById('analysisContent').innerHTML = analysisHtml;
+          if (analysisContent) analysisContent.innerHTML = analysisHtml;
           
           // 自动计算番茄钟
           this.updatePomodoroHint();
           
-          this.showToast('AI分析完成');
+          this.showToast('AI分析完成', 'success');
         } else {
+          if (analysisContent) {
+            analysisHtml = `<div style="color:var(--danger-color);">❌ 分析失败${result.error ? '：' + result.error : ''}，请重试</div>`;
+            analysisContent.innerHTML = analysisHtml;
+          }
+          if (confidenceEl) confidenceEl.textContent = '分析失败';
           this.showToast('分析失败，请重试', 'error');
         }
       }
     } catch (error) {
       console.error('AI分析失败:', error);
+      if (analysisContent) {
+        analysisContent.innerHTML = `<div style="color:var(--danger-color);">❌ 分析出错：${error.message}</div>`;
+      }
+      if (confidenceEl) confidenceEl.textContent = '分析出错';
       this.showToast('分析失败，请重试', 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText || '🤖 AI分析待办';
+      }
     }
   },
   
@@ -7935,27 +8398,37 @@ ${JSON.stringify(reportData, null, 2)}`;
       return;
     }
     
-    // 排序：默认按截止时间，可切换按优先级
+    // 排序：默认按截止时间，可切换按优先级/最新
     const sortBy = this._taskSortBy || 'dueDate';
     const sortedTasks = tasks.sort((a, b) => {
+      const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      const priorityOrder = { high: 0, medium: 1, low: 2 };
+
       if (sortBy === 'priority') {
-        const priorityOrder = { high: 0, medium: 1, low: 2 };
         if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
           return priorityOrder[a.priority] - priorityOrder[b.priority];
         }
-        // 优先级相同时按截止时间
-        if (a.dueDate && b.dueDate) {
-          return new Date(a.dueDate) - new Date(b.dueDate);
-        }
-        return 0;
+        // 优先级相同：按截止时间 → 创建时间（最新在前）
+        const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+        const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+        if (aDate !== bDate) return aDate - bDate;
+        return bCreated - aCreated;
+      } else if (sortBy === 'latest') {
+        // 按创建时间倒序（最新在前）
+        if (aCreated !== bCreated) return bCreated - aCreated;
+        // 创建时间相同按优先级
+        return priorityOrder[a.priority] - priorityOrder[b.priority];
       } else {
         // 默认：按截止时间排序（临近的在前）
         const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
         const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
         if (aDate !== bDate) return aDate - bDate;
-        // 截止时间相同时按优先级
-        const priorityOrder = { high: 0, medium: 1, low: 2 };
-        return priorityOrder[a.priority] - priorityOrder[b.priority];
+        // 截止时间相同：按优先级 → 创建时间（最新在前）
+        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+          return priorityOrder[a.priority] - priorityOrder[b.priority];
+        }
+        return bCreated - aCreated;
       }
     });
     
@@ -8338,6 +8811,59 @@ ${JSON.stringify(reportData, null, 2)}`;
     });
   },
 
+  // === 文件卡片按钮绑定（保存 + 打开）===
+  _bindFileCardActions(container) {
+    if (!container) return;
+    container.querySelectorAll('.adp-file-card').forEach(card => {
+      // 保存按钮
+      const saveBtn = card.querySelector('.adp-file-save-btn');
+      if (saveBtn && !saveBtn._fcBound) {
+        saveBtn._fcBound = true;
+        saveBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const url = card.dataset.url;
+          const name = card.dataset.name;
+          if ((url && url !== '#') || card.dataset.filepath) {
+            this._downloadFileToArtifacts(url, name, card);
+          }
+        });
+      }
+      // 打开按钮
+      const openBtn = card.querySelector('.adp-file-open-btn');
+      if (openBtn && !openBtn._fcBound) {
+        openBtn._fcBound = true;
+        openBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const url = card.dataset.url;
+          const savedPath = card.dataset.savedPath;
+          // 优先打开已保存的本地文件
+          if (savedPath && window.electronAPI?.artifactsRead) {
+            try {
+              const result = await window.electronAPI.artifactsRead({ filePath: savedPath });
+              if (result.success && result.content) {
+                const ext = (card.dataset.name || '').split('.').pop()?.toLowerCase();
+                if (['html', 'htm', 'svg'].includes(ext)) {
+                  const blob = new Blob([result.content], { type: ext === 'svg' ? 'image/svg+xml' : 'text/html' });
+                  const blobUrl = URL.createObjectURL(blob);
+                  window.electronAPI?.openExternal(blobUrl);
+                } else {
+                  window.electronAPI?.artifactsShowInFolder?.(savedPath);
+                }
+                return;
+              }
+            } catch {}
+          }
+          // 其次打开 URL
+          if (url && url !== '#') {
+            window.electronAPI?.openExternal(url);
+          } else {
+            this.showToast('请先保存后再打开', 'info');
+          }
+        });
+      }
+    });
+  },
+
   // === Agent 产物保存按钮绑定 ===
   _bindArtifactSaveButtons(container) {
     if (!container) return;
@@ -8347,7 +8873,7 @@ ${JSON.stringify(reportData, null, 2)}`;
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const pre = btn.previousElementSibling;
+        const pre = btn.closest('pre') || btn.previousElementSibling;
         if (!pre) return;
         const codeEl = pre.querySelector('code');
         if (!codeEl) return;
@@ -8357,7 +8883,6 @@ ${JSON.stringify(reportData, null, 2)}`;
         let fileName = '';
         const lowerLang = lang.toLowerCase();
         if (lowerLang === 'html' || lowerLang === 'htm') {
-          // 尝试从 HTML 中提取 <title>
           const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
           fileName = titleMatch ? titleMatch[1].trim().replace(/[<>:"/\\|?*]/g, '_') + '.html' : 'page.html';
         } else if (lowerLang === 'json') {
@@ -8381,6 +8906,14 @@ ${JSON.stringify(reportData, null, 2)}`;
             if (result.success) {
               btn.textContent = '✅ 已保存';
               btn.disabled = true;
+              btn.dataset.savedPath = result.path || '';
+              // 显示打开按钮
+              const openBtn = btn.parentElement?.querySelector('.agent-open-artifact-btn');
+              if (openBtn) {
+                openBtn.style.display = '';
+                openBtn.dataset.savedPath = result.path || '';
+                openBtn.dataset.fileName = result.name || fileName;
+              }
               this.showToast(`已保存到 Agent 产物: ${result.name}`, 'success');
             } else {
               btn.textContent = '💾 保存';
@@ -8394,6 +8927,37 @@ ${JSON.stringify(reportData, null, 2)}`;
           }
         } else {
           this.showToast('产物保存功能不可用', 'error');
+        }
+      });
+    });
+    // 绑定打开按钮
+    container.querySelectorAll('.agent-open-artifact-btn').forEach(btn => {
+      if (btn._openBound) return;
+      btn._openBound = true;
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const savedPath = btn.dataset.savedPath;
+        if (savedPath && window.electronAPI?.artifactsRead) {
+          try {
+            const result = await window.electronAPI.artifactsRead({ filePath: savedPath });
+            if (result.success && result.content) {
+              const lang = btn.dataset.lang?.toLowerCase() || '';
+              if (['html', 'htm', 'svg'].includes(lang)) {
+                const blob = new Blob([result.content], { type: lang === 'svg' ? 'image/svg+xml' : 'text/html' });
+                const blobUrl = URL.createObjectURL(blob);
+                window.electronAPI?.openExternal(blobUrl);
+              } else {
+                window.electronAPI?.artifactsShowInFolder?.(savedPath);
+              }
+            } else {
+              this.showToast('读取文件失败', 'error');
+            }
+          } catch (err) {
+            this.showToast('打开出错: ' + err.message, 'error');
+          }
+        } else {
+          this.showToast('请先保存后再打开', 'info');
         }
       });
     });
@@ -8413,21 +8977,22 @@ ${JSON.stringify(reportData, null, 2)}`;
       return;
     }
     // 更新卡片状态
-    const openSpan = cardEl?.querySelector('.adp-file-open');
-    const originalText = openSpan?.textContent || '';
-    if (openSpan) openSpan.textContent = '⏳ 下载中...';
+    const saveSpan = cardEl?.querySelector('.adp-file-save-btn');
+    const originalText = saveSpan?.textContent || '';
+    if (saveSpan) saveSpan.textContent = '⏳ 下载中...';
 
     try {
       const result = await window.electronAPI.artifactsDownloadAndSave({ url, fileName });
       if (result.success) {
-        if (openSpan) openSpan.textContent = '✅ 已保存';
+        if (saveSpan) saveSpan.textContent = '✅ 已保存';
+        if (cardEl && result.path) cardEl.dataset.savedPath = result.path;
         this.showToast(`已保存到 Agent 产物: ${result.name}`, 'success');
       } else {
-        if (openSpan) openSpan.textContent = originalText;
+        if (saveSpan) saveSpan.textContent = originalText;
         this.showToast('下载失败: ' + (result.error || ''), 'error');
       }
     } catch (err) {
-      if (openSpan) openSpan.textContent = originalText;
+      if (saveSpan) saveSpan.textContent = originalText;
       this.showToast('下载出错: ' + err.message, 'error');
     }
   },
@@ -8438,9 +9003,9 @@ ${JSON.stringify(reportData, null, 2)}`;
       this.showToast('产物保存功能不可用', 'error');
       return;
     }
-    const openSpan = cardEl?.querySelector('.adp-file-open');
-    const originalText = openSpan?.textContent || '';
-    if (openSpan) openSpan.textContent = '⏳ 保存中...';
+    const saveSpan = cardEl?.querySelector('.adp-file-save-btn');
+    const originalText = saveSpan?.textContent || '';
+    if (saveSpan) saveSpan.textContent = '⏳ 保存中...';
 
     try {
       // 保存为引用文件，包含文件路径和来源信息
@@ -8451,14 +9016,15 @@ ${JSON.stringify(reportData, null, 2)}`;
         source: 'adp-container-ref'
       });
       if (result.success) {
-        if (openSpan) openSpan.textContent = '✅ 已保存';
+        if (saveSpan) saveSpan.textContent = '✅ 已保存';
+        if (cardEl && result.path) cardEl.dataset.savedPath = result.path;
         this.showToast(`已保存引用到 Agent 产物: ${result.name}`, 'success');
       } else {
-        if (openSpan) openSpan.textContent = originalText;
+        if (saveSpan) saveSpan.textContent = originalText;
         this.showToast('保存失败: ' + (result.error || ''), 'error');
       }
     } catch (err) {
-      if (openSpan) openSpan.textContent = originalText;
+      if (saveSpan) saveSpan.textContent = originalText;
       this.showToast('保存出错: ' + err.message, 'error');
     }
   },
@@ -8574,6 +9140,31 @@ ${JSON.stringify(reportData, null, 2)}`;
   async loadProfileEditor() {
     if (!window.electronAPI?.profile?.get) return;
     const profile = await window.electronAPI.profile.get();
+
+    // 如果已登录，从远程补充本地缺失的字段（本地优先，仅本地为空时补充）
+    if (window.electronAPI?.authGetState) {
+      try {
+        const authState = await window.electronAPI.authGetState();
+        if (authState.isLoggedIn && authState.user) {
+          profile.user = profile.user || {};
+          const remoteUser = authState.user;
+          // 仅本地为空时从远程补充，避免远程旧数据覆盖本地新数据
+          if (!profile.user.name && remoteUser.name) profile.user.name = remoteUser.name;
+          if (!profile.user.email && remoteUser.email) profile.user.email = remoteUser.email;
+          if (!profile.user.mobile && remoteUser.mobile) profile.user.mobile = remoteUser.mobile;
+          if (!profile.user.nickname && remoteUser.nickname) profile.user.nickname = remoteUser.nickname;
+          if (profile.user.gender == null && remoteUser.gender != null) profile.user.gender = remoteUser.gender;
+          if (!profile.user.birth_date && remoteUser.birth_date) profile.user.birth_date = remoteUser.birth_date;
+          if (!profile.user.profession && remoteUser.profession) profile.user.profession = remoteUser.profession;
+          if (!profile.user.organization && remoteUser.organization) profile.user.organization = remoteUser.organization;
+          if (!profile.user.industry && remoteUser.industry) profile.user.industry = remoteUser.industry;
+          if (!profile.user.region && remoteUser.region) profile.user.region = remoteUser.region;
+        }
+      } catch (e) {
+        // 静默失败，使用本地数据
+      }
+    }
+
     document.getElementById('profileName').value = profile.user?.name || '';
     document.getElementById('profileEnglishName').value = profile.user?.english_name || '';
     document.getElementById('profileRole').value = profile.user?.role || '';
@@ -8639,14 +9230,32 @@ ${JSON.stringify(reportData, null, 2)}`;
     if (!window.electronAPI?.profile?.update) return;
     const profile = await window.electronAPI.profile.get();
     profile.user = profile.user || {};
-    profile.user.name = document.getElementById('profileName').value.trim() || profile.user.name;
-    profile.user.english_name = document.getElementById('profileEnglishName').value.trim() || profile.user.english_name;
-    profile.user.role = document.getElementById('profileRole').value.trim() || profile.user.role;
+    const nameVal = document.getElementById('profileName').value.trim();
+    const englishNameVal = document.getElementById('profileEnglishName').value.trim();
+    const roleVal = document.getElementById('profileRole').value.trim();
+    // 允许清空字段：输入框有内容则更新，为空也更新（清空），仅 null/undefined 时保留旧值
+    if (nameVal !== '' || !profile.user.name) profile.user.name = nameVal;
+    if (englishNameVal !== '' || !profile.user.english_name) profile.user.english_name = englishNameVal;
+    if (roleVal !== '' || !profile.user.role) profile.user.role = roleVal;
     profile.user.industries = document.getElementById('profileIndustries').value.split(',').map(s => s.trim()).filter(Boolean);
     profile.preferences = profile.preferences || {};
     profile.preferences.priority_signals = document.getElementById('prioritySignals').value.split(',').map(s => s.trim()).filter(Boolean);
     profile.preferences.low_priority_signals = document.getElementById('lowPrioritySignals').value.split(',').map(s => s.trim()).filter(Boolean);
     await window.electronAPI.profile.update(profile);
+
+    // 同步姓名等基础信息到远程（如果已登录），保持两端一致
+    if (window.electronAPI?.authUpdateProfile && nameVal) {
+      try {
+        const authState = await window.electronAPI.authGetState();
+        if (authState.isLoggedIn) {
+          const syncData = { name: nameVal };
+          if (englishNameVal) syncData.nickname = englishNameVal;
+          await window.electronAPI.authUpdateProfile(syncData);
+        }
+      } catch (e) {
+        // 静默失败，本地已保存
+      }
+    }
   },
 
   async generateProfileSuggestions() {
@@ -9813,7 +10422,7 @@ ${JSON.stringify(reportData, null, 2)}`;
    * 推送会话元数据到云端（标准 v3 push）
    */
   async _syncPushConversation(session) {
-    if (!window.SyncEngine?.isSyncing?.() === undefined) return; // SyncEngine 未加载
+    if (typeof window.SyncEngine?.isSyncing !== 'function') return; // SyncEngine 未加载
     try {
       const deviceId = window.SyncEngine.getDeviceInfo()?.deviceId;
       if (!deviceId) return;
@@ -10049,6 +10658,18 @@ ${JSON.stringify(reportData, null, 2)}`;
 
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
+
+  // 窗口关闭/隐藏时自动保存当前会话消息，防止数据丢失
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && App._activeSessionId) {
+      App._saveCurrentSessionMessages();
+    }
+  });
+  window.addEventListener('beforeunload', () => {
+    if (App._activeSessionId) {
+      App._saveCurrentSessionMessages();
+    }
+  });
 });
 
 window.App = App;

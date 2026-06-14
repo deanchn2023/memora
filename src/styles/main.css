@@ -1030,6 +1030,80 @@ body {
   gap: 20px;
 }
 
+/* Agent 高阶配置折叠卡片 */
+.agent-advanced-card {
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 12px;
+  margin: 16px 0;
+  overflow: hidden;
+  background: var(--bg-secondary, rgba(0,0,0,0.02));
+}
+.agent-advanced-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+.agent-advanced-header:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.04));
+}
+.agent-advanced-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.agent-advanced-icon {
+  font-size: 18px;
+}
+.agent-advanced-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary, rgba(0,0,0,0.06));
+  color: var(--text-secondary, #86868b);
+}
+.agent-advanced-card.has-custom .agent-advanced-badge {
+  background: rgba(0,122,255,0.1);
+  color: var(--primary-color, #007AFF);
+}
+.agent-advanced-toggle {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  transition: transform 0.2s;
+}
+.agent-advanced-card.expanded .agent-advanced-toggle {
+  transform: rotate(180deg);
+}
+.agent-advanced-body {
+  display: none;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border-color, #e0e0e0);
+}
+.agent-advanced-card.expanded .agent-advanced-body {
+  display: block;
+}
+.agent-advanced-desc {
+  padding: 8px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed var(--border-color, #e0e0e0);
+}
+.agent-advanced-desc p {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  margin: 0;
+}
+.adp-auto-fill-hint {
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* 腾讯云文件上传配置卡片 */
 .cos-upload-card {
   border: 1px solid var(--border-color, #e0e0e0);
@@ -3175,7 +3249,6 @@ body {
   border: 0.5px solid rgba(0, 122, 255, 0.15);
   overflow: hidden;
   transition: all 0.2s;
-  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3201,15 +3274,35 @@ body {
   white-space: nowrap;
 }
 
-.adp-file-open {
+.adp-file-save-btn,
+.adp-file-open-btn {
   font-size: 0.6875rem;
   color: var(--text-tertiary);
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.2s;
+  opacity: 0.7;
+  transition: opacity 0.2s, color 0.15s;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  white-space: nowrap;
 }
 
-.adp-file-card:hover .adp-file-open { opacity: 1; }
+.adp-file-save-btn:hover {
+  opacity: 1 !important;
+  color: var(--primary-color);
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.adp-file-open-btn:hover {
+  opacity: 1 !important;
+  color: var(--primary-color);
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.adp-file-card:hover .adp-file-save-btn,
+.adp-file-card:hover .adp-file-open-btn { opacity: 1; }
 
 .adp-files-section {
   margin-top: 8px;
@@ -5155,6 +5248,19 @@ body {
 
 /* 配置来源切换 */
 .login-profile-config-source {
+
+/* 个人信息编辑网格 */
+.profile-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 12px;
+}
+
+@media (max-width: 480px) {
+  .profile-edit-grid {
+    grid-template-columns: 1fr;
+  }
+}
   padding: 8px 16px;
 }
 
@@ -5778,6 +5884,13 @@ body {
 
 /* COS 上传卡片在 config-locked 模式下保持可查看（半透明但不隐藏值） */
 .settings-panel.config-locked .cos-upload-card input {
+  opacity: 0.8;
+  pointer-events: none;
+  background: var(--bg-tertiary, #f0f0f2);
+}
+
+/* 高阶配置卡片在 config-locked 模式下同样处理 */
+.settings-panel.config-locked .agent-advanced-card input {
   opacity: 0.8;
   pointer-events: none;
   background: var(--bg-tertiary, #f0f0f2);

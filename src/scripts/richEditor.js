@@ -14,9 +14,12 @@ class RichEditor {
       toolbarItems: options.toolbarItems || ['bold', 'italic', 'underline', 'strike', '|', 'unorderedList', 'orderedList', '|', 'link', 'image'],
       onChange: options.onChange || null,
       compact: options.compact || false,
+      aiContinue: options.aiContinue !== false, // 默认开启 Tab 续写
     };
 
     this.editorId = 'rich-editor-' + Math.random().toString(36).substr(2, 9);
+    this._isContinuing = false; // 续写锁
+    this._continuationHint = null; // 续写提示元素
     this._createDOM();
     this._bindEvents();
   }
@@ -98,6 +101,9 @@ class RichEditor {
       } else if (e.key === 'u' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         this._execCommand('underline');
+      } else if (e.key === 'Tab' && this.options.aiContinue) {
+        e.preventDefault();
+        this._aiContinueWrite();
       }
     });
 
@@ -128,6 +134,90 @@ class RichEditor {
     // 工具栏状态更新
     this.editArea.addEventListener('mouseup', () => this._updateToolbarState());
     this.editArea.addEventListener('keyup', () => this._updateToolbarState());
+  }
+
+  // Tab AI 续写
+  async _aiContinueWrite() {
+    if (this._isContinuing) return;
+
+    const text = this.getText().trim();
+    if (!text) return; // 空内容不续写
+
+    this._isContinuing = true;
+
+    // 显示续写提示
+    this._showContinuationHint('✨ 续写中...');
+
+    try {
+      // 提取最后3-5句话作为上下文
+      const sentences = text.split(/[。！？\n.!?]+/).filter(s => s.trim());
+      const contextSentences = sentences.slice(-5);
+      const context = contextSentences.join('。');
+
+      if (window.electronAPI?.aiContinueWrite) {
+        const result = await window.electronAPI.aiContinueWrite(context);
+
+        if (result.success && result.continuation) {
+          // 将续写内容追加到编辑器
+          const continuation = result.continuation.trim();
+          if (continuation) {
+            this.editArea.focus();
+            // 将光标移到末尾
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(this.editArea);
+            range.collapse(false); // collapse to end
+            selection.removeAllRanges();
+            selection.addRange(range);
+            // 在末尾追加
+            const currentHTML = this.editArea.innerHTML;
+            const endsWithNewline = currentHTML.endsWith('<br>') || currentHTML.endsWith('</div>');
+            const insertHTML = (endsWithNewline ? '' : ' ') + continuation;
+            document.execCommand('insertHTML', false, insertHTML);
+            if (this.options.onChange) this.options.onChange(this.getHTML(), this.getText());
+          }
+          this._showContinuationHint('✅ 已续写');
+        } else {
+          const reason = result.error || '未知错误';
+          console.warn('[RichEditor] AI continue failed:', reason);
+          this._showContinuationHint('❌ ' + reason);
+        }
+      } else {
+        this._showContinuationHint('❌ 续写功能不可用');
+      }
+    } catch (err) {
+      console.error('[RichEditor] AI continue write error:', err);
+      this._showContinuationHint('❌ 续写出错');
+    } finally {
+      this._isContinuing = false;
+      // 2秒后隐藏提示
+      setTimeout(() => this._hideContinuationHint(), 2000);
+    }
+  }
+
+  _showContinuationHint(text) {
+    this._hideContinuationHint();
+    const hint = document.createElement('div');
+    hint.className = 'rich-editor-continue-hint';
+    hint.textContent = text;
+    hint.style.cssText = `
+      position: absolute; bottom: 8px; right: 12px;
+      font-size: 12px; color: var(--primary-color);
+      background: var(--bg-glass); backdrop-filter: blur(8px);
+      padding: 4px 10px; border-radius: 6px;
+      pointer-events: none; z-index: 10;
+      animation: fadeIn 0.2s ease;
+    `;
+    this.container.style.position = 'relative';
+    this.container.appendChild(hint);
+    this._continuationHint = hint;
+  }
+
+  _hideContinuationHint() {
+    if (this._continuationHint) {
+      this._continuationHint.remove();
+      this._continuationHint = null;
+    }
   }
 
   _execCommand(command) {

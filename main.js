@@ -163,6 +163,9 @@ const { I18n } = require('./src/scripts/i18n');
 // 自动备份定时器
 let autoBackupTimer = null;
 
+// 每周优化器定时器
+let weeklyOptimizerTimer = null;
+
 // 默认内置API Key（用户未配置时使用，限制10次/天）
 const DEFAULT_API_KEY = 'ark-8884b1e5-d1b2-4e58-9319-0fcfce0543d7-15773';
 const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
@@ -232,7 +235,7 @@ const DEFAULT_AUTH_SERVERS = {
 };
 
 // 深拷贝默认配置作为运行时配置
-let AUTH_SERVERS = JSON.parse(JSON.stringify(DEFAULT_AUTH_SERVERS));
+let AUTH_SERVERS = structuredClone(DEFAULT_AUTH_SERVERS);
 
 // 从持久化存储加载自定义服务器地址
 function loadCustomServerUrls() {
@@ -2465,6 +2468,59 @@ ipcMain.handle('analyze-task', async (event, text) => {
   return { success: false, error: '分析失败' };
 });
 
+// AI 续写（Tab 补全）
+ipcMain.handle('ai-continue-writing', async (event, context) => {
+  try {
+    if (!canMakeAICall()) {
+      return { success: false, error: '每日AI调用次数已达上限，请明天再试' };
+    }
+
+    // structured: true（默认）走 LLM 路径，不走 ADP，保证续写文本可靠性
+    const { response } = await callAI({
+      module: 'continue_writing',
+      category: 'highvol',
+      messages: [
+        { role: 'system', content: '你是一个写作助手。根据用户已写的内容，续写一句话（约15-30字），保持风格和语境一致。只输出续写的那一句话，不要输出任何解释、前缀或标点包裹。不要重复用户已有的内容。' },
+        { role: 'user', content: `请根据以下内容续写一句话：\n\n${context}` }
+      ],
+    });
+
+    if (!response || !response.ok) {
+      const errMsg = response?._errorDetail || 'AI服务暂不可用';
+      console.error('[AI Continue] Response not ok:', response?.status, errMsg);
+      return { success: false, error: errMsg };
+    }
+
+    let continuation = '';
+    if (response._fullContent) {
+      continuation = response._fullContent.trim();
+    } else {
+      try {
+        const data = await response.json();
+        continuation = (data.choices?.[0]?.message?.content || '').trim();
+      } catch (e) {
+        const text = await response.text().catch(() => '');
+        continuation = text.trim();
+      }
+    }
+
+    incrementAICallCount();
+
+    // 清理可能的多余包裹
+    continuation = continuation.replace(/^["「『]|["」』]$/g, '').trim();
+
+    if (!continuation) {
+      console.warn('[AI Continue] Empty continuation received');
+      return { success: false, error: 'AI未返回续写内容' };
+    }
+
+    return { success: true, continuation };
+  } catch (error) {
+    console.error('[AI Continue] Error:', error);
+    return { success: false, error: error.message || '续写出错' };
+  }
+});
+
 ipcMain.handle('analyze-clipboard', async (event, text) => {
   try {
     if (!canMakeAICall()) {
@@ -3791,21 +3847,30 @@ ipcMain.handle('auth:register', async (event, { username, mobile, sms_code, name
 });
 
 // 更新个人信息
-ipcMain.handle('auth:update-profile', async (event, { name, nickname, email, mobile }) => {
+ipcMain.handle('auth:update-profile', async (event, profileData) => {
   if (!authState.isLoggedIn || !authState.token) {
     return { success: false, error: '未登录' };
   }
-  const server = getAuthServer();
   const authUrl = getAuthUrlForAuth();
   try {
     const updateUrl = `${authUrl}/api/auth/profile`;
+    
+    // 支持的15个可修改字段
+    const allowedFields = ['name', 'nickname', 'email', 'mobile', 'avatar', 'gender', 'birth_date', 'country_code', 'profession', 'address', 'locale', 'timezone', 'region', 'industry', 'organization'];
+    const updateData = {};
+    for (const key of allowedFields) {
+      if (profileData[key] !== undefined && profileData[key] !== null) {
+        updateData[key] = profileData[key];
+      }
+    }
+    
     const res = await fetch(updateUrl, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${authState.token}`,
       },
-      body: JSON.stringify({ name: name || '', nickname: nickname || '', email: email || '', mobile: mobile || '' }),
+      body: JSON.stringify(updateData),
       signal: AbortSignal.timeout(10000),
     });
     const data = await res.json();
@@ -3918,9 +3983,9 @@ ipcMain.handle('auth:set-server-urls', async (event, { urls }) => {
 ipcMain.handle('auth:reset-server-urls', async (event, { env }) => {
   try {
     if (env && env !== 'all') {
-      AUTH_SERVERS[env] = JSON.parse(JSON.stringify(DEFAULT_AUTH_SERVERS[env]));
+      AUTH_SERVERS[env] = structuredClone(DEFAULT_AUTH_SERVERS[env]);
     } else {
-      AUTH_SERVERS = JSON.parse(JSON.stringify(DEFAULT_AUTH_SERVERS));
+      AUTH_SERVERS = structuredClone(DEFAULT_AUTH_SERVERS);
     }
     // 更新持久化存储
     if (env && env !== 'all') {
@@ -7955,7 +8020,7 @@ app.whenReady().then(() => {
   // Phase 3: 每周优化器检查
   checkWeeklyOptimizer();
   // 每小时检查一次是否需要运行优化器
-  setInterval(checkWeeklyOptimizer, 60 * 60 * 1000);
+  weeklyOptimizerTimer = setInterval(checkWeeklyOptimizer, 60 * 60 * 1000);
 
   app.on('activate', () => {
     if (mainWindow) {
@@ -7980,6 +8045,12 @@ app.on('before-quit', () => {
   stopClipboardWatcher();
   if (autoBackupTimer) {
     clearInterval(autoBackupTimer);
+  }
+  if (weeklyOptimizerTimer) {
+    clearInterval(weeklyOptimizerTimer);
+  }
+  if (widgetSyncTimer) {
+    clearInterval(widgetSyncTimer);
   }
   // 保存数据库
   if (db) {
@@ -11847,6 +11918,589 @@ ipcMain.handle('insight:resolve-conflict', async (event, data) => {
   }
 });
 
+// === v2.5 关系人脉图谱 IPC ===
+
+// 关系人脉数据路径
+// 画像关系文本 → 图谱关系类型映射
+function _mapProfileRelationToType(relation) {
+  if (!relation) return 'colleague';
+  const r = relation.toLowerCase();
+  if (['老板', '领导', '上级', '总监', 'vp', '经理', '主管', 'boss', 'manager', 'director'].some(k => r.includes(k))) return 'leader';
+  if (['下属', '组员', '徒弟', '下级', 'subordinate', 'report'].some(k => r.includes(k))) return 'subordinate';
+  if (['客户', '甲方', '买方', 'customer', 'client'].some(k => r.includes(k))) return 'client';
+  if (['朋友', '同学', '好友', 'friend', 'classmate'].some(k => r.includes(k))) return 'friend';
+  if (['家人', '亲属', '父母', '兄弟', '姐妹', '配偶', 'family'].some(k => r.includes(k))) return 'family';
+  if (['自己', '本人', '我'].some(k => r.includes(k))) return 'self';
+  return 'colleague';
+}
+
+function getRelationshipPath() {
+  const userDataPath = app.getPath('userData');
+  const relPath = path.join(userDataPath, 'relationship');
+  if (!fs.existsSync(relPath)) fs.mkdirSync(relPath, { recursive: true });
+  return relPath;
+}
+
+// 从实体图谱和记忆系统构建人脉数据
+function buildPersonData() {
+  const userDataPath = app.getPath('userData');
+  const persons = [];
+  const relations = [];
+
+  // 1. 从实体图谱提取人物
+  const entityPath = path.join(userDataPath, 'memory', 'entity-graph.json');
+  let entityGraph = {};
+  try {
+    if (fs.existsSync(entityPath)) {
+      const raw = JSON.parse(fs.readFileSync(entityPath, 'utf8'));
+      entityGraph = raw.entities || raw || {};
+    }
+  } catch (_) {}
+
+  // 2. 从记忆中提取人物相关数据
+  const memoriesPath = path.join(userDataPath, 'memory', 'memories.json');
+  let memories = [];
+  try {
+    if (fs.existsSync(memoriesPath)) {
+      memories = JSON.parse(fs.readFileSync(memoriesPath, 'utf8'));
+    }
+  } catch (_) {}
+
+  // 3. 从用户画像获取高频人物
+  const profilePath = path.join(userDataPath, 'profile.json');
+  let profile = {};
+  try {
+    if (fs.existsSync(profilePath)) {
+      profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    }
+  } catch (_) {}
+
+  // 4. 从任务中提取人物
+  const dataPath = path.join(userDataPath, 'memora-data.json');
+  let tasks = [];
+  try {
+    if (fs.existsSync(dataPath)) {
+      const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+      tasks = data.tasks || [];
+    }
+  } catch (_) {}
+
+  // 5. 从笔记中提取人物
+  const notesPath = path.join(userDataPath, 'notebook', 'notes.json');
+  let notes = [];
+  try {
+    if (fs.existsSync(notesPath)) {
+      notes = JSON.parse(fs.readFileSync(notesPath, 'utf8'));
+    }
+  } catch (_) {}
+
+  // 构建人物映射
+  const personMap = {};
+
+  // 从实体图谱提取 type=person 或 count>=3 的实体
+  Object.entries(entityGraph).forEach(([name, info]) => {
+    if (info.type === 'person' || (info.count >= 2 && name.length <= 10 && /^[\u4e00-\u9fff\w\s·.]+$/.test(name))) {
+      personMap[name] = {
+        name,
+        type: info.type === 'person' ? 'person' : 'entity',
+        interactionCount: info.count || 0,
+        lastInteraction: info.lastSeen || null,
+        related: info.related || [],
+        role: '',
+        company: '',
+        projects: [],
+        recentMemories: []
+      };
+    }
+  });
+
+  // 从高频人物补充
+  const userName = profile.user?.name || ''; // 用户本人姓名
+  const frequentPersons = profile.frequent_persons || [];
+  frequentPersons.forEach(p => {
+    if (!personMap[p.name]) {
+      personMap[p.name] = {
+        name: p.name,
+        type: 'person',
+        interactionCount: 0,
+        lastInteraction: null,
+        related: [],
+        role: p.role || '',
+        company: p.company || '',
+        projects: p.projects || [],
+        recentMemories: []
+      };
+    } else {
+      // 补充画像信息
+      personMap[p.name].role = personMap[p.name].role || p.role || '';
+      personMap[p.name].company = personMap[p.name].company || p.company || '';
+      if (p.projects) {
+        p.projects.forEach(pr => {
+          if (!personMap[p.name].projects.includes(pr)) personMap[p.name].projects.push(pr);
+        });
+      }
+    }
+    // 从画像中标记关系类型和是否为"我自己"
+    if (personMap[p.name]) {
+      if (p.relation) personMap[p.name].profileRelation = p.relation;
+      if (userName && p.name === userName) personMap[p.name].isSelf = true;
+    }
+  });
+
+  // 标记用户本人：如果画像中有用户名，且 personMap 中存在同名人物
+  if (userName && personMap[userName]) {
+    personMap[userName].isSelf = true;
+    personMap[userName].type = 'self';
+  }
+
+  // 从记忆中补充交互信息
+  memories.forEach(m => {
+    const content = (m.content || '').toLowerCase();
+    Object.keys(personMap).forEach(name => {
+      if (content.includes(name.toLowerCase())) {
+        personMap[name].interactionCount = (personMap[name].interactionCount || 0) + 1;
+        if (m.createdAt && (!personMap[name].lastInteraction || new Date(m.createdAt) > new Date(personMap[name].lastInteraction))) {
+          personMap[name].lastInteraction = m.createdAt;
+        }
+        if (personMap[name].recentMemories.length < 5) {
+          personMap[name].recentMemories.push({
+            content: m.content,
+            createdAt: m.createdAt,
+            category: m.category
+          });
+        }
+      }
+      // 从记忆的 metadata.person 字段
+      if (m.metadata?.person === name) {
+        personMap[name].interactionCount = (personMap[name].interactionCount || 0) + 1;
+      }
+      // 从记忆的 metadata.project 字段补充项目
+      if (m.metadata?.project && !personMap[name].projects.includes(m.metadata.project)) {
+        if (content.includes(name.toLowerCase())) {
+          personMap[name].projects.push(m.metadata.project);
+        }
+      }
+    });
+  });
+
+  // 从任务中补充项目关联
+  tasks.forEach(t => {
+    const title = (t.title || '').toLowerCase();
+    Object.keys(personMap).forEach(name => {
+      if (title.includes(name.toLowerCase())) {
+        if (t.project && !personMap[name].projects.includes(t.project)) {
+          personMap[name].projects.push(t.project);
+        }
+      }
+    });
+  });
+
+  // 构建关系边：同项目 → 共事关系，同记忆出现 → 协作关系，画像关系 → 精确关系
+  const relMap = {};
+  Object.values(personMap).forEach(p => {
+    // "我自己"跳过同项目同事推断（自己不是自己的同事）
+    if (p.isSelf) return;
+
+    // 同项目 → 共事关系
+    (p.projects || []).forEach(proj => {
+      Object.values(personMap).forEach(other => {
+        if (other.name !== p.name && !other.isSelf && (other.projects || []).includes(proj)) {
+          const key = [p.name, other.name].sort().join('→');
+          if (!relMap[key]) {
+            relMap[key] = { source: p.name, target: other.name, type: 'colleague', strength: 0.5, projects: [] };
+          }
+          if (!relMap[key].projects.includes(proj)) relMap[key].projects.push(proj);
+          relMap[key].strength = Math.min(1, relMap[key].strength + 0.2);
+        }
+      });
+    });
+
+    // 实体图谱关联 → 协作关系
+    (p.related || []).forEach(relName => {
+      if (personMap[relName] && relName !== p.name) {
+        const key = [p.name, relName].sort().join('→');
+        if (!relMap[key]) {
+          relMap[key] = { source: p.name, target: relName, type: 'collaboration', strength: 0.3, projects: [] };
+        }
+        relMap[key].strength = Math.min(1, relMap[key].strength + 0.1);
+      }
+    });
+
+    // 画像中标记的关系 → 精确关系类型
+    if (p.profileRelation && userName && personMap[userName]) {
+      const key = [p.name, userName].sort().join('→');
+      const relationType = _mapProfileRelationToType(p.profileRelation);
+      if (!relMap[key]) {
+        relMap[key] = { source: userName, target: p.name, type: relationType, strength: 0.8, projects: [], label: p.profileRelation };
+      } else {
+        // 画像关系优先级更高，覆盖自动推断的类型
+        relMap[key].type = relationType;
+        relMap[key].label = p.profileRelation;
+        relMap[key].strength = Math.max(relMap[key].strength, 0.8);
+      }
+    }
+  });
+
+  // 转换为数组
+  const personList = Object.values(personMap).sort((a, b) => (b.interactionCount || 0) - (a.interactionCount || 0));
+  const relationList = Object.values(relMap);
+
+  // 统计
+  const now = Date.now();
+  const stats = {
+    total: personList.length,
+    frequent: personList.filter(p => (p.interactionCount || 0) >= 5).length,
+    recent: personList.filter(p => p.lastInteraction && (now - new Date(p.lastInteraction).getTime()) < 7 * 86400000).length,
+    stale: personList.filter(p => !p.lastInteraction || (now - new Date(p.lastInteraction).getTime()) > 30 * 86400000).length
+  };
+
+  // 保存缓存
+  try {
+    const relDir = getRelationshipPath();
+    fs.writeFileSync(path.join(relDir, 'persons.json'), JSON.stringify({ persons: personList, relations: relationList, stats, updatedAt: new Date().toISOString() }, null, 2));
+  } catch (_) {}
+
+  return { persons: personList, relations: relationList, stats };
+}
+
+// 获取所有人脉数据（优先读缓存）
+ipcMain.handle('relationship:get-all', async () => {
+  try {
+    // 先尝试读取缓存
+    const relDir = getRelationshipPath();
+    const cachePath = path.join(relDir, 'persons.json');
+    if (fs.existsSync(cachePath)) {
+      const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      const age = Date.now() - new Date(cache.updatedAt || 0).getTime();
+      // 缓存 10 分钟内有效
+      if (age < 600000 && cache.persons && cache.persons.length > 0) {
+        return cache;
+      }
+    }
+    // 重新构建
+    return buildPersonData();
+  } catch (err) {
+    return { persons: [], relations: [], stats: { total: 0, frequent: 0, recent: 0, stale: 0 }, error: err.message };
+  }
+});
+
+// AI 分析人脉网络
+ipcMain.handle('relationship:ai-analyze', async (event) => {
+  try {
+    if (!authState.isLoggedIn) {
+      return { error: '需要登录后使用' };
+    }
+
+    // 重新构建（确保最新数据）
+    const data = buildPersonData();
+    
+    if (data.persons.length === 0) {
+      return { ...data, aiAnalysis: { analysis: '暂无人脉数据，请在日常使用中复制或记录包含人名的信息，Memora 会自动积累人脉关系。' } };
+    }
+
+    const stalePersons = data.persons.filter(p => {
+      if (!p.lastInteraction) return true;
+      return (Date.now() - new Date(p.lastInteraction).getTime()) > 30 * 86400000;
+    });
+
+    // 构建 messages 数组（符合 callAI 签名）
+    const systemPrompt = `你是一个人脉关系分析专家。根据用户的人脉数据，分析关系网络并提供洞察。
+
+⚠️ 输出格式：纯 JSON，不要 markdown 代码块，不要解释文字。
+
+请输出 JSON：
+{
+  "analysis": "整体人脉网络分析（2-3句话）",
+  "recommendations": [
+    { "person": "人名", "reason": "推荐原因", "suggestedAction": "建议行动" }
+  ],
+  "staleContactSuggestions": [
+    { "person": "人名", "lastTopic": "上次讨论的话题", "suggestedMessage": "建议的开场白" }
+  ],
+  "networkInsight": "网络洞察（如关键桥接人、孤立节点等）"
+}`;
+
+    const userPrompt = `分析以下人脉数据：
+- 总人数: ${data.stats.total}
+- 高频人物: ${data.stats.frequent}
+- 需联系: ${data.stats.stale}
+- 人物列表: ${data.persons.slice(0, 30).map(p => `${p.name}(${p.interactionCount}次, ${p.role || '未知角色'}${p.company ? ',' + p.company : ''}${p.projects.length ? ',项目:' + p.projects.join('/') : ''})`).join('; ')}
+- 关系列表: ${data.relations.slice(0, 20).map(r => `${r.source}↔${r.target}(${r.type},强度${r.strength.toFixed(1)})`).join('; ')}
+- 长期未联系人: ${stalePersons.map(p => p.name).join(', ') || '无'}`;
+
+    const { response } = await callAI({
+      module: 'relationship_analysis',
+      category: 'lowvol',
+      structured: true,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    });
+
+    // 解析 AI 返回的 JSON
+    let aiResult = null;
+    if (response && response.ok) {
+      try {
+        const respData = await response.json();
+        let content = respData?.choices?.[0]?.message?.content || '';
+        // 兼容 markdown 代码块包裹的 JSON
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) content = jsonMatch[1];
+        aiResult = JSON.parse(content.trim());
+      } catch (parseErr) {
+        console.warn('[Relationship] AI result parse error:', parseErr.message);
+      }
+    } else {
+      const errText = response ? await response.text().catch(() => '') : 'no response';
+      console.warn('[Relationship] AI API error:', response?.status, errText.substring(0, 200));
+    }
+
+    // 将 AI 建议回填到人物数据
+    if (aiResult?.recommendations) {
+      aiResult.recommendations.forEach(rec => {
+        const person = data.persons.find(p => p.name === rec.person);
+        if (person) person.aiRecommendation = rec.reason + ' → ' + rec.suggestedAction;
+      });
+    }
+    if (aiResult?.staleContactSuggestions) {
+      aiResult.staleContactSuggestions.forEach(sug => {
+        const person = data.persons.find(p => p.name === sug.person);
+        if (person && !person.aiRecommendation) {
+          person.aiRecommendation = `久未联系建议：${sug.suggestedMessage}`;
+        }
+      });
+    }
+
+    // 更新缓存
+    try {
+      const relDir = getRelationshipPath();
+      fs.writeFileSync(path.join(relDir, 'persons.json'), JSON.stringify({ ...data, aiAnalysis: aiResult, updatedAt: new Date().toISOString() }, null, 2));
+    } catch (_) {}
+
+    return data;
+  } catch (err) {
+    console.error('[Relationship] AI analyze error:', err);
+    // 即使 AI 失败，也返回基础数据
+    return buildPersonData();
+  }
+});
+
+// AI 推荐话题
+ipcMain.handle('relationship:ai-suggest', async (event, { personName }) => {
+  try {
+    if (!authState.isLoggedIn) {
+      return { suggestion: '需要登录后使用' };
+    }
+
+    const data = buildPersonData();
+    const person = data.persons.find(p => p.name === personName);
+    if (!person) {
+      return { suggestion: '未找到此人信息' };
+    }
+
+    const relatedRelations = data.relations.filter(r => r.source === personName || r.target === personName);
+    const recentMemories = person.recentMemories || [];
+
+    const systemPrompt2 = '你是一个人脉关系顾问。根据人物信息，推荐下次联系时的话题。输出一段简洁的推荐文字（50-100字），包含：1) 建议的沟通话题 2) 开场白建议。不要输出 JSON，直接输出纯文本。';
+    const userPrompt2 = `人物：${person.name}
+角色：${person.role || '未知'}
+公司：${person.company || '未知'}
+交互次数：${person.interactionCount || 0}
+关联项目：${(person.projects || []).join('、') || '无'}
+相关人脉：${relatedRelations.map(r => (r.source === personName ? r.target : r.source)).join('、') || '无'}
+最近记录：${recentMemories.slice(0, 3).map(m => m.content?.substring(0, 50)).join('；') || '无'}`;
+
+    const { response } = await callAI({
+      module: 'relationship_suggest',
+      category: 'lowvol',
+      structured: false,
+      messages: [
+        { role: 'system', content: systemPrompt2 },
+        { role: 'user', content: userPrompt2 }
+      ]
+    });
+
+    let suggestion = '无法生成推荐';
+    if (response && response.ok) {
+      try {
+        const respData = await response.json();
+        suggestion = respData?.choices?.[0]?.message?.content?.trim() || suggestion;
+      } catch (_) {}
+    }
+
+    return { suggestion };
+  } catch (err) {
+    return { suggestion: 'AI 推荐生成失败: ' + err.message };
+  }
+});
+
+// AI 推测人物关系（结合记忆+画像，走 callAI 自动适配 agent/LLM 模式）
+ipcMain.handle('relationship:ai-infer-relations', async (event) => {
+  try {
+    if (!authState.isLoggedIn) {
+      return { error: '需要登录后使用' };
+    }
+
+    const data = buildPersonData();
+    if (data.persons.length < 2) {
+      return { ...data, inferredRelations: [], message: '人物数量不足，至少需要2个人物才能推测关系' };
+    }
+
+    const profile = loadProfile();
+    const userName = profile.user?.name || '用户';
+
+    // 构建人物摘要（含画像关系信息）
+    const personSummaries = data.persons.slice(0, 30).map(p => {
+      const parts = [p.name];
+      if (p.isSelf) parts.push('是用户本人');
+      if (p.role) parts.push(`角色:${p.role}`);
+      if (p.company) parts.push(`公司:${p.company}`);
+      if (p.profileRelation) parts.push(`与用户关系:${p.profileRelation}`);
+      if (p.projects?.length) parts.push(`项目:${p.projects.join('/')}`);
+      parts.push(`交互${p.interactionCount || 0}次`);
+      return parts.join(',');
+    });
+
+    // 已知关系
+    const knownRelations = data.relations.slice(0, 20).map(r =>
+      `${r.source}↔${r.target}(${r.type}${r.label ? '/' + r.label : ''},强度${r.strength.toFixed(1)})`
+    );
+
+    // 最近记忆中的人物提及
+    const recentMemories = [];
+    data.persons.slice(0, 10).forEach(p => {
+      (p.recentMemories || []).slice(0, 2).forEach(m => {
+        recentMemories.push(`${p.name}: ${m.content?.substring(0, 60)}`);
+      });
+    });
+
+    const systemPrompt = `你是一个人脉关系推理专家。根据用户的人物数据、画像信息和记忆记录，推测人物之间可能的关系。
+
+重要规则：
+1. "${userName}"是用户本人，不应该被当作"同事"，应该标记为"本人"
+2. 用户与其他人的关系应该从画像中获取（如"老板"、"同事"、"客户"等），而不是统称为"同事"
+3. 推测非用户本人之间的人物关系时，考虑：同公司→同事、同项目→协作、角色差异→上下级
+4. 如果信息不足，不要强行推测，标注"未知"
+
+⚠️ 输出格式：纯 JSON，不要 markdown 代码块，不要解释文字。
+
+输出 JSON：
+{
+  "inferredRelations": [
+    {
+      "source": "人物A",
+      "target": "人物B",
+      "type": "关系类型(leader/subordinate/colleague/client/friend/family/self)",
+      "label": "关系标签(如：直属上级、同组同事、甲方客户)",
+      "strength": 0.0-1.0,
+      "confidence": 0.0-1.0,
+      "reason": "推测依据"
+    }
+  ],
+  "selfPerson": "用户本人的姓名（如果在人物列表中）",
+  "insights": ["关于人脉网络的整体洞察（1-3条）"]
+}`;
+
+    const userPrompt = `用户姓名：${userName}
+人物列表（最多30人）：
+${personSummaries.join('\n')}
+
+已知关系：
+${knownRelations.join('\n') || '无'}
+
+最近记忆中的人物提及：
+${recentMemories.slice(0, 15).join('\n') || '无'}
+
+请推测人物之间更精确的关系，特别是：
+1. 标注用户本人（${userName}）与每个人的关系（不要统称"同事"）
+2. 推测非用户本人之间可能存在的上下级、同组等关系
+3. 标记每条推测的置信度`;
+
+    const { response } = await callAI({
+      module: 'relationship_infer',
+      category: 'lowvol',
+      structured: true,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    });
+
+    let inferResult = null;
+    if (response && response.ok) {
+      try {
+        const respData = await response.json();
+        let content = respData?.choices?.[0]?.message?.content || '';
+        // 兼容 markdown 代码块包裹的 JSON
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) content = jsonMatch[1];
+        inferResult = JSON.parse(content.trim());
+      } catch (parseErr) {
+        console.warn('[Relationship] AI infer parse error:', parseErr.message);
+      }
+    } else {
+      const errText = response ? await response.text().catch(() => '') : 'no response';
+      console.warn('[Relationship] AI infer API error:', response?.status, errText.substring(0, 200));
+    }
+
+    // 将推断结果合并到关系数据
+    if (inferResult?.inferredRelations) {
+      inferResult.inferredRelations.forEach(inf => {
+        const existingRel = data.relations.find(r =>
+          (r.source === inf.source && r.target === inf.target) ||
+          (r.source === inf.target && r.target === inf.source)
+        );
+        if (existingRel) {
+          // 更新已有关系：AI 推断的类型和标签优先
+          if (inf.type && inf.confidence >= 0.7) {
+            existingRel.type = inf.type;
+            existingRel.label = inf.label || inf.type;
+            existingRel.aiInferred = true;
+            existingRel.confidence = inf.confidence;
+            existingRel.reason = inf.reason || '';
+          }
+        } else if (inf.confidence >= 0.5) {
+          // 新增推测关系
+          data.relations.push({
+            source: inf.source,
+            target: inf.target,
+            type: inf.type || 'unknown',
+            strength: inf.strength || 0.3,
+            label: inf.label || inf.type,
+            projects: [],
+            aiInferred: true,
+            confidence: inf.confidence,
+            reason: inf.reason || ''
+          });
+        }
+      });
+    }
+
+    // 标记用户本人
+    if (inferResult?.selfPerson) {
+      const selfPerson = data.persons.find(p => p.name === inferResult.selfPerson);
+      if (selfPerson) selfPerson.isSelf = true;
+    }
+
+    // 保存缓存
+    try {
+      const relDir = getRelationshipPath();
+      fs.writeFileSync(path.join(relDir, 'persons.json'), JSON.stringify({ ...data, aiInferred: true, updatedAt: new Date().toISOString() }, null, 2));
+    } catch (_) {}
+
+    return {
+      ...data,
+      inferredRelations: inferResult?.inferredRelations || [],
+      insights: inferResult?.insights || [],
+      selfPerson: inferResult?.selfPerson || userName
+    };
+  } catch (err) {
+    console.error('[Relationship] AI infer error:', err);
+    return buildPersonData();
+  }
+});
+
 // === v2.3 多模态知识库 IPC ===
 
 // 多模态存储路径
@@ -12269,6 +12923,8 @@ ${JSON.stringify(summary)}`;
 
     const config = getInsightADPConfig('activation');
     const result = await callADPForInsight(config, bookPrompt, JSON.stringify(summary), 'book_generation');
+
+    console.log('[Multimodal] Generate book AI raw result:', JSON.stringify(result).substring(0, 500));
 
     console.log('[Multimodal] Generate book AI result:', {
       hasTitle: !!result.title,
@@ -13276,4 +13932,85 @@ ipcMain.handle('data:import-confirm', async (event, { importData, mergeMode }) =
     console.error('[Import Confirm] Failed:', error);
     return { success: false, error: error.message };
   }
+});
+
+// === v2.5 macOS Widget 数据同步 ===
+// 将任务和番茄钟状态写入共享目录，供 WidgetKit 读取
+
+const WIDGET_SYNC_INTERVAL = 5 * 60 * 1000; // 5 分钟
+let widgetSyncTimer = null;
+
+/** 同步 Widget 数据到共享文件 */
+function syncWidgetData() {
+  try {
+    const userDataPath = app.getPath('userData');
+    const tasks = db?.data?.tasks || [];
+    
+    // 今日待办 Top 3（未完成 + 按优先级排序）
+    const today = new Date().toISOString().split('T')[0];
+    const pendingTasks = tasks
+      .filter(t => !t.completed && (!t.dueDate || t.dueDate <= today || t.dueDate === today))
+      .sort((a, b) => {
+        const pOrder = { high: 0, medium: 1, low: 2 };
+        return (pOrder[a.priority] || 2) - (pOrder[b.priority] || 2);
+      })
+      .slice(0, 3)
+      .map(t => ({
+        id: t.id || String(Math.random()),
+        title: (t.title || '').substring(0, 40),
+        priority: t.priority || 'medium',
+        dueDate: t.dueDate || null,
+        isCompleted: !!t.completed
+      }));
+    
+    // 番茄钟状态
+    const pomodoroStatePath = path.join(userDataPath, 'pomodoro-state.json');
+    let pomodoro = null;
+    if (fs.existsSync(pomodoroStatePath)) {
+      try {
+        const pomoData = JSON.parse(fs.readFileSync(pomodoroStatePath, 'utf8'));
+        if (pomoData.isRunning) {
+          pomodoro = {
+            isRunning: true,
+            remainingSeconds: Math.max(0, Math.floor(((pomoData.endTime || 0) - Date.now()) / 1000)),
+            currentTask: pomoData.taskTitle || null
+          };
+        }
+      } catch (_) {}
+    }
+    
+    const widgetData = {
+      tasks: pendingTasks,
+      pomodoro,
+      lastUpdated: new Date().toISOString()
+    };
+    
+    // 写入 App Group 共享目录
+    // macOS: ~/Library/Group Containers/group.com.memora.app/
+    const appGroupID = 'group.com.memora.app';
+    const groupPath = path.join(process.env.HOME || '/tmp', 'Library', 'Group Containers', appGroupID);
+    if (!fs.existsSync(groupPath)) {
+      try { fs.mkdirSync(groupPath, { recursive: true }); } catch (_) {}
+    }
+    
+    const widgetDataPath = path.join(groupPath, 'widgetData.json');
+    fs.writeFileSync(widgetDataPath, JSON.stringify(widgetData, null, 2));
+    
+    console.log(`[Widget] Synced: ${pendingTasks.length} tasks, pomodoro=${pomodoro?.isRunning ? 'running' : 'idle'}`);
+  } catch (err) {
+    console.warn('[Widget] Sync error:', err.message);
+  }
+}
+
+/** 启动 Widget 定时同步 */
+function startWidgetSync() {
+  if (widgetSyncTimer) return;
+  syncWidgetData(); // 立即同步一次
+  widgetSyncTimer = setInterval(syncWidgetData, WIDGET_SYNC_INTERVAL);
+  console.log('[Widget] Sync started (interval: 5min)');
+}
+
+// 应用就绪后启动 Widget 同步
+app.whenReady().then(() => {
+  setTimeout(startWidgetSync, 5000);
 });

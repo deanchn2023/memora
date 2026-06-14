@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   analyzeTask: (text) => ipcRenderer.invoke('analyze-task', text),
   analyzeClipboard: (text) => ipcRenderer.invoke('analyze-clipboard', text),
   optimizeClipboardPrompt: (feedback) => ipcRenderer.invoke('optimize-clipboard-prompt', feedback),
+  aiContinueWrite: (context) => ipcRenderer.invoke('ai-continue-writing', context),
   
   // 记事本系统
   notebookAddNote: (note) => ipcRenderer.invoke('notebook-add-note', note),
@@ -391,6 +392,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   multimodalOpenFile: (id) => ipcRenderer.invoke('multimodal:open-file', id),
   multimodalPickFiles: () => ipcRenderer.invoke('multimodal:pick-files'),
   multimodalImportBuffer: (options) => ipcRenderer.invoke('multimodal:import-buffer', options),
+
+  // v2.5 关系人脉图谱
+  relationshipGetAll: () => ipcRenderer.invoke('relationship:get-all'),
+  relationshipAiAnalyze: () => ipcRenderer.invoke('relationship:ai-analyze'),
+  relationshipAiSuggest: (personName) => ipcRenderer.invoke('relationship:ai-suggest', { personName }),
+  relationshipAiInferRelations: () => ipcRenderer.invoke('relationship:ai-infer-relations'),
 
   // 数据导出/导入
   dataExport: (password) => ipcRenderer.invoke('data:export', { password }),

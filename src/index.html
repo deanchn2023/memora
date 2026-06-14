@@ -16,8 +16,10 @@
   <link rel="stylesheet" href="styles/graph.css">
   <link rel="stylesheet" href="styles/insight.css">
   <link rel="stylesheet" href="styles/richEditor.css">
+  <link rel="stylesheet" href="styles/relationship.css">
   <script src="scripts/i18n.js"></script>
   <script src="scripts/richEditor.js"></script>
+  <script src="scripts/relationship.js"></script>
 </head>
 <body>
   <div id="app">
@@ -122,6 +124,7 @@
               <div class="task-sort-toggle" id="taskSortToggle">
                 <button class="sort-btn active" data-sort="dueDate" title="按截止时间排序">⏰</button>
                 <button class="sort-btn" data-sort="priority" title="按优先级排序">🔥</button>
+                <button class="sort-btn" data-sort="latest" title="按最新排序">🆕</button>
               </div>
             </div>
             <div class="task-list" id="taskList">
@@ -654,6 +657,7 @@
               <button class="insight-tab" data-tab="activation"><span class="tab-icon">⚡</span> <span data-i18n="insight.activation">知识活化</span></button>
               <button class="insight-tab" data-tab="evolution"><span class="tab-icon">🌱</span> <span data-i18n="insight.evolution">知识演化</span></button>
               <button class="insight-tab" data-tab="conflicts"><span class="tab-icon">⚡</span> <span data-i18n="insight.conflicts">冲突检测</span></button>
+              <button class="insight-tab" data-tab="relationship"><span class="tab-icon">👥</span> <span data-i18n="insight.relationship">人脉图谱</span></button>
             </div>
             <div class="insight-content">
               <!-- 仪表盘面板 -->
@@ -688,6 +692,12 @@
               <div class="insight-panel" id="insightPanel_conflicts">
                 <div id="insightConflictContent">
                   <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingConflicts">加载冲突检测...</span></div>
+                </div>
+              </div>
+              <!-- 关系人脉面板 -->
+              <div class="insight-panel" id="insightPanel_relationship">
+                <div id="relationshipContent">
+                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingRelationship">加载人脉图谱...</span></div>
                 </div>
               </div>
             </div>
@@ -776,7 +786,7 @@
           <label>📝 AI智能分析（输入任务描述，AI自动创建待办）</label>
           <div id="aiTaskInputEditor"></div>
           <div style="margin-top: 8px; display: flex; gap: 8px;">
-            <button class="btn primary small" id="aiAnalyzeBtn">🤖 AI分析</button>
+            <button class="btn primary small" id="aiAnalyzeBtn">🤖 AI分析待办</button>
             <button class="btn secondary small" id="aiSaveToNoteBtn">📝 保存到记事本</button>
             <button class="btn secondary small" id="aiExtractMemoryBtn">🧠 提炼到记忆</button>
             <button class="btn secondary small" id="aiSaveAsQuestionBtn">❓ 记录问题</button>
@@ -1055,22 +1065,67 @@
             <!-- 个人信息编辑区（默认隐藏） -->
             <div id="profileEditSection" class="hidden" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color, #d1d1d6);">
               <h5 style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary);" data-i18n="profile.editPersonalInfo">修改个人信息</h5>
-              <div class="form-group" style="margin-bottom: 8px;">
-                <label for="profileName" style="font-size: 12px;" data-i18n="profile.name">姓名</label>
-                <input type="text" id="profileName" placeholder="您的姓名" data-i18n-placeholder="profile.namePh" maxlength="30" style="font-size: 13px; padding: 7px 10px;">
+              <div class="profile-edit-grid">
+                <div class="form-group" style="margin-bottom: 8px;">
+                  <label for="orgProfileName" style="font-size: 12px;" data-i18n="profile.name">姓名</label>
+                  <input type="text" id="orgProfileName" placeholder="您的姓名" data-i18n-placeholder="profile.namePh" maxlength="30" style="font-size: 13px; padding: 7px 10px;">
+                </div>
+                <div class="form-group" style="margin-bottom: 8px;">
+                  <label for="orgProfileNickname" style="font-size: 12px;" data-i18n="profile.nickname">昵称</label>
+                  <input type="text" id="orgProfileNickname" placeholder="展示用名" data-i18n-placeholder="profile.nicknamePh" maxlength="30" style="font-size: 13px; padding: 7px 10px;">
+                </div>
+                <div class="form-group" style="margin-bottom: 8px;">
+                  <label for="orgProfileEmail" style="font-size: 12px;" data-i18n="profile.email">邮箱</label>
+                  <input type="email" id="orgProfileEmail" placeholder="选填" data-i18n-placeholder="profile.emailPh" maxlength="100" style="font-size: 13px; padding: 7px 10px;">
+                </div>
+                <div class="form-group" style="margin-bottom: 8px;">
+                  <label for="orgProfileMobile" style="font-size: 12px;" data-i18n="profile.mobile">手机号</label>
+                  <input type="tel" id="orgProfileMobile" placeholder="选填" data-i18n-placeholder="profile.mobilePh" maxlength="11" style="font-size: 13px; padding: 7px 10px;">
+                </div>
               </div>
-              <div class="form-group" style="margin-bottom: 8px;">
-                <label for="profileNickname" style="font-size: 12px;" data-i18n="profile.nickname">昵称</label>
-                <input type="text" id="profileNickname" placeholder="展示用名" data-i18n-placeholder="profile.nicknamePh" maxlength="30" style="font-size: 13px; padding: 7px 10px;">
+              <!-- 更多字段（折叠） -->
+              <div id="orgProfileMoreFields" class="hidden">
+                <div class="profile-edit-grid">
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileGender" style="font-size: 12px;" data-i18n="profile.gender">性别</label>
+                    <select id="orgProfileGender" style="font-size: 13px; padding: 7px 10px; width: 100%;">
+                      <option value="">未设置</option>
+                      <option value="1">男</option>
+                      <option value="2">女</option>
+                      <option value="0">其他</option>
+                    </select>
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileBirthDate" style="font-size: 12px;" data-i18n="profile.birthDate">出生日期</label>
+                    <input type="date" id="orgProfileBirthDate" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileProfession" style="font-size: 12px;" data-i18n="profile.profession">职业</label>
+                    <input type="text" id="orgProfileProfession" placeholder="如：产品经理" data-i18n-placeholder="profile.professionPh" maxlength="50" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileOrganization" style="font-size: 12px;" data-i18n="profile.organization">组织</label>
+                    <input type="text" id="orgProfileOrganization" placeholder="如：腾讯" data-i18n-placeholder="profile.organizationPh" maxlength="100" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileIndustry" style="font-size: 12px;" data-i18n="profile.industry">行业</label>
+                    <input type="text" id="orgProfileIndustry" placeholder="如：互联网" data-i18n-placeholder="profile.industryPh" maxlength="50" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileRegion" style="font-size: 12px;" data-i18n="profile.region">地区</label>
+                    <input type="text" id="orgProfileRegion" placeholder="如：深圳" data-i18n-placeholder="profile.regionPh" maxlength="50" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileAddress" style="font-size: 12px;" data-i18n="profile.address">地址</label>
+                    <input type="text" id="orgProfileAddress" placeholder="详细地址" maxlength="200" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="orgProfileAvatar" style="font-size: 12px;" data-i18n="profile.avatar">头像 URL</label>
+                    <input type="url" id="orgProfileAvatar" placeholder="https://..." maxlength="500" style="font-size: 13px; padding: 7px 10px;">
+                  </div>
+                </div>
               </div>
-              <div class="form-group" style="margin-bottom: 8px;">
-                <label for="profileEmail" style="font-size: 12px;" data-i18n="profile.email">邮箱</label>
-                <input type="email" id="profileEmail" placeholder="选填" data-i18n-placeholder="profile.emailPh" maxlength="100" style="font-size: 13px; padding: 7px 10px;">
-              </div>
-              <div class="form-group" style="margin-bottom: 8px;">
-                <label for="profileMobile" style="font-size: 12px;" data-i18n="profile.mobile">手机号</label>
-                <input type="tel" id="profileMobile" placeholder="选填" data-i18n-placeholder="profile.mobilePh" maxlength="11" style="font-size: 13px; padding: 7px 10px;">
-              </div>
+              <button id="orgProfileToggleMore" style="font-size: 11px; color: var(--accent, #007AFF); background: none; border: none; cursor: pointer; padding: 4px 0; margin-bottom: 8px;" onclick="App.toggleProfileMoreFields()">▼ 更多信息</button>
               <div style="display: flex; gap: 8px; justify-content: flex-end;">
                 <button class="btn secondary" style="font-size: 12px; padding: 5px 14px;" onclick="App.toggleProfileEdit()">取消</button>
                 <button class="btn primary" style="font-size: 12px; padding: 5px 14px;" onclick="App.saveProfileEdit()">保存</button>
@@ -1177,100 +1232,16 @@
             <span class="config-server-badge">🏢 组织配置</span>
             <span>当前使用组织统一配置，以下设置由管理员管理</span>
           </div>
+          <!-- 基础配置：只显示通用 AppKey + 基本设置 -->
           <div class="form-group">
             <label for="adpAppKey">ADP AppKey（AI助手通用）</label>
             <input type="password" id="adpAppKey" placeholder="输入ADP应用AppKey">
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
               腾讯云ADP智能体平台的AppKey，用于AI助手功能。配置后可以使用更强大的AI能力。
             </small>
-          </div>
-          <div class="form-group">
-            <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey</label>
-            <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用内置知识AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识推荐专用 AppKey，与通用 ADP AppKey 不同。留空时使用内置知识专用 Key。
+            <small class="adp-auto-fill-hint" id="adpAutoFillHint" style="color: var(--primary-color); margin-top: 4px; display: none;">
+              ✅ 已自动应用到所有专业 Agent
             </small>
-          </div>
-          <div class="form-group">
-            <label for="adpSearchAppKey">搜索问答 AppKey</label>
-            <input type="password" id="adpSearchAppKey" placeholder="留空则使用内置知识AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识搜索专用 AppKey，与通用 ADP AppKey 不同。留空时使用内置知识专用 Key。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="adpClusteringAppKey">聚类分析 AppKey</label>
-            <input type="password" id="adpClusteringAppKey" placeholder="留空则使用智能推荐AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识聚类分析专用 AppKey。留空时使用知识推荐 AppKey。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="adpGraphAppKey">图谱构建 AppKey</label>
-            <input type="password" id="adpGraphAppKey" placeholder="留空则使用智能推荐AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              全局知识图谱构建专用 AppKey。留空时使用知识推荐 AppKey。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="adpActivationAppKey">知识活化 AppKey</label>
-            <input type="password" id="adpActivationAppKey" placeholder="留空则使用智能推荐AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识活化推荐 + 知识缺口扫描专用 AppKey。留空时使用知识推荐 AppKey。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="adpEvolutionAppKey">知识演化 AppKey</label>
-            <input type="password" id="adpEvolutionAppKey" placeholder="留空则使用智能推荐AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识演化追踪专用 AppKey。留空时使用知识推荐 AppKey。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="adpConflictAppKey">冲突检测 AppKey</label>
-            <input type="password" id="adpConflictAppKey" placeholder="留空则使用智能推荐AppKey">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              知识冲突检测专用 AppKey。留空时使用知识推荐 AppKey。
-            </small>
-          </div>
-          <div class="form-group">
-            <label for="fileShareApiKey">文件共享 API Key</label>
-            <input type="password" id="fileShareApiKey" placeholder="留空使用内置默认 Key">
-            <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-              File Share 服务 API Key（降级方案）。优先使用下方的「腾讯云文件上传」配置。
-            </small>
-          </div>
-          <!-- 腾讯云文件上传配置卡片 -->
-          <div class="cos-upload-card" id="cosUploadCard">
-            <div class="cos-upload-header" onclick="document.getElementById('cosUploadCard').classList.toggle('expanded')">
-              <div class="cos-upload-title">
-                <span class="cos-upload-icon">☁️</span>
-                <span>腾讯云文件上传（推荐）</span>
-                <span class="cos-status-badge" id="cosStatusBadge">未配置</span>
-              </div>
-              <div class="cos-upload-toggle">▼</div>
-            </div>
-            <div class="cos-upload-body">
-              <div class="cos-upload-desc">
-                <p>配置后，文件将通过 ADP 官方 COS 方式上传，后端可正常接收文档。</p>
-                <p>📝 <a href="https://cloud.tencent.com/document/product/1759/108903" target="_blank" style="color: var(--primary-color);">查看 ADP 文件上传文档</a></p>
-              </div>
-              <div class="form-group">
-                <label for="adpTcSecretId">腾讯云 SecretId</label>
-                <input type="password" id="adpTcSecretId" placeholder="在腾讯云控制台「访问管理 → API密钥管理」获取">
-              </div>
-              <div class="form-group">
-                <label for="adpTcSecretKey">腾讯云 SecretKey</label>
-                <input type="password" id="adpTcSecretKey" placeholder="在腾讯云控制台「访问管理 → API密钥管理」获取">
-              </div>
-              <div class="form-group">
-                <label for="adpBotBizId">BotBizId（应用ID）</label>
-                <input type="text" id="adpBotBizId" placeholder="在 ADP 应用管理页面获取，如 177106121651545xxxx">
-                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
-                  ADP 应用的业务 ID，在应用管理页面的应用详情中获取。与 AppKey 不同。
-                </small>
-              </div>
-            </div>
           </div>
           <div class="form-group">
             <label for="adpUrl">ADP API地址</label>
@@ -1285,6 +1256,111 @@
             <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
               在AI助手界面显示的助手名称。
             </small>
+          </div>
+
+          <!-- 高阶配置：可折叠 -->
+          <div class="agent-advanced-card" id="agentAdvancedCard">
+            <div class="agent-advanced-header" onclick="document.getElementById('agentAdvancedCard').classList.toggle('expanded')">
+              <div class="agent-advanced-title">
+                <span class="agent-advanced-icon">⚙️</span>
+                <span>高阶配置</span>
+                <span class="agent-advanced-badge" id="agentAdvancedBadge">各 Agent 独立配置</span>
+              </div>
+              <div class="agent-advanced-toggle">▼</div>
+            </div>
+            <div class="agent-advanced-body">
+              <div class="agent-advanced-desc">
+                <p>为不同功能的 Agent 配置独立的 AppKey。留空时自动使用上方通用 AppKey。</p>
+              </div>
+              <div class="form-group">
+                <label for="adpKnowledgeAppKey">知识跟随推荐 AppKey</label>
+                <input type="password" id="adpKnowledgeAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  知识推荐专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="adpSearchAppKey">搜索问答 AppKey</label>
+                <input type="password" id="adpSearchAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  知识搜索专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="adpClusteringAppKey">聚类分析 AppKey</label>
+                <input type="password" id="adpClusteringAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  知识聚类分析专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="adpGraphAppKey">图谱构建 AppKey</label>
+                <input type="password" id="adpGraphAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  全局知识图谱构建专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="adpActivationAppKey">知识活化 AppKey</label>
+                <input type="password" id="adpActivationAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  知识活化推荐 + 知识缺口扫描专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="adpEvolutionAppKey">知识演化 AppKey</label>
+                <input type="password" id="adpEvolutionAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  知识演化追踪专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="adpConflictAppKey">冲突检测 AppKey</label>
+                <input type="password" id="adpConflictAppKey" placeholder="留空则使用通用 AppKey">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  知识冲突检测专用 AppKey。留空时自动使用通用 AppKey。
+                </small>
+              </div>
+              <div class="form-group">
+                <label for="fileShareApiKey">文件共享 API Key</label>
+                <input type="password" id="fileShareApiKey" placeholder="留空使用内置默认 Key">
+                <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                  File Share 服务 API Key（降级方案）。优先使用下方的「腾讯云文件上传」配置。
+                </small>
+              </div>
+              <!-- 腾讯云文件上传配置卡片 -->
+              <div class="cos-upload-card" id="cosUploadCard">
+                <div class="cos-upload-header" onclick="event.stopPropagation(); document.getElementById('cosUploadCard').classList.toggle('expanded')">
+                  <div class="cos-upload-title">
+                    <span class="cos-upload-icon">☁️</span>
+                    <span>腾讯云文件上传（推荐）</span>
+                    <span class="cos-status-badge" id="cosStatusBadge">未配置</span>
+                  </div>
+                  <div class="cos-upload-toggle">▼</div>
+                </div>
+                <div class="cos-upload-body">
+                  <div class="cos-upload-desc">
+                    <p>配置后，文件将通过 ADP 官方 COS 方式上传，后端可正常接收文档。</p>
+                    <p>📝 <a href="https://cloud.tencent.com/document/product/1759/108903" target="_blank" style="color: var(--primary-color);">查看 ADP 文件上传文档</a></p>
+                  </div>
+                  <div class="form-group">
+                    <label for="adpTcSecretId">腾讯云 SecretId</label>
+                    <input type="password" id="adpTcSecretId" placeholder="在腾讯云控制台「访问管理 → API密钥管理」获取">
+                  </div>
+                  <div class="form-group">
+                    <label for="adpTcSecretKey">腾讯云 SecretKey</label>
+                    <input type="password" id="adpTcSecretKey" placeholder="在腾讯云控制台「访问管理 → API密钥管理」获取">
+                  </div>
+                  <div class="form-group">
+                    <label for="adpBotBizId">BotBizId（应用ID）</label>
+                    <input type="text" id="adpBotBizId" placeholder="在 ADP 应用管理页面获取，如 177106121651545xxxx">
+                    <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                      ADP 应用的业务 ID，在应用管理页面的应用详情中获取。与 AppKey 不同。
+                    </small>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <!-- AI 完成提醒 -->
           <div class="form-group" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);">

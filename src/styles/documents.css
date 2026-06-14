@@ -987,8 +987,17 @@
   color: #FF3B30;
 }
 
-/* Agent 产物 - 保存到产物的按钮（AI 对话中） */
-.agent-save-artifact-btn {
+/* Agent 产物 - 保存到产物的按钮组（AI 对话中） */
+.agent-artifact-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.agent-save-artifact-btn,
+.agent-open-artifact-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1000,14 +1009,18 @@
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s var(--transition);
-  margin-left: 8px;
-  vertical-align: middle;
 }
 
-.agent-save-artifact-btn:hover {
+.agent-save-artifact-btn:hover,
+.agent-open-artifact-btn:hover {
   background: var(--primary-light);
   border-color: var(--primary-color);
   color: var(--primary-color);
+}
+
+.agent-open-artifact-btn {
+  color: var(--primary-color);
+  border-color: rgba(0, 122, 255, 0.2);
 }
 
 /* 预览弹窗 */

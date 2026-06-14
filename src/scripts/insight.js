@@ -45,6 +45,13 @@ const Insight = {
         } else {
           console.error('[Insight] Panel not found: insightPanel_' + this.currentTab);
         }
+
+        // 关系人脉面板需要撑满容器（去除 padding/overflow）
+        const insightContent = panel?.closest('.insight-content');
+        if (insightContent) {
+          insightContent.classList.toggle('fullscreen-panel', this.currentTab === 'relationship');
+        }
+
         this.onTabSwitch(this.currentTab);
       });
     });
@@ -473,6 +480,44 @@ const Insight = {
     this._toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
   },
 
+  // 展示 AI 处理结果弹窗
+  _showProcessResult(title, details) {
+    let modal = document.getElementById('insightProcessModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'insightProcessModal';
+      modal.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10000;min-width:320px;max-width:480px;background:var(--bg-primary,#fff);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);padding:24px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
+      document.body.appendChild(modal);
+    }
+    const detailHtml = details.map(d => `<div style="padding:6px 0;color:var(--text-secondary,#86868b);font-size:13px;line-height:1.5;white-space:pre-wrap;">${this._escapeHtml(d)}</div>`).join('<div style="border-top:0.5px solid var(--border-light,#e5e5ea);margin:4px 0;"></div>');
+    modal.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="margin:0;font-size:16px;color:var(--text-primary,#1d1d1f);">${this._escapeHtml(title)}</h3>
+        <button id="insightProcessModalClose" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-tertiary,#aeaeb2);padding:4px 8px;">✕</button>
+      </div>
+      <div>${detailHtml}</div>
+    `;
+    // 添加背景遮罩
+    let overlay = document.getElementById('insightProcessOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'insightProcessOverlay';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:9999;';
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = '';
+    modal.style.display = '';
+    const close = () => {
+      modal.style.display = 'none';
+      overlay.style.display = 'none';
+    };
+    document.getElementById('insightProcessModalClose')?.addEventListener('click', close);
+    overlay.addEventListener('click', close);
+    // 10秒后自动关闭
+    clearTimeout(this._processModalTimer);
+    this._processModalTimer = setTimeout(close, 10000);
+  },
+
   onShow() {
     console.log('[Insight] onShow()');
     this.init();
@@ -488,6 +533,7 @@ const Insight = {
         case 'activation': this.loadActivations(); break;
         case 'evolution': this.loadEvolutions(); break;
         case 'conflicts': this.loadConflicts(); break;
+        case 'relationship': window.Relationship?.load(); break;
       }
     } catch (err) {
       console.error('[Insight] onTabSwitch error:', err);
@@ -781,18 +827,11 @@ const Insight = {
           <div class="insight-empty-icon">💡</div>
           <div class="insight-empty-title">暂无活化推荐</div>
           <div class="insight-empty-desc">知识活化引擎会根据你的工作上下文，主动推荐相关历史知识。积累更多记忆和知识后，活化推荐会自动出现。</div>
-        </div>
-        <div style="text-align:center;margin-top:12px">
-          <button class="activation-refresh-btn" id="activationRefreshBtn">重新扫描</button>
         </div>`;
       return;
     }
 
-    container.innerHTML = `
-      <div style="text-align:center;margin-bottom:12px">
-        <button class="activation-refresh-btn" id="activationRefreshBtn">重新扫描</button>
-      </div>
-      ${this.data.activations.map(item => this._renderActivationCard(item)).join('')}`;
+    container.innerHTML = this.data.activations.map(item => this._renderActivationCard(item)).join('');
   },
 
   _renderActivationsError(error) {
@@ -803,9 +842,6 @@ const Insight = {
         <div class="insight-empty-icon">⚠️</div>
         <div class="insight-empty-title">活化分析失败</div>
         <div class="insight-empty-desc">${this._escapeHtml(error || '请稍后重试')}</div>
-      </div>
-      <div style="text-align:center;margin-top:12px">
-        <button class="activation-refresh-btn" id="activationRefreshBtn">重新扫描</button>
       </div>`;
   },
 
@@ -1709,9 +1745,20 @@ const Insight = {
     const btn = document.getElementById('mmGenBookBtn');
     if (!btn) return;
     btn.disabled = true;
-    btn.textContent = '生成中...';
+    btn.textContent = '⏳ 分析知识库...';
 
     try {
+      // 检查知识库是否有数据
+      const atomCount = this.data.knowledgeAtoms?.length || 0;
+      const clusterCount = this.data.knowledgeClusters?.length || 0;
+      const assetCount = this.data.multimodalAssets?.length || 0;
+
+      if (atomCount === 0 && clusterCount === 0 && assetCount === 0) {
+        this._showToast('知识库为空，请先通过剪贴板或资产库积累知识', 'warning');
+        return;
+      }
+
+      btn.textContent = `⏳ AI 分析中...(${atomCount}原子/${clusterCount}聚类/${assetCount}资产)`;
       const result = await this._safeCall(
         () => window.electronAPI?.multimodalGenerateBook?.({}),
         { success: false, error: '未知错误' }
@@ -1725,14 +1772,25 @@ const Insight = {
       });
       if (result?.success) {
         const chCount = result?.book?.chapters?.length || 0;
+        const bookTitle = result?.book?.title || '知识体系';
         if (chCount > 0) {
-          this._showToast(`知识体系生成成功！共 ${chCount} 章`, 'success');
+          // 展示生成结果摘要
+          const chapterNames = result.book.chapters.map((c, i) => `${i + 1}. ${c.title}`).join('\n');
+          this._showProcessResult(`📖「${bookTitle}」生成成功！`, [
+            `共 ${chCount} 章`,
+            chapterNames.substring(0, 200) + (chapterNames.length > 200 ? '...' : '')
+          ]);
         } else {
-          this._showToast('知识体系已生成，但 AI 未能返回有效的章节内容，请稍后重试', 'warning');
+          this._showToast('知识体系已生成，但 AI 未能返回有效的章节内容。可能原因：知识库内容太少或太分散', 'warning');
         }
         this.loadMultimodal();
       } else {
-        this._showToast(result?.error || '生成失败', 'error');
+        const errMsg = result?.error || '生成失败';
+        if (errMsg.includes('登录')) {
+          this._showToast('需要登录后才能使用 AI 生成知识体系', 'error');
+        } else {
+          this._showToast('生成失败：' + errMsg, 'error');
+        }
       }
     } catch (err) {
       this._showToast('生成失败：' + err.message, 'error');
@@ -1831,8 +1889,9 @@ const Insight = {
   },
 
   async _processAsset(id) {
-    // Electron 屏蔽原生 confirm，改用 toast + 直接处理
-    this._showToast('AI 正在处理中...请稍候', 'info');
+    const asset = this.data.multimodalAssets?.find(a => a.id === id);
+    const assetName = asset?.title || asset?.fileName || '未知资产';
+    this._showToast(`正在分析「${assetName}」...`, 'info');
     try {
       const result = await this._safeCall(
         () => window.electronAPI?.multimodalProcess?.(id),
@@ -1840,7 +1899,17 @@ const Insight = {
       );
       console.log('[Insight] _processAsset result:', result);
       if (result?.success) {
-        this._showToast('AI 处理完成', 'success');
+        const a = result.asset || {};
+        const parts = [];
+        if (a.title && a.title !== assetName) parts.push(`标题: ${a.title}`);
+        if (a.description) parts.push(`摘要: ${a.description.substring(0, 80)}${a.description.length > 80 ? '...' : ''}`);
+        if (a.tags?.length) parts.push(`标签: ${a.tags.join(', ')}`);
+        if (a.entityNames?.length) parts.push(`实体: ${a.entityNames.slice(0, 5).join(', ')}`);
+        if (parts.length > 0) {
+          this._showProcessResult('AI 处理完成', parts);
+        } else {
+          this._showToast('AI 处理完成，但未生成新的标题/描述/标签', 'warning');
+        }
         this.loadMultimodal();
       } else {
         this._showToast(result?.error || '处理失败', 'error');
