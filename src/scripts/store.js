@@ -18,7 +18,11 @@ const Store = {
       enoughTimeBeforeDue: 120,
       nearDeadlineTime: 30,
       soundEnabled: true,
-      notificationEnabled: true
+      notificationEnabled: true,
+      overdueReminderEnabled: true,
+      overdueReminderInterval: 60,
+      startupCheckEnabled: true,
+      inAppNotifyEnabled: true
     },
     clipboard: {
       watchEnabled: true,
@@ -28,7 +32,8 @@ const Store = {
     calendar: {
       syncEnabled: true,
       calendarName: 'TaskFlow'
-    }
+    },
+    localContextEnabled: true
   },
 
   getTasks() {
@@ -79,6 +84,10 @@ const Store = {
       calendarEventId: null,
       source: task.source || 'manual',
       rawText: task.rawText || '',
+      taskType: task.taskType || 'manual',
+      expertId: task.expertId || null,
+      expertName: task.expertName || null,
+      recurrence: task.recurrence || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       completedAt: null
@@ -108,6 +117,125 @@ const Store = {
     const filtered = tasks.filter(t => t.id !== taskId);
     this.saveTasks(filtered);
     return true;
+  },
+
+  deleteRecurringAll(parentId) {
+    const tasks = this.getTasks();
+    const filtered = tasks.filter(t => !(t.recurrence && t.recurrence.parentId === parentId));
+    this.saveTasks(filtered);
+    return true;
+  },
+
+  getRecurringInstances(parentId) {
+    const tasks = this.getTasks();
+    return tasks.filter(t => t.recurrence && t.recurrence.parentId === parentId);
+  },
+
+  getNextRecurrenceDate(dueDate, recurrence) {
+    if (!dueDate || !recurrence || recurrence.type === 'none') return null;
+    const date = new Date(dueDate);
+    const type = recurrence.type;
+
+    if (type === 'daily') {
+      date.setDate(date.getDate() + 1);
+    } else if (type === 'weekdays') {
+      date.setDate(date.getDate() + 1);
+      while (date.getDay() === 0 || date.getDay() === 6) {
+        date.setDate(date.getDate() + 1);
+      }
+    } else if (type === 'weekly') {
+      const days = recurrence.daysOfWeek || [date.getDay()];
+      const currentDay = date.getDay();
+      const sortedDays = [...days].sort((a, b) => a - b);
+      const nextDay = sortedDays.find(d => d > currentDay);
+      if (nextDay !== undefined) {
+        date.setDate(date.getDate() + (nextDay - currentDay));
+      } else {
+        const firstDay = sortedDays[0];
+        const daysUntilNext = (7 - currentDay) + firstDay;
+        date.setDate(date.getDate() + daysUntilNext);
+      }
+    } else if (type === 'biweekly') {
+      date.setDate(date.getDate() + 14);
+    } else if (type === 'monthly') {
+      date.setMonth(date.getMonth() + 1);
+    } else if (type === 'custom') {
+      const interval = recurrence.interval || 2;
+      const unit = recurrence.unit || 'day';
+      if (unit === 'day') date.setDate(date.getDate() + interval);
+      else if (unit === 'week') date.setDate(date.getDate() + interval * 7);
+      else if (unit === 'month') date.setMonth(date.getMonth() + interval);
+    }
+    return date;
+  },
+
+  createNextRecurrenceInstance(task) {
+    if (!task.recurrence || task.recurrence.type === 'none') return null;
+    if (!task.recurrence.parentId && !task.recurrence.isTemplate) return null;
+
+    const nextDate = this.getNextRecurrenceDate(task.dueDate, task.recurrence);
+    if (!nextDate) return null;
+
+    // 检查是否超过结束日期
+    if (task.recurrence.endDate && nextDate > new Date(task.recurrence.endDate)) return null;
+
+    const parentId = task.recurrence.parentId || task.id;
+    const newTask = {
+      id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      title: task.title,
+      description: task.description || '',
+      estimatedDuration: task.estimatedDuration || 60,
+      actualDuration: 0,
+      priority: task.priority || 'medium',
+      status: 'pending',
+      dueDate: nextDate.toISOString(),
+      reminderSettings: task.reminderSettings || { enoughTime: 120, nearDeadline: 30 },
+      reminders: [],
+      pomodoroSessions: [],
+      calendarEventId: null,
+      source: task.source || 'manual',
+      rawText: '',
+      taskType: task.taskType || 'manual',
+      expertId: task.expertId || null,
+      expertName: task.expertName || null,
+      recurrence: {
+        ...task.recurrence,
+        parentId: parentId,
+        isInstance: true,
+        isTemplate: false
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedAt: null
+    };
+
+    const tasks = this.getTasks();
+    tasks.push(newTask);
+    this.saveTasks(tasks);
+    return newTask;
+  },
+
+  getRecurrenceLabel(recurrence) {
+    if (!recurrence || recurrence.type === 'none') return '';
+    const labels = {
+      daily: '每天',
+      weekdays: '工作日',
+      weekly: '每周',
+      biweekly: '隔周',
+      monthly: '每月',
+      custom: '自定义'
+    };
+    let label = labels[recurrence.type] || '重复';
+    if (recurrence.type === 'custom' && recurrence.interval) {
+      const unitLabels = { day: '天', week: '周', month: '月' };
+      label = `每${recurrence.interval}${unitLabels[recurrence.unit || 'day'] || '天'}`;
+    }
+    if (recurrence.type === 'weekly' && recurrence.daysOfWeek?.length) {
+      const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+      const daysStr = recurrence.daysOfWeek.map(d => '周' + dayNames[d]).join('、');
+      label = `每周 ${daysStr}`;
+    }
+    return label;
   },
 
   completeTask(taskId) {

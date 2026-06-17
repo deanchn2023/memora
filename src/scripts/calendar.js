@@ -4,8 +4,12 @@ const Calendar = {
   calendarSubView: 'week', // 日历子视图（独立于 currentView，避免被其他视图覆盖）
   calendarActive: false, // 日历标签是否激活
   draggedTask: null,
+  draggedTaskId: null,   // 当前正在拖拽的任务 ID
   isDragging: false,
   dragGhost: null,
+  dragStartX: 0,
+  dragStartY: 0,
+  DRAG_THRESHOLD: 5, // 拖拽触发阈值（像素）
 
   init() {
     this.calendarActive = true; // 默认显示日历
@@ -112,10 +116,198 @@ const Calendar = {
     }
   },
 
-  // 全局拖拽事件（监听 document 级别的 mousemove 和 mouseup）
+  // 全局拖拽事件（自定义 mousedown/mousemove/mouseup 实现，兼容 Electron）
   bindGlobalDragEvents() {
-    document.addEventListener('mousemove', (e) => this.onDragMove(e));
-    document.addEventListener('mouseup', (e) => this.onDragEnd(e));
+    this._onMouseMove = (e) => this._handleDragMove(e);
+    this._onMouseUp = (e) => this._handleDragEnd(e);
+    document.addEventListener('mousemove', this._onMouseMove);
+    document.addEventListener('mouseup', this._onMouseUp);
+  },
+
+  // 自定义拖拽：mousemove
+  _handleDragMove(e) {
+    if (!this.draggedTaskId) return;
+    if (!this.isDragging) {
+      // 检测是否超过拖拽阈值
+      const dx = e.clientX - this.dragStartX;
+      const dy = e.clientY - this.dragStartY;
+      if (Math.sqrt(dx * dx + dy * dy) < this.DRAG_THRESHOLD) return;
+      // 开始拖拽
+      this.isDragging = true;
+      this._createDragGhost(e);
+      // 给被拖拽元素添加 dragging 样式
+      const dragEl = document.querySelector(`[data-drag-id="${this.draggedTaskId}"]`);
+      if (dragEl) dragEl.classList.add('dragging');
+    }
+
+    // 更新拖拽幽灵位置
+    if (this.dragGhost) {
+      this.dragGhost.style.left = (e.clientX - 60) + 'px';
+      this.dragGhost.style.top = (e.clientY - 20) + 'px';
+    }
+
+    // 高亮 drop 目标
+    this._highlightDropTarget(e);
+  },
+
+  // 自定义拖拽：mouseup
+  _handleDragEnd(e) {
+    if (!this.draggedTaskId) return;
+
+    const taskId = this.draggedTaskId;
+
+    if (this.isDragging) {
+      // 执行 drop 逻辑
+      this._executeDrop(taskId, e);
+    }
+
+    // 清理拖拽状态
+    this._cleanupDrag();
+  },
+
+  // 创建拖拽幽灵
+  _createDragGhost(e) {
+    const task = Store.getTasks().find(t => t.id === this.draggedTaskId);
+    if (!task) return;
+
+    this.dragGhost = document.createElement('div');
+    this.dragGhost.className = 'drag-ghost';
+    this.dragGhost.textContent = task.title;
+    this.dragGhost.style.cssText = `
+      position: fixed;
+      z-index: 100000;
+      pointer-events: none;
+      background: var(--primary-color, #007AFF);
+      color: white;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 0 4px 16px rgba(0,122,255,0.35);
+      opacity: 0.9;
+    `;
+    document.body.appendChild(this.dragGhost);
+  },
+
+  // 高亮 drop 目标
+  _highlightDropTarget(e) {
+    this.clearAllDropHighlights();
+    // 隐藏 ghost 和 task-block 以便 elementFromPoint 命中下面的时间槽/日期格
+    if (this.dragGhost) this.dragGhost.style.display = 'none';
+    const dragEl = document.querySelector(`[data-drag-id="${this.draggedTaskId}"]`);
+    if (dragEl) dragEl.style.display = 'none';
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (dragEl) dragEl.style.display = '';
+    if (this.dragGhost) this.dragGhost.style.display = '';
+
+    if (!el) return;
+
+    // 日视图：高亮时间槽
+    if (this.currentView === 'day') {
+      const slot = el.closest('.time-content') || el.closest('.time-slot');
+      if (slot) slot.classList.add('drag-over');
+    }
+    // 周视图：高亮天列
+    else if (this.currentView === 'week') {
+      const dayEl = el.closest('.week-day');
+      if (dayEl) dayEl.classList.add('drag-over');
+    }
+    // 月视图：高亮天格
+    else if (this.currentView === 'month') {
+      const dayEl = el.closest('.month-day');
+      if (dayEl) dayEl.classList.add('drag-over');
+    }
+  },
+
+  // 执行 drop
+  _executeDrop(taskId, e) {
+    // 隐藏 ghost 和被拖拽元素，以便 elementFromPoint 命中下面的元素
+    if (this.dragGhost) this.dragGhost.style.display = 'none';
+    const dragEl = document.querySelector(`[data-drag-id="${this.draggedTaskId}"]`);
+    if (dragEl) dragEl.style.display = 'none';
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (dragEl) dragEl.style.display = '';
+    if (this.dragGhost) this.dragGhost.style.display = '';
+
+    if (!el) return;
+
+    // 日视图：根据鼠标 Y 坐标计算目标时间
+    if (this.currentView === 'day') {
+      const grid = document.getElementById('timeGrid');
+      if (grid) {
+        const gridRect = grid.getBoundingClientRect();
+        // 鼠标在 grid 范围内才处理
+        if (e.clientX >= gridRect.left && e.clientX <= gridRect.right &&
+            e.clientY >= gridRect.top && e.clientY <= gridRect.bottom) {
+          const timeInfo = this.getTimeFromMouseY(e, grid);
+          if (timeInfo) {
+            this.moveTaskToTime(taskId, timeInfo.hour, timeInfo.minute);
+            return;
+          }
+        }
+      }
+    }
+    // 周视图：找到目标日期
+    else if (this.currentView === 'week') {
+      const dayEl = el.closest('.week-day');
+      if (dayEl && dayEl.dataset.date) {
+        this.moveTaskToDate(taskId, dayEl.dataset.date);
+        return;
+      }
+    }
+    // 月视图：找到目标日期
+    else if (this.currentView === 'month') {
+      const dayEl = el.closest('.month-day');
+      if (dayEl && dayEl.dataset.date) {
+        this.moveTaskToDate(taskId, dayEl.dataset.date);
+        return;
+      }
+    }
+  },
+
+  // 清理拖拽状态
+  _cleanupDrag() {
+    // 移除 dragging 样式
+    if (this.draggedTaskId) {
+      const dragEl = document.querySelector(`[data-drag-id="${this.draggedTaskId}"]`);
+      if (dragEl) dragEl.classList.remove('dragging');
+    }
+
+    // 移除幽灵
+    if (this.dragGhost) {
+      this.dragGhost.remove();
+      this.dragGhost = null;
+    }
+
+    this.draggedTaskId = null;
+    this.draggedTask = null;
+    this.isDragging = false;
+    this.clearAllDropHighlights();
+  },
+
+  // 注册拖拽源（统一入口，所有可拖拽元素调用此方法）
+  _bindDraggable(el, taskId) {
+    el.dataset.dragId = taskId;
+    el.style.cursor = 'grab';
+
+    el.addEventListener('mousedown', (e) => {
+      // 忽略按钮点击
+      if (e.target.closest('button')) return;
+      // 已完成任务不可拖拽
+      const task = Store.getTasks().find(t => t.id === taskId);
+      if (task && task.status === 'completed') return;
+
+      e.preventDefault();
+      this.draggedTaskId = taskId;
+      this.draggedTask = task;
+      this.dragStartX = e.clientX;
+      this.dragStartY = e.clientY;
+      this.isDragging = false;
+    });
   },
 
   navigate(direction) {
@@ -244,8 +436,7 @@ const Calendar = {
 
     tasks.forEach(task => this.renderTaskBlock(task));
 
-    // 给整个网格绑定 drop 事件（基于鼠标位置计算目标时间）
-    this.bindDayViewDrop(grid);
+    // 日视图不再需要 HTML5 drop 绑定，拖拽由自定义 mousedown/mouseup 处理
 
     this.scrollToCurrentTime();
   },
@@ -342,7 +533,6 @@ const Calendar = {
     block.style.height = `${Math.max(height, 28)}px`;
     block.style.top = `${top}px`;
     block.dataset.taskId = task.id;
-    block.draggable = !isCompleted;
 
     const draftLabel = task.isDraft ? '<span class="task-draft-label">草稿</span>' : '';
     const completedLabel = isCompleted ? '<span class="task-completed-label">✓ 已完成</span>' : '';
@@ -368,61 +558,12 @@ const Calendar = {
       this.deleteTask(task);
     });
 
-    // 拖拽开始
-    block.addEventListener('dragstart', (e) => {
-      if (e.target.classList.contains('task-delete-btn')) {
-        e.preventDefault();
-        return;
-      }
-      e.dataTransfer.setData('text/plain', task.id);
-      e.dataTransfer.effectAllowed = 'move';
-      this.draggedTask = task;
-      block.classList.add('dragging');
-    });
-
-    block.addEventListener('dragend', () => {
-      block.classList.remove('dragging');
-      this.draggedTask = null;
-      this.clearAllDropHighlights();
-    });
-
-    overlay.appendChild(block);
-  },
-
-  // 日视图网格级 drop 事件（基于鼠标位置精确定位目标时间）
-  bindDayViewDrop(grid) {
-    // 先移除旧事件（防止重复绑定）
-    if (grid._dayDropHandler) {
-      grid.removeEventListener('dragover', grid._dayDragOverHandler);
-      grid.removeEventListener('drop', grid._dayDropHandler);
+    // 统一自定义拖拽
+    if (!isCompleted) {
+      this._bindDraggable(block, task.id);
     }
 
-    grid._dayDragOverHandler = (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-
-      // 高亮对应的时间槽
-      const timeInfo = this.getTimeFromMouseY(e, grid);
-      if (timeInfo) {
-        this.highlightTimeSlot(grid, timeInfo.hour, timeInfo.minute);
-      }
-    };
-
-    grid._dayDropHandler = (e) => {
-      e.preventDefault();
-      this.clearAllDropHighlights();
-
-      const taskId = e.dataTransfer.getData('text/plain');
-      if (!taskId) return;
-
-      const timeInfo = this.getTimeFromMouseY(e, grid);
-      if (timeInfo) {
-        this.moveTaskToTime(taskId, timeInfo.hour, timeInfo.minute);
-      }
-    };
-
-    grid.addEventListener('dragover', grid._dayDragOverHandler);
-    grid.addEventListener('drop', grid._dayDropHandler);
+    overlay.appendChild(block);
   },
 
   // 根据鼠标 Y 坐标计算对应的时间（30分钟精度）
@@ -461,41 +602,6 @@ const Calendar = {
       if (parseInt(slot.dataset.hour) === hour && parseInt(slot.dataset.minute) === minute) {
         slot.classList.add('drag-over');
       }
-    });
-  },
-
-  // 给容器内的所有 drop-target 元素绑定拖放事件
-  bindDropEvents(container) {
-    const targets = container.querySelectorAll('.drop-target');
-    targets.forEach(target => {
-      target.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        target.classList.add('drag-over');
-      });
-
-      target.addEventListener('dragleave', () => {
-        target.classList.remove('drag-over');
-      });
-
-      target.addEventListener('drop', (e) => {
-        e.preventDefault();
-        target.classList.remove('drag-over');
-        const taskId = e.dataTransfer.getData('text/plain');
-        if (taskId) {
-          // 日视图：更新时间
-          const hour = parseInt(target.dataset.hour);
-          const minute = parseInt(target.dataset.minute);
-          if (!isNaN(hour)) {
-            this.moveTaskToTime(taskId, hour, minute);
-          }
-          // 周/月视图：更新日期
-          const dateStr = target.dataset.date;
-          if (dateStr) {
-            this.moveTaskToDate(taskId, dateStr);
-          }
-        }
-      });
     });
   },
 
@@ -548,7 +654,7 @@ const Calendar = {
         </div>
         <div class="week-day-tasks">
           ${dayTasks.map(task => `
-            <div class="week-task priority-${task.priority}${task.status === 'completed' ? ' completed' : ''} draggable-task" data-id="${task.id}" draggable="${task.status !== 'completed'}" title="${this.getTaskTooltip(task)}">
+            <div class="week-task priority-${task.priority}${task.status === 'completed' ? ' completed' : ''}" data-id="${task.id}" title="${this.getTaskTooltip(task)}">
               <span class="week-task-time">${new Date(task.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
               ${task.status === 'completed' ? '<span class="week-task-check">✓</span>' : ''}
               <span class="week-task-title">${task.title}</span>
@@ -560,23 +666,13 @@ const Calendar = {
 
       // 周视图任务事件
       dayEl.querySelectorAll('.week-task').forEach(taskEl => {
-        taskEl.addEventListener('dragstart', (e) => {
-          if (e.target.classList.contains('week-task-delete')) {
-            e.preventDefault();
-            return;
-          }
-          const taskId = taskEl.dataset.id;
-          e.dataTransfer.setData('text/plain', taskId);
-          e.dataTransfer.effectAllowed = 'move';
-          this.draggedTask = Store.getTasks().find(t => t.id === taskId);
-          taskEl.classList.add('dragging');
-        });
+        const taskId = taskEl.dataset.id;
+        const task = Store.getTasks().find(t => t.id === taskId);
 
-        taskEl.addEventListener('dragend', () => {
-          taskEl.classList.remove('dragging');
-          this.draggedTask = null;
-          this.clearAllDropHighlights();
-        });
+        // 自定义拖拽
+        if (task && task.status !== 'completed') {
+          this._bindDraggable(taskEl, taskId);
+        }
 
         taskEl.addEventListener('click', (e) => {
           if (e.target.classList.contains('week-task-delete')) {
@@ -584,7 +680,7 @@ const Calendar = {
             const taskId = e.target.dataset.taskId;
             const task = Store.getTasks().find(t => t.id === taskId);
             if (task) this.deleteTask(task);
-          } else {
+          } else if (!this.isDragging) {
             const taskId = taskEl.dataset.id;
             const task = Store.getTasks().find(t => t.id === taskId);
             if (task) this.showTaskDetail(task);
@@ -605,31 +701,7 @@ const Calendar = {
       grid.appendChild(dayEl);
     }
 
-    // 绑定周视图的 drop 事件
-    grid.querySelectorAll('.week-day.drop-target').forEach(dayEl => {
-      dayEl.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        dayEl.classList.add('drag-over');
-      });
-
-      dayEl.addEventListener('dragleave', (e) => {
-        // 只在离开 dayEl 时移除高亮，避免子元素触发
-        if (!dayEl.contains(e.relatedTarget)) {
-          dayEl.classList.remove('drag-over');
-        }
-      });
-
-      dayEl.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dayEl.classList.remove('drag-over');
-        const taskId = e.dataTransfer.getData('text/plain');
-        const dateStr = dayEl.dataset.date;
-        if (taskId && dateStr) {
-          this.moveTaskToDate(taskId, dateStr);
-        }
-      });
-    });
+    // 周视图不再需要 HTML5 drop 绑定，拖拽由自定义 mousedown/mouseup 处理
 
     container.appendChild(grid);
   },
@@ -689,7 +761,7 @@ const Calendar = {
       const taskTags = dayTasks.slice(0, 5).map(task => {
         const priorityClass = task.priority || 'medium';
         const completedClass = task.status === 'completed' ? ' completed' : '';
-        return `<div class="month-task-tag priority-${priorityClass}${completedClass}" data-id="${task.id}" draggable="${task.status !== 'completed'}" title="${this.getTaskTooltip(task)}">${task.status === 'completed' ? '✓ ' : ''}${task.title}</div>`;
+        return `<div class="month-task-tag priority-${priorityClass}${completedClass}" data-id="${task.id}" title="${this.getTaskTooltip(task)}">${task.status === 'completed' ? '✓ ' : ''}${task.title}</div>`;
       }).join('');
       const moreCount = dayTasks.length > 5 ? `<div class="month-task-more">+${dayTasks.length - 5}</div>` : '';
 
@@ -701,54 +773,27 @@ const Calendar = {
         </div>
       `;
 
-      // 月视图任务标签拖拽
+      // 月视图任务标签：自定义拖拽 + 点击详情
       dayEl.querySelectorAll('.month-task-tag').forEach(tagEl => {
-        tagEl.addEventListener('dragstart', (e) => {
-          e.stopPropagation();
-          const taskId = tagEl.dataset.id;
-          e.dataTransfer.setData('text/plain', taskId);
-          e.dataTransfer.effectAllowed = 'move';
-          this.draggedTask = Store.getTasks().find(t => t.id === taskId);
-          tagEl.classList.add('dragging');
-        });
+        const taskId = tagEl.dataset.id;
+        const task = Store.getTasks().find(t => t.id === taskId);
 
-        tagEl.addEventListener('dragend', () => {
-          tagEl.classList.remove('dragging');
-          this.draggedTask = null;
-          this.clearAllDropHighlights();
-        });
+        // 自定义拖拽
+        if (task && task.status !== 'completed') {
+          this._bindDraggable(tagEl, taskId);
+        }
 
         // 点击任务标签查看详情
         tagEl.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (this.isDragging) return;
           const taskId = tagEl.dataset.id;
           const task = Store.getTasks().find(t => t.id === taskId);
           if (task) this.showTaskDetail(task);
         });
       });
 
-      // 月视图日期格的 drop 事件
-      dayEl.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        dayEl.classList.add('drag-over');
-      });
-
-      dayEl.addEventListener('dragleave', (e) => {
-        if (!dayEl.contains(e.relatedTarget)) {
-          dayEl.classList.remove('drag-over');
-        }
-      });
-
-      dayEl.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dayEl.classList.remove('drag-over');
-        const taskId = e.dataTransfer.getData('text/plain');
-        const dateStr = dayEl.dataset.date;
-        if (taskId && dateStr) {
-          this.moveTaskToDate(taskId, dateStr);
-        }
-      });
+      // 月视图不再需要 HTML5 drop 绑定，拖拽由自定义 mousedown/mouseup 处理
 
       // 点击日期跳转到日视图
       dayEl.addEventListener('click', (e) => {
@@ -820,17 +865,6 @@ const Calendar = {
     }
   },
 
-  // ========== 全局 mouse 拖拽（备用方案，用于更流畅的拖拽体验） ==========
-  onDragMove(e) {
-    // 当前使用原生 HTML5 Drag & Drop，不需要自定义 mousemove 逻辑
-    // 如需更精细的控制，可在此实现自定义拖拽
-  },
-
-  onDragEnd(e) {
-    this.isDragging = false;
-    this.clearAllDropHighlights();
-  },
-
   // ========== 工具方法 ==========
 
   formatDateStr(date) {
@@ -854,6 +888,13 @@ const Calendar = {
   },
 
   deleteTask(task) {
+    // 周期性任务：使用专用删除弹窗
+    if (task.recurrence && (task.recurrence.isTemplate || task.recurrence.isInstance)) {
+      if (typeof App !== 'undefined' && App._showRecurrenceDeleteDialog) {
+        App._showRecurrenceDeleteDialog(task);
+      }
+      return;
+    }
     if (confirm(`确定要删除任务"${task.title}"吗？`)) {
       Store.deleteTask(task.id);
       console.log('[Calendar] Task deleted:', task.title);

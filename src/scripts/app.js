@@ -53,6 +53,9 @@ const App = {
     // 加载对话会话列表
     this._loadChatSessions();
     this._renderChatSessionList();
+
+    // 加载设置（包括本地上下文开关等）
+    this._settings = Store.getSettings();
     
     try {
       Pomodoro.init();
@@ -76,6 +79,13 @@ const App = {
       this.updateInitTest('[App] Reminder initialized');
     } catch (e) {
       console.error('[App] Reminder.init() failed:', e);
+    }
+
+    // 恢复 AI 小助手定时任务
+    try {
+      this._restoreAITaskSchedulers();
+    } catch (e) {
+      console.error('[App] _restoreAITaskSchedulers failed:', e);
     }
 
     try {
@@ -302,6 +312,32 @@ const App = {
         this.updatePomodoroHint();
       }
     });
+
+    // 任务类型切换（手动/AI小助手）
+    document.getElementById('taskType')?.addEventListener('change', (e) => {
+      const aiGroup = document.getElementById('aiExpertGroup');
+      if (aiGroup) {
+        aiGroup.classList.toggle('hidden', e.target.value !== 'ai_scheduled');
+      }
+      // 填充专家选择列表
+      if (e.target.value === 'ai_scheduled') {
+        this._populateExpertSelect();
+        // AI 小助手模式默认取消同步日历
+        const syncCal = document.getElementById('syncCalendar');
+        if (syncCal) syncCal.checked = false;
+      } else {
+        // 手动待办模式默认勾选同步日历
+        const syncCal = document.getElementById('syncCalendar');
+        if (syncCal) syncCal.checked = true;
+      }
+    });
+    
+    // 周期性重复选项切换
+    document.getElementById('taskRecurrence')?.addEventListener('change', () => this._updateRecurrenceUI());
+    document.querySelectorAll('.weekday-btn').forEach(btn => {
+      btn.addEventListener('click', () => btn.classList.toggle('active'));
+    });
+    document.getElementById('recurrenceEndDate')?.addEventListener('change', () => {});
     
     document.querySelector('.modal-overlay')?.addEventListener('click', () => this.hideTaskModal());
     
@@ -351,13 +387,12 @@ const App = {
         const files = Array.from(e.dataTransfer.files || []);
         if (files.length === 0) return;
 
-        // 只在洞察视图时处理
+        // 只在洞察视图时处理（insightView 自身的 drop handler 会 e.stopPropagation()，
+        // 所以这里只在文件直接拖到 insightView 外部区域时触发）
         const insightView = document.getElementById('insightView');
         if (insightView && !insightView.classList.contains('hidden') && window.Insight) {
-          for (const file of files) {
-            await window.electronAPI?.multimodalImport?.({ filePath: file.path, title: file.name });
-          }
-          Insight.loadMultimodal();
+          // 使用 insight 的 buffer 导入方式（file.path 在渲染进程可能为空）
+          await Insight._importDroppedFiles(e.dataTransfer.files);
         }
       });
     }
@@ -820,6 +855,8 @@ const App = {
       if (tabName === 'prompt') this.loadPromptFiles();
       if (tabName === 'appearance') this._loadAppearanceSettings();
       if (tabName === 'sync') this._loadSyncSettings();
+      if (tabName === 'reminder') this._loadReminderSettings();
+      if (tabName === 'context') this._loadContextSettings();
     }
   },
 
@@ -2262,6 +2299,8 @@ const App = {
       <div class="message-content">
         <p>${this.escapeHtml(message || '发送了文件')}</p>
         ${attachmentsHtml}
+        <div class="local-context-indicator" style="display:none;"><span class="local-context-spinner"></span><span>🧠 检索本地上下文...</span></div>
+        <span class="local-context-sources" style="display:none;"></span>
         <div class="message-actions user-msg-actions">
           <button class="msg-action-btn copy-user-msg" title="复制"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
           <button class="msg-action-btn edit-user-msg" title="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
@@ -2275,6 +2314,9 @@ const App = {
     // 绑定用户消息操作按钮
     const msgContent = userMessage.querySelector('.message-content');
     this._bindUserMsgActions(msgContent);
+
+    // v2.7 保存用户消息 content 引用，供后续上下文注入使用
+    this._currentUserMsgContent = msgContent;
     
     input.value = '';
     input.style.height = 'auto';
@@ -2372,8 +2414,51 @@ const App = {
           console.log('[Chat] Pre-send: no convId yet, will be generated on main side');
         }
 
-        // 启动流式请求 — 传递结构化数据（message + attachments）
+        // v2.7 本地上下文注入：在发送给 ADP 前检索本地数据
+        let localContextSystemRole = '';
+        let localContextSources = [];
+        const contextEnabled = this._settings?.localContextEnabled !== false; // 默认开启
+        const userMsgEl = this._currentUserMsgContent;
+        if (contextEnabled && message) {
+          try {
+            // 显示检索提示
+            const contextIndicator = userMsgEl?.querySelector('.local-context-indicator');
+            if (contextIndicator) contextIndicator.style.display = 'flex';
+
+            // Phase 1: LLM 意图分类
+            const classifyResult = await window.electronAPI.contextClassifyIntent(message);
+            const classification = classifyResult?.classification;
+
+            // Phase 2+3: 检索本地数据 + 组装 SystemRole
+            let contextData;
+            if (classification) {
+              contextData = await this._retrieveLocalContext(classification);
+            } else {
+              // 兜底策略
+              contextData = await this._retrieveLocalContextFallback();
+            }
+            localContextSystemRole = contextData.systemRole;
+            localContextSources = contextData.sources;
+
+            // 隐藏检索提示，显示参考数据源
+            if (contextIndicator) contextIndicator.style.display = 'none';
+            if (localContextSources.length > 0) {
+              const sourceTag = userMsgEl?.querySelector('.local-context-sources');
+              if (sourceTag) {
+                sourceTag.textContent = `🧠 已参考: ${localContextSources.join(', ')}`;
+                sourceTag.style.display = 'inline-block';
+              }
+            }
+
+            console.log('[Chat] Local context injected, sources:', localContextSources.join(', '));
+          } catch (e) {
+            console.warn('[Chat] Local context injection failed:', e);
+          }
+        }
+
+        // 启动流式请求 — 传递结构化数据（message + attachments + systemRole）
         // v2.6: 专家模式传递专家级 appKey/url
+        // v2.7: 本地上下文注入 systemRole
         const expertConfig = window.ExpertSystem?.getActiveADPConfig?.();
         const adpMessageData = {
           message: message,
@@ -2383,6 +2468,9 @@ const App = {
           adpMessageData.appKey = expertConfig.appKey;
           adpMessageData.adpUrl = expertConfig.url;
           adpMessageData._expertMode = true;
+        }
+        if (localContextSystemRole) {
+          adpMessageData.systemRole = localContextSystemRole;
         }
         result = await window.electronAPI.sendADPMessage(adpMessageData);
 
@@ -4697,6 +4785,13 @@ const App = {
         conversationId: s.conversationId || null, // 必须持久化 ADP 会话 ID 才能保持上下文
         _fromCloud: s._fromCloud || false,        // 来自云端的会话标记
         _revision: s._revision || 0,              // 云端同步 revision
+        isGroupChat: s.isGroupChat || false,       // 群聊标记
+        groupId: s.groupId || null,               // 专家团 ID
+        groupName: s.groupName || null,           // 专家团名称
+        taskType: s.taskType || 'chat',           // chat=对话, scheduled=定时任务, group=群聊
+        expertId: s.expertId || null,             // 关联的专家 ID
+        expertName: s.expertName || null,         // 关联的专家名称
+        taskId: s.taskId || null,                 // 关联的定时任务 ID
       }));
       localStorage.setItem('memora_chat_sessions', JSON.stringify(toSave));
     } catch (e) {
@@ -4742,13 +4837,32 @@ const App = {
       }
     }
 
-    listEl.innerHTML = sorted.map(session => `
+    listEl.innerHTML = sorted.map(session => {
+      // 根据类型选择图标和标签
+      const taskType = session.taskType || (session.isGroupChat ? 'group' : 'chat');
+      let icon, badge;
+      switch (taskType) {
+        case 'scheduled':
+          icon = '⏰';
+          badge = '<span class="chat-session-type-badge scheduled">定时</span>';
+          break;
+        case 'group':
+          icon = '👥';
+          badge = '<span class="chat-session-type-badge group">群聊</span>';
+          break;
+        default:
+          icon = '💬';
+          badge = '';
+      }
+      return `
       <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}" data-session-id="${session.id}">
-        <span class="chat-session-icon">💬</span>
+        <span class="chat-session-type-icon">${icon}</span>
         <span class="chat-session-title">${this.escapeHtml(session.title || '新对话')}</span>
+        ${badge}
         <button class="chat-session-delete" data-session-id="${session.id}" title="删除对话">×</button>
       </div>
-    `).join('');
+    `;
+    }).join('');
   },
 
   createNewChatSession() {
@@ -7532,7 +7646,9 @@ ${JSON.stringify(reportData, null, 2)}`;
                 priority: taskData.priority || 'medium',
                 dueDate: dueDate.toISOString(),
                 source: 'notebook',
-                rawText: result.note.content
+                rawText: result.note.content,
+                taskType: taskData.taskType || 'manual',
+                recurrence: taskData.recurrence || null
               });
               
               task.reminders = Reminder.calculateReminders(task);
@@ -7913,7 +8029,9 @@ ${JSON.stringify(reportData, null, 2)}`;
       dueDate: dueDate.toISOString(),
       source: 'clipboard',
       rawText: this.pendingClipboardTask.rawText,
-      isDraft: true
+      isDraft: true,
+      taskType: taskData.taskType || 'manual',
+      recurrence: taskData.recurrence || null
     });
     
     task.reminders = Reminder.calculateReminders(task);
@@ -8035,7 +8153,9 @@ ${JSON.stringify(reportData, null, 2)}`;
       priority: taskData.priority || 'medium',
       dueDate: dueDate.toISOString(),
       source: 'clipboard',
-      rawText: this.pendingClipboardTask.rawText
+      rawText: this.pendingClipboardTask.rawText,
+      taskType: taskData.taskType || 'manual',
+      recurrence: taskData.recurrence || null
     });
     
     task.reminders = Reminder.calculateReminders(task);
@@ -8063,25 +8183,30 @@ ${JSON.stringify(reportData, null, 2)}`;
       description: taskData.description || '',
       estimatedDuration: taskData.estimatedDuration || 60,
       priority: taskData.priority || 'medium',
-      dueDate: dueDate.toISOString()
+      dueDate: dueDate.toISOString(),
+      taskType: taskData.taskType || 'manual',
+      recurrence: taskData.recurrence || null
     });
     
     this.hideClipboardDetector();
   },
 
-  getDefaultDueDate() {
+  getDefaultDueDate(taskType) {
     const now = new Date();
     const hour = now.getHours();
     
-    // 默认截止时间：根据当前时间推算下一个合理时段
+    // 默认截止时间：22 点前默认当天，22 点后默认次天
     if (hour < 12) {
       // 上午 → 默认今天下午17:00
       now.setHours(17, 0, 0, 0);
     } else if (hour < 18) {
       // 下午 → 默认今天晚上20:00
       now.setHours(20, 0, 0, 0);
+    } else if (hour < 22) {
+      // 晚上22点前 → 默认今天22:00
+      now.setHours(22, 0, 0, 0);
     } else {
-      // 晚上 → 默认明天上午10:00
+      // 22点后 → 默认明天上午10:00
       now.setDate(now.getDate() + 1);
       now.setHours(10, 0, 0, 0);
     }
@@ -8410,6 +8535,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     const dueInput = document.getElementById('taskDue');
     const durationInput = document.getElementById('taskDuration');
     const priorityInput = document.getElementById('taskPriority');
+    const recurrenceInput = document.getElementById('taskRecurrence');
     
     if (task && task.id) {
       document.getElementById('modalTitle').textContent = '编辑任务';
@@ -8422,6 +8548,39 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       durationInput.value = task.estimatedDuration;
       priorityInput.value = task.priority;
+      
+      // v2.1: 回填任务类型
+      const taskTypeInput = document.getElementById('taskType');
+      if (taskTypeInput) {
+        taskTypeInput.value = task.taskType || 'manual';
+        // 触发 change 事件以显示/隐藏 AI 专家选择组
+        taskTypeInput.dispatchEvent(new Event('change'));
+      }
+      // 回填 AI 专家
+      if (task.expertId) {
+        const taskExpertInput = document.getElementById('taskExpert');
+        if (taskExpertInput) taskExpertInput.value = task.expertId;
+      }
+      
+      // 周期性任务回填
+      const recurrence = task.recurrence;
+      if (recurrence && recurrence.type && recurrence.type !== 'none') {
+        recurrenceInput.value = recurrence.type;
+        if (recurrence.type === 'custom') {
+          document.getElementById('recurrenceInterval').value = recurrence.interval || 2;
+          document.getElementById('recurrenceUnit').value = recurrence.unit || 'day';
+        }
+        if (recurrence.daysOfWeek?.length) {
+          document.querySelectorAll('.weekday-btn').forEach(btn => {
+            btn.classList.toggle('active', recurrence.daysOfWeek.includes(parseInt(btn.dataset.day)));
+          });
+        }
+        if (recurrence.endDate) {
+          document.getElementById('recurrenceEndDate').value = recurrence.endDate.split('T')[0];
+        }
+      } else {
+        recurrenceInput.value = 'none';
+      }
     } else {
       document.getElementById('modalTitle').textContent = '新建任务/记事本/问题/记忆';
       titleInput.value = task?.title || '';
@@ -8436,7 +8595,31 @@ ${JSON.stringify(reportData, null, 2)}`;
       
       durationInput.value = task?.estimatedDuration || 60;
       priorityInput.value = task?.priority || 'medium';
+      recurrenceInput.value = 'none';
+      // v2.1: 回填任务类型（如果有传入则使用，否则默认手动待办）
+      const taskTypeInput = document.getElementById('taskType');
+      if (taskTypeInput) {
+        taskTypeInput.value = task?.taskType || 'manual';
+        taskTypeInput.dispatchEvent(new Event('change'));
+      }
+      // 回填 AI 专家
+      if (task?.expertId) {
+        const taskExpertInput = document.getElementById('taskExpert');
+        if (taskExpertInput) taskExpertInput.value = task.expertId;
+      }
+      // 回填周期性（从剪贴板/AI 分析结果传入）
+      if (task?.recurrence && task.recurrence.type && task.recurrence.type !== 'none') {
+        recurrenceInput.value = task.recurrence.type;
+        if (task.recurrence.daysOfWeek?.length) {
+          document.querySelectorAll('.weekday-btn').forEach(btn => {
+            btn.classList.toggle('active', task.recurrence.daysOfWeek.includes(parseInt(btn.dataset.day)));
+          });
+        }
+      }
     }
+    
+    // 触发周期性选项显隐
+    this._updateRecurrenceUI();
     
     modal.classList.remove('hidden');
     titleInput.focus();
@@ -8447,6 +8630,184 @@ ${JSON.stringify(reportData, null, 2)}`;
     this.editingTask = null;
     // 清除 AI 编辑器内容
     if (this._aiTaskEditor) this._aiTaskEditor.clear();
+    // 重置周期性选项
+    const recurrenceInput = document.getElementById('taskRecurrence');
+    if (recurrenceInput) recurrenceInput.value = 'none';
+    document.querySelectorAll('.weekday-btn').forEach(btn => btn.classList.remove('active'));
+    const endDateInput = document.getElementById('recurrenceEndDate');
+    if (endDateInput) endDateInput.value = '';
+    // v2.1: 重置任务类型为手动待办
+    const taskTypeInput = document.getElementById('taskType');
+    if (taskTypeInput) taskTypeInput.value = 'manual';
+    const aiExpertGroup = document.getElementById('aiExpertGroup');
+    if (aiExpertGroup) aiExpertGroup.classList.add('hidden');
+    const taskExpertInput = document.getElementById('taskExpert');
+    if (taskExpertInput) taskExpertInput.value = '';
+  },
+
+  _updateRecurrenceUI() {
+    const type = document.getElementById('taskRecurrence')?.value || 'none';
+    const customRow = document.getElementById('recurrenceCustomRow');
+    const weeklyDaysRow = document.getElementById('recurrenceWeeklyDaysRow');
+    const endDateRow = document.getElementById('recurrenceEndDateRow');
+    
+    if (customRow) customRow.classList.toggle('hidden', type !== 'custom');
+    if (weeklyDaysRow) weeklyDaysRow.classList.toggle('hidden', type !== 'weekly');
+    if (endDateRow) endDateRow.classList.toggle('hidden', type === 'none');
+  },
+
+  _showRecurrenceDeleteDialog(task) {
+    const existing = document.querySelector('.confirm-dialog-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-dialog-overlay';
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5000; animation: fadeIn 0.2s ease;
+    `;
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      width: 380px; max-width: 90%; background: var(--bg-card);
+      border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
+    `;
+
+    dialog.innerHTML = `
+      <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: var(--text-primary);">删除周期性任务</div>
+      <div style="padding: 4px 24px 8px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">"${this.escapeHtml(task.title)}" 是周期性任务</div>
+      <div style="display: flex; flex-direction: column; gap: 0; border-top: 0.5px solid var(--border-light);">
+        <button class="recur-delete-this" style="padding: 14px 24px; border: none; background: transparent;
+          font-size: 14px; font-weight: 500; color: var(--danger-color); cursor: pointer;
+          text-align: left; border-bottom: 0.5px solid var(--border-light); transition: background 0.15s;">🗑 仅删除本次</button>
+        <button class="recur-delete-all" style="padding: 14px 24px; border: none; background: transparent;
+          font-size: 14px; font-weight: 600; color: var(--danger-color); cursor: pointer;
+          text-align: left; transition: background 0.15s;">🗑 删除全部周期性任务</button>
+        <button class="recur-delete-cancel" style="padding: 14px 24px; border: none; background: transparent;
+          font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+          text-align: left; border-top: 0.5px solid var(--border-light); transition: background 0.15s;">取消</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+
+    dialog.querySelector('.recur-delete-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    dialog.querySelector('.recur-delete-this').addEventListener('click', () => {
+      Store.deleteTask(task.id);
+      close();
+      this.renderTaskList();
+      Calendar.render();
+      this.showToast('已删除本次任务');
+    });
+
+    dialog.querySelector('.recur-delete-all').addEventListener('click', () => {
+      const parentId = task.recurrence.parentId || task.id;
+      // 删除模板和所有实例
+      Store.deleteTask(parentId);
+      Store.deleteRecurringAll(parentId);
+      close();
+      this.renderTaskList();
+      Calendar.render();
+      this.showToast('已删除全部周期性任务');
+    });
+  },
+
+  _showRecurrenceEditDialog(task, taskData) {
+    const existing = document.querySelector('.confirm-dialog-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-dialog-overlay';
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5000; animation: fadeIn 0.2s ease;
+    `;
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      width: 380px; max-width: 90%; background: var(--bg-card);
+      border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
+    `;
+
+    dialog.innerHTML = `
+      <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: var(--text-primary);">编辑周期性任务</div>
+      <div style="padding: 4px 24px 8px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">"${this.escapeHtml(task.title)}" 是周期性任务</div>
+      <div style="display: flex; flex-direction: column; gap: 0; border-top: 0.5px solid var(--border-light);">
+        <button class="recur-edit-this" style="padding: 14px 24px; border: none; background: transparent;
+          font-size: 14px; font-weight: 500; color: var(--primary-color); cursor: pointer;
+          text-align: left; border-bottom: 0.5px solid var(--border-light); transition: background 0.15s;">✏️ 仅修改本次</button>
+        <button class="recur-edit-all" style="padding: 14px 24px; border: none; background: transparent;
+          font-size: 14px; font-weight: 600; color: var(--primary-color); cursor: pointer;
+          text-align: left; transition: background 0.15s;">✏️ 修改全部周期性任务</button>
+        <button class="recur-edit-cancel" style="padding: 14px 24px; border: none; background: transparent;
+          font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+          text-align: left; border-top: 0.5px solid var(--border-light); transition: background 0.15s;">取消</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+
+    dialog.querySelector('.recur-edit-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    dialog.querySelector('.recur-edit-this').addEventListener('click', () => {
+      // 仅修改本次：将此实例脱离周期性关联
+      const updatedTask = Store.updateTask(task.id, {
+        ...taskData,
+        recurrence: null  // 脱离周期性
+      });
+      updatedTask.reminders = Reminder.calculateReminders(updatedTask);
+      Store.updateTask(updatedTask.id, { reminders: updatedTask.reminders });
+      close();
+      this.hideTaskModal();
+      this.renderTaskList();
+      Calendar.render();
+      this.showToast('仅本次已修改');
+    });
+
+    dialog.querySelector('.recur-edit-all').addEventListener('click', () => {
+      // 修改全部：更新模板和所有未完成实例
+      const parentId = task.recurrence.parentId;
+      const template = Store.getTasks().find(t => t.id === parentId);
+      if (template) {
+        Store.updateTask(parentId, {
+          ...taskData,
+          recurrence: template.recurrence  // 保留原有周期性设置
+        });
+      }
+      // 更新所有未完成的实例
+      const instances = Store.getRecurringInstances(parentId).filter(t => t.status !== 'completed');
+      instances.forEach(inst => {
+        Store.updateTask(inst.id, {
+          title: taskData.title,
+          description: taskData.description,
+          estimatedDuration: taskData.estimatedDuration,
+          priority: taskData.priority,
+          taskType: taskData.taskType,
+          expertId: taskData.expertId,
+          expertName: taskData.expertName,
+        });
+      });
+      close();
+      this.hideTaskModal();
+      this.renderTaskList();
+      Calendar.render();
+      this.showToast('全部周期性任务已修改');
+    });
   },
 
   // 渲染任务关联人物（来自画像）
@@ -8540,6 +8901,27 @@ ${JSON.stringify(reportData, null, 2)}`;
     const durationInput = document.getElementById('taskDuration');
     const priorityInput = document.getElementById('taskPriority');
     const syncCalendarInput = document.getElementById('syncCalendar');
+    const taskTypeInput = document.getElementById('taskType');
+    const taskExpertInput = document.getElementById('taskExpert');
+    const taskType = taskTypeInput?.value || 'manual';
+    const expertId = taskExpertInput?.value || null;
+    
+    // 构建周期性重复数据
+    const recurrenceType = document.getElementById('taskRecurrence')?.value || 'none';
+    let recurrence = null;
+    if (recurrenceType !== 'none') {
+      recurrence = { type: recurrenceType };
+      if (recurrenceType === 'custom') {
+        recurrence.interval = parseInt(document.getElementById('recurrenceInterval')?.value) || 2;
+        recurrence.unit = document.getElementById('recurrenceUnit')?.value || 'day';
+      }
+      if (recurrenceType === 'weekly') {
+        const selectedDays = Array.from(document.querySelectorAll('.weekday-btn.active')).map(b => parseInt(b.dataset.day));
+        recurrence.daysOfWeek = selectedDays.length > 0 ? selectedDays : [new Date(dueInput.value).getDay()];
+      }
+      const endDateVal = document.getElementById('recurrenceEndDate')?.value;
+      if (endDateVal) recurrence.endDate = new Date(endDateVal + 'T23:59:59').toISOString();
+    }
     
     const taskData = {
       title: title,
@@ -8547,15 +8929,46 @@ ${JSON.stringify(reportData, null, 2)}`;
       estimatedDuration: parseInt(durationInput.value) || 60,
       priority: priorityInput.value,
       dueDate: dueInput.value ? new Date(dueInput.value).toISOString() : null,
-      linkedPersons: this._getAutoLinkedPersons(title, descInput.value.trim())
+      linkedPersons: this._getAutoLinkedPersons(title, descInput.value.trim()),
+      taskType: taskType,
+      expertId: expertId,
+      recurrence: recurrence,
     };
     
+    // AI 小助手任务必须有截止时间
+    if (taskType === 'ai_scheduled' && !taskData.dueDate) {
+      this.showToast('AI 小助手任务必须设置截止时间', 'error');
+      dueInput.focus();
+      return;
+    }
+    
+    // 周期性任务必须有截止时间
+    if (recurrence && recurrence.type !== 'none' && !taskData.dueDate) {
+      this.showToast('周期性任务必须设置截止时间', 'error');
+      dueInput.focus();
+      return;
+    }
+
+    // AI 小助手任务：获取专家名称
+    if (taskType === 'ai_scheduled' && expertId) {
+      const expertOption = taskExpertInput.selectedOptions[0];
+      if (expertOption) {
+        taskData.expertName = expertOption.textContent.trim();
+      }
+    }
+    
     if (this.editingTask && this.editingTask.id) {
+      // 编辑周期性实例：询问修改范围
+      if (this.editingTask.recurrence?.isInstance) {
+        this._showRecurrenceEditDialog(this.editingTask, taskData);
+        return;
+      }
+      
       const updatedTask = Store.updateTask(this.editingTask.id, taskData);
       updatedTask.reminders = Reminder.calculateReminders(updatedTask);
       Store.updateTask(updatedTask.id, { reminders: updatedTask.reminders });
       
-      if (syncCalendarInput.checked && window.electronAPI) {
+      if (syncCalendarInput.checked && taskType !== 'ai_scheduled' && window.electronAPI) {
         window.electronAPI.addToCalendar(updatedTask);
       }
       
@@ -8570,16 +8983,70 @@ ${JSON.stringify(reportData, null, 2)}`;
       newTask.reminders = Reminder.calculateReminders(newTask);
       Store.updateTask(newTask.id, { reminders: newTask.reminders });
       
-      if (syncCalendarInput.checked && window.electronAPI) {
+      // AI 小助手定时任务默认不同步到日历
+      if (syncCalendarInput.checked && taskType !== 'ai_scheduled' && window.electronAPI) {
         window.electronAPI.addToCalendar(newTask);
       }
       
-      this.showToast('任务已创建');
+      // 周期性任务：标记为模板并生成未来的实例
+      if (recurrence && recurrence.type !== 'none') {
+        const updatedRecurrence = {
+          ...recurrence,
+          isTemplate: true,
+          parentId: newTask.id,
+          isInstance: false
+        };
+        Store.updateTask(newTask.id, { recurrence: updatedRecurrence });
+        // 🔧 关键修复：同步更新内存中的 recurrence，否则 createNextRecurrenceInstance
+        // 会因 !parentId && !isTemplate 提前返回 null，导致只创建了一条任务
+        newTask.recurrence = updatedRecurrence;
+        // 预生成未来实例（未来30天）
+        this._generateRecurringInstances(newTask);
+      }
+      
+      // AI 小助手任务：立即注册定时执行
+      if (taskType === 'ai_scheduled') {
+        this._scheduleAITask(newTask);
+        this.showToast(`AI 小助手任务已创建，将在截止时间自动执行`);
+      } else if (recurrence && recurrence.type !== 'none') {
+        const label = Store.getRecurrenceLabel(recurrence);
+        this.showToast(`周期性任务已创建（${label}）`);
+      } else {
+        this.showToast('任务已创建');
+      }
     }
     
     this.hideTaskModal();
     this.renderTaskList();
     Calendar.render();
+  },
+  
+  _generateRecurringInstances(templateTask) {
+    if (!templateTask.recurrence || templateTask.recurrence.type === 'none') return;
+    const now = new Date();
+    const futureLimit = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 未来30天
+    const endDate = templateTask.recurrence.endDate ? new Date(templateTask.recurrence.endDate) : null;
+    const limit = endDate && endDate < futureLimit ? endDate : futureLimit;
+    
+    let currentDate = new Date(templateTask.dueDate);
+    let count = 0;
+    const maxInstances = 60; // 安全上限
+    
+    while (count < maxInstances) {
+      const nextDate = Store.getNextRecurrenceDate(currentDate.toISOString(), templateTask.recurrence);
+      if (!nextDate || nextDate > limit) break;
+      
+      // 检查该日期是否已有实例
+      const existing = Store.getTasks().find(t =>
+        t.recurrence?.parentId === templateTask.id &&
+        t.dueDate && new Date(t.dueDate).toDateString() === nextDate.toDateString()
+      );
+      if (!existing) {
+        Store.createNextRecurrenceInstance({ ...templateTask, dueDate: currentDate.toISOString() });
+      }
+      currentDate = nextDate;
+      count++;
+    }
   },
   
   // AI分析任务输入
@@ -8632,6 +9099,29 @@ ${JSON.stringify(reportData, null, 2)}`;
           
           document.getElementById('taskPriority').value = result.task.priority || 'medium';
           document.getElementById('taskDuration').value = result.task.estimatedDuration || 60;
+          
+          // v2.1: AI 分析结果回填 taskType 和 recurrence
+          if (result.task.taskType && result.task.taskType !== 'manual') {
+            const taskTypeInput = document.getElementById('taskType');
+            if (taskTypeInput) {
+              taskTypeInput.value = result.task.taskType;
+              // 触发 change 事件以显示/隐藏 AI 专家选择组
+              taskTypeInput.dispatchEvent(new Event('change'));
+            }
+          }
+          if (result.task.recurrence && result.task.recurrence.type && result.task.recurrence.type !== 'none') {
+            const recurrenceInput = document.getElementById('taskRecurrence');
+            if (recurrenceInput) {
+              recurrenceInput.value = result.task.recurrence.type;
+              this._updateRecurrenceUI();
+              // 回填 weekly 天数
+              if (result.task.recurrence.type === 'weekly' && result.task.recurrence.daysOfWeek) {
+                document.querySelectorAll('.weekday-btn').forEach(btn => {
+                  btn.classList.toggle('active', result.task.recurrence.daysOfWeek.includes(parseInt(btn.dataset.day)));
+                });
+              }
+            }
+          }
           
           // AI 识别到的人物 → 自动关联
           if (result.task.linked_persons && result.task.linked_persons.length > 0) {
@@ -8907,10 +9397,16 @@ ${JSON.stringify(reportData, null, 2)}`;
         e.stopPropagation();
         const task = Store.getTasks().find(t => t.id === taskId);
         if (task) {
-          const confirmed = await this.showConfirmDialog('删除确认', `确定要删除任务"${task.title}"吗？`);
-          if (confirmed) {
-            Store.deleteTask(taskId);
-            this.renderTaskList();
+          // 周期性任务：显示选择删除范围
+          if (task.recurrence && (task.recurrence.isTemplate || task.recurrence.isInstance)) {
+            this._showRecurrenceDeleteDialog(task);
+          } else {
+            const confirmed = await this.showConfirmDialog('删除确认', `确定要删除任务"${task.title}"吗？`);
+            if (confirmed) {
+              Store.deleteTask(taskId);
+              this.renderTaskList();
+              Calendar.render();
+            }
           }
         }
       });
@@ -8919,9 +9415,15 @@ ${JSON.stringify(reportData, null, 2)}`;
 
   renderTaskItem(task) {
     const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+    const isOverdue = dueDate && dueDate < new Date() && task.status !== 'completed';
     const relativeTime = dueDate ? this.getRelativeTime(dueDate) : '无截止时间';
     const priorityBadge = `<span class="priority-badge ${task.priority}">${task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>`;
     const draftBadge = task.isDraft ? `<span class="draft-badge">草稿</span>` : '';
+    const overdueBadge = isOverdue ? `<span class="overdue-badge">逾期</span>` : '';
+    const aiTaskBadge = task.taskType === 'ai_scheduled' ? `<span class="ai-task-badge">🤖 AI</span>` : '';
+    // 周期性任务徽标
+    const recurrenceLabel = Store.getRecurrenceLabel(task.recurrence);
+    const recurrenceBadge = recurrenceLabel ? `<span class="recurrence-badge">🔁 ${recurrenceLabel}</span>` : '';
     // 计算该任务已完成的番茄数
     const completedPomodoros = (task.pomodoroSessions || []).filter(s => s.type === 'work' && s.completed).length;
     const pomodoroCountHtml = completedPomodoros > 0 ? `<span class="pomodoro-count">🍅×${completedPomodoros}</span>` : '';
@@ -8930,7 +9432,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     const dueDateStr = dueDate ? dueDate.toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '无截止时间';
     const priorityLabel = { high: '🔴 高', medium: '🟡 中', low: '🟢 低' }[task.priority] || '🟡 中';
     const descPreview = task.description ? task.description.substring(0, 200) + (task.description.length > 200 ? '...' : '') : '';
-    const hoverContent = `${task.title}\n⏰ ${dueDateStr}\n🔥 优先级: ${priorityLabel}\n⏱ 预计: ${task.estimatedDuration || 60}分钟${descPreview ? '\n\n' + descPreview : ''}`;
+    const hoverContent = `${task.title}\n⏰ ${dueDateStr}\n🔥 优先级: ${priorityLabel}\n⏱ 预计: ${task.estimatedDuration || 60}分钟${recurrenceLabel ? '\n🔁 ' + recurrenceLabel : ''}${descPreview ? '\n\n' + descPreview : ''}`;
     
     // 关联人物标签
     const linkedPersonsHtml = (task.linkedPersons && task.linkedPersons.length > 0)
@@ -8943,13 +9445,13 @@ ${JSON.stringify(reportData, null, 2)}`;
       : '';
     
     return `
-      <div class="task-item${task.isDraft ? ' draft-item' : ''}" data-id="${task.id}" data-hover-content="${this.escapeHtml(hoverContent)}">
+      <div class="task-item${task.isDraft ? ' draft-item' : ''}${isOverdue ? ' overdue-item' : ''}" data-id="${task.id}" data-hover-content="${this.escapeHtml(hoverContent)}">
         <div class="task-checkbox"></div>
         <div class="task-info">
-          <div class="title">${task.title} ${draftBadge}</div>
+          <div class="title">${task.title} ${draftBadge} ${overdueBadge} ${aiTaskBadge} ${recurrenceBadge}</div>
           <div class="meta">
             ${priorityBadge}
-            <span>${relativeTime}</span>
+            <span class="${isOverdue ? 'overdue-text' : ''}">${relativeTime}</span>
             <span>${task.estimatedDuration}分钟</span>
             ${pomodoroCountHtml}
             ${linkedPersonsHtml}
@@ -8964,7 +9466,25 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
 
   completeTask(taskId) {
+    const task = Store.getTasks().find(t => t.id === taskId);
     Store.completeTask(taskId);
+    
+    // 周期性任务完成后，自动生成下一个实例
+    if (task?.recurrence?.isInstance || task?.recurrence?.isTemplate) {
+      const parentId = task.recurrence.parentId || task.id;
+      const template = Store.getTasks().find(t => t.id === parentId);
+      if (template) {
+        // 查找该 parentId 下是否还有未完成的未来实例
+        const instances = Store.getRecurringInstances(parentId).filter(t =>
+          t.id !== parentId && t.status !== 'completed' && new Date(t.dueDate) > new Date()
+        );
+        if (instances.length === 0) {
+          // 生成下一个实例
+          Store.createNextRecurrenceInstance(template);
+        }
+      }
+    }
+    
     this.renderTaskList();
     Calendar.render();
     this.showToast('任务已完成');
@@ -10594,6 +11114,672 @@ ${JSON.stringify(reportData, null, 2)}`;
     this._renderThemeGrid();
     this._loadVisualToggles();
     this._loadFontSize();
+  },
+
+  _loadReminderSettings() {
+    const settings = window.Reminder?.settings || Store.getSettings().reminder || {};
+    const toggle = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.checked = settings[key] !== false;
+        el.addEventListener('change', () => {
+          if (window.Reminder) {
+            window.Reminder.updateSettings({ [key]: el.checked });
+          }
+          const current = Store.getSettings();
+          if (!current.reminder) current.reminder = {};
+          current.reminder[key] = el.checked;
+          Store.saveSettings(current);
+        });
+      }
+    };
+    const select = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.value = String(settings[key] || 60);
+        el.addEventListener('change', () => {
+          const val = parseInt(el.value);
+          if (window.Reminder) {
+            window.Reminder.updateSettings({ [key]: val });
+          }
+          const current = Store.getSettings();
+          if (!current.reminder) current.reminder = {};
+          current.reminder[key] = val;
+          Store.saveSettings(current);
+        });
+      }
+    };
+    toggle('reminderNotification', 'notificationEnabled');
+    toggle('reminderInApp', 'inAppNotifyEnabled');
+    toggle('reminderOverdue', 'overdueReminderEnabled');
+    toggle('reminderStartupCheck', 'startupCheckEnabled');
+    toggle('reminderEnoughTime', 'enoughTimeBeforeDue');
+    toggle('reminderNearDeadline', 'nearDeadlineTime');
+    select('reminderOverdueInterval', 'overdueReminderInterval');
+  },
+
+  /** 加载智能上下文设置 */
+  _loadContextSettings() {
+    const settings = Store.getSettings();
+    const el = document.getElementById('localContextEnabled');
+    if (el) {
+      el.checked = settings.localContextEnabled !== false;
+      el.addEventListener('change', () => {
+        const current = Store.getSettings();
+        current.localContextEnabled = el.checked;
+        Store.saveSettings(current);
+        this._settings = current;
+      });
+    }
+    this._settings = settings;
+  },
+
+  /** 填充专家选择列表 */
+  _populateExpertSelect() {
+    const selectEl = document.getElementById('taskExpert');
+    if (!selectEl) return;
+    selectEl.innerHTML = '<option value="">默认助手</option>';
+    
+    try {
+      const expertsData = JSON.parse(localStorage.getItem('memora_experts') || '{}');
+      const experts = expertsData.experts || [];
+      experts.forEach(expert => {
+        const opt = document.createElement('option');
+        opt.value = expert.id;
+        opt.textContent = `${expert.icon || '🤖'} ${expert.name}`;
+        selectEl.appendChild(opt);
+      });
+    } catch (e) {
+      console.warn('[Task] Failed to load experts for select:', e);
+    }
+  },
+
+  /** AI 小助手任务：注册定时执行 */
+  _scheduleAITask(task) {
+    if (!task.dueDate || task.taskType !== 'ai_scheduled') return;
+    
+    // 🔧 修复：先检查任务是否已完成，避免已过期的已完成任务被重新执行
+    const currentTask = Store.getTasks().find(t => t.id === task.id);
+    if (!currentTask || currentTask.status === 'completed') {
+      console.log(`[AI Task] Task "${task.title}" already completed or deleted, skip scheduling`);
+      return;
+    }
+    
+    const dueDate = new Date(currentTask.dueDate);
+    const now = new Date();
+    const delay = dueDate.getTime() - now.getTime();
+    
+    if (delay <= 0) {
+      // 🔧 修复：已过期的任务不再自动执行，仅标记逾期并通知用户
+      // 避免深夜创建的任务在次日凌晨重启时被误执行
+      const overdueMs = -delay;
+      const overdueMinutes = Math.round(overdueMs / 60000);
+      console.log(`[AI Task] Task "${currentTask.title}" is ${overdueMinutes}min overdue, marking as overdue instead of auto-executing`);
+      
+      // 如果逾期不超过5分钟，仍可执行（刚到期的场景）
+      if (overdueMinutes <= 5) {
+        this._executeAITask(currentTask);
+      } else {
+        // 逾期太久，不自动执行，提醒用户
+        this.showToast(`AI 任务「${currentTask.title}」已过期 ${overdueMinutes} 分钟，请手动执行`, 'warning');
+      }
+      return;
+    }
+    
+    // 存储定时器引用，方便取消
+    if (!this._aiTaskTimers) this._aiTaskTimers = {};
+    // 清除旧的定时器（避免重复调度）
+    if (this._aiTaskTimers[task.id]) {
+      clearTimeout(this._aiTaskTimers[task.id]);
+    }
+    
+    // 如果超过 24 小时，用 setTimeout 不合适，先设 1 小时后再检查
+    const maxDelay = 24 * 60 * 60 * 1000; // 24h
+    const actualDelay = Math.min(delay, maxDelay);
+    
+    this._aiTaskTimers[task.id] = setTimeout(() => {
+      const latestTask = Store.getTasks().find(t => t.id === task.id);
+      if (!latestTask || latestTask.status === 'completed') return;
+      
+      if (latestTask.taskType === 'ai_scheduled') {
+        const remaining = new Date(latestTask.dueDate).getTime() - Date.now();
+        if (remaining <= 60000) {
+          // 到时间了，执行
+          this._executeAITask(latestTask);
+        } else {
+          // 还没到，重新调度
+          this._scheduleAITask(latestTask);
+        }
+      }
+    }, actualDelay);
+    
+    console.log(`[AI Task] Scheduled task "${currentTask.title}" in ${Math.round(actualDelay / 60000)} minutes`);
+  },
+
+  /**
+   * 本地上下文注入：检索本地数据并组装 SystemRole
+   * @param {object} classification - LLM 意图分类结果
+   * @returns {Promise<{systemRole: string, sources: string[]}>}
+   */
+  async _retrieveLocalContext(classification) {
+    const sources = [];
+    const parts = [];
+
+    // 辅助函数：时间范围过滤（v2.7 增强版，支持 today/yesterday/tomorrow/this_week/last_week/last_month）
+    const filterByTimeRange = (items, timeRange, dateField = 'createdAt') => {
+      if (timeRange === 'all') return items;
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayEnd = new Date(todayStart.getTime() + 86400000);
+      
+      let rangeStart, rangeEnd;
+      switch (timeRange) {
+        case 'today':
+          rangeStart = todayStart; rangeEnd = todayEnd; break;
+        case 'yesterday':
+          rangeStart = new Date(todayStart.getTime() - 86400000); rangeEnd = todayStart; break;
+        case 'tomorrow':
+          rangeStart = todayEnd; rangeEnd = new Date(todayEnd.getTime() + 86400000); break;
+        case 'this_week': {
+          // 本周一到今天
+          const day = now.getDay() || 7; // 周日=7
+          rangeStart = new Date(todayStart.getTime() - (day - 1) * 86400000);
+          rangeEnd = todayEnd; break;
+        }
+        case 'last_week': {
+          const day = now.getDay() || 7;
+          rangeEnd = new Date(todayStart.getTime() - (day - 1) * 86400000);
+          rangeStart = new Date(rangeEnd.getTime() - 7 * 86400000); break;
+        }
+        case 'last_month': {
+          rangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          rangeEnd = new Date(now.getFullYear(), now.getMonth(), 1); break;
+        }
+        default: {
+          // 兼容旧格式 1d/7d/30d/90d
+          const msMap = { '1d': 86400000, '7d': 604800000, '30d': 2592000000, '90d': 7776000000 };
+          const ms = msMap[timeRange] || msMap['7d'];
+          rangeStart = new Date(now.getTime() - ms);
+          rangeEnd = now; break;
+        }
+      }
+      
+      return items.filter(item => {
+        // 任务用 dueDate，其他用 createdAt
+        const dateFieldToUse = dateField || 'createdAt';
+        const d = new Date(item[dateFieldToUse]);
+        if (isNaN(d)) return false;
+        // 任务类型的 tomorrow/this_week 按 dueDate 匹配
+        return d >= rangeStart && d < rangeEnd;
+      });
+    };
+
+    // 辅助函数：按 dueDate 过滤任务（特殊处理 tomorrow/this_week）
+    const filterTasksByTimeRange = (tasks, timeRange) => {
+      if (timeRange === 'all') return tasks;
+      if (timeRange === 'pending') return tasks.filter(t => t.status !== 'completed');
+      if (timeRange === 'overdue') return tasks.filter(t => t.status !== 'completed' && t.dueDate && new Date(t.dueDate) < new Date());
+      if (timeRange === 'completed') return tasks.filter(t => t.status === 'completed');
+      return filterByTimeRange(tasks, timeRange, 'dueDate');
+    };
+
+    // 并行检索所有需要的数据源
+    const promises = {};
+
+    if (classification?.need_notebook) {
+      promises.notebook = (async () => {
+        try {
+          const query = classification.notebook_query || '';
+          const result = await window.electronAPI.notebookSearch(query);
+          let notes = result?.notes || [];
+          if (classification.notebook_time_range) {
+            notes = filterByTimeRange(notes, classification.notebook_time_range, 'createdAt');
+          }
+          return notes.slice(0, 5).map(n => ({
+            title: n.title || '',
+            content: (n.content || '').substring(0, 500),
+            createdAt: n.createdAt
+          }));
+        } catch (e) { console.warn('[Context] notebook search failed:', e); return []; }
+      })();
+    }
+
+    if (classification?.need_memory) {
+      promises.memory = (async () => {
+        try {
+          const query = classification.memory_query || '';
+          const result = await window.electronAPI.knowledgeSearchLocal({ query, limit: 5 });
+          let memories = result?.results || result?.items || [];
+          if (classification.memory_time_range) {
+            memories = filterByTimeRange(memories, classification.memory_time_range, 'createdAt');
+          }
+          return memories.slice(0, 5).map(m => ({
+            content: (m.content || m.text || '').substring(0, 300),
+            category: m.category || '',
+            createdAt: m.createdAt
+          }));
+        } catch (e) { console.warn('[Context] memory search failed:', e); return []; }
+      })();
+    }
+
+    if (classification?.need_profile) {
+      promises.profile = (async () => {
+        try {
+          const profile = await window.electronAPI.profile.get();
+          return profile || {};
+        } catch (e) { console.warn('[Context] profile get failed:', e); return {}; }
+      })();
+    }
+
+    if (classification?.need_tasks) {
+      promises.tasks = (async () => {
+        try {
+          const tasks = Store.getTasks();
+          const filter = classification.task_filter || 'pending';
+          let filtered;
+          // v2.7: 支持 today/tomorrow/this_week 特殊 filter
+          if (['today', 'yesterday', 'tomorrow', 'this_week', 'last_week'].includes(filter)) {
+            filtered = filterTasksByTimeRange(tasks, filter);
+          } else if (filter === 'pending') {
+            filtered = tasks.filter(t => t.status !== 'completed');
+          } else if (filter === 'overdue') {
+            filtered = tasks.filter(t => t.status !== 'completed' && t.dueDate && new Date(t.dueDate) < new Date());
+          } else if (filter === 'completed') {
+            filtered = tasks.filter(t => t.status === 'completed');
+          } else {
+            filtered = tasks;
+          }
+          // 如果 task_time_range 与 task_filter 不同，额外按时间范围过滤
+          if (classification.task_time_range && classification.task_time_range !== filter) {
+            filtered = filterTasksByTimeRange(filtered, classification.task_time_range);
+          }
+          return filtered.slice(0, 10).map(t => ({
+            title: t.title || '',
+            dueDate: t.dueDate || '',
+            priority: t.priority || 'medium',
+            status: t.status || 'pending'
+          }));
+        } catch (e) { console.warn('[Context] tasks get failed:', e); return []; }
+      })();
+    }
+
+    if (classification?.need_knowledge) {
+      promises.knowledge = (async () => {
+        try {
+          const query = classification.knowledge_query || '';
+          const limit = classification.knowledge_limit || 3;
+          const result = await window.electronAPI.knowledgeGetArticles({});
+          let articles = result?.articles || [];
+          // 本地关键词过滤
+          if (query) {
+            const q = query.toLowerCase();
+            articles = articles.filter(a =>
+              (a.title || '').toLowerCase().includes(q) ||
+              (a.content || '').toLowerCase().includes(q) ||
+              (a.summary || '').toLowerCase().includes(q)
+            );
+          }
+          // v2.7: 按时间范围过滤
+          if (classification.knowledge_time_range) {
+            articles = filterByTimeRange(articles, classification.knowledge_time_range, 'createdAt');
+          }
+          return articles.slice(0, limit).map(a => ({
+            title: a.title || '',
+            content: (a.content || a.summary || '').substring(0, 300),
+            domain: a.domain || '',
+            createdAt: a.createdAt
+          }));
+        } catch (e) { console.warn('[Context] knowledge get failed:', e); return []; }
+      })();
+    }
+
+    if (classification?.need_relationship) {
+      promises.relationship = (async () => {
+        try {
+          const result = await window.electronAPI.relationshipGetAll();
+          const allPersons = result?.persons || [];
+          const allRelations = result?.relations || [];
+          
+          // v2.7: 如果指定了具体人名，优先取这些人的详细信息
+          const personNames = classification.relationship_person_names || [];
+          let persons = allPersons;
+          if (personNames.length > 0) {
+            const nameSet = new Set(personNames.map(n => n.toLowerCase()));
+            persons = allPersons.filter(p => nameSet.has(p.name.toLowerCase()));
+            // 也加入相关人物
+            const relatedNames = new Set(personNames);
+            allRelations.forEach(r => {
+              if (nameSet.has(r.source.toLowerCase())) relatedNames.add(r.target);
+              if (nameSet.has(r.target.toLowerCase())) relatedNames.add(r.source);
+            });
+            persons = allPersons.filter(p => relatedNames.has(p.name));
+          }
+          
+          return {
+            persons: persons.slice(0, 8).map(p => ({
+              name: p.name || '',
+              role: p.role || '',
+              company: p.company || '',
+              projects: p.projects || [],
+              relation: p.profileRelation || p.relation_to_user || '',
+              interactionCount: p.interactionCount || 0,
+              recentMemories: (p.recentMemories || []).slice(0, 2).map(m => m.content?.substring(0, 80))
+            })),
+            relations: allRelations.filter(r => 
+              persons.some(p => p.name === r.source) || persons.some(p => p.name === r.target)
+            ).slice(0, 10).map(r => ({
+              source: r.source,
+              target: r.target,
+              type: r.type || '',
+              label: r.label || '',
+              strength: r.strength
+            }))
+          };
+        } catch (e) { console.warn('[Context] relationship get failed:', e); return { persons: [], relations: [] }; }
+      })();
+    }
+
+    // 等待所有并行检索完成
+    const results = {};
+    await Promise.all(
+      Object.entries(promises).map(async ([key, promise]) => {
+        try { results[key] = await promise; } catch (e) { results[key] = null; }
+      })
+    );
+
+    // 组装 SystemRole
+    if (results.notebook?.length) {
+      sources.push(`记事本×${results.notebook.length}`);
+      parts.push('【记事本】\n' + results.notebook.map((n, i) =>
+        `${i + 1}. ${n.title}\n${n.content}`
+      ).join('\n'));
+    }
+
+    if (results.memory?.length) {
+      sources.push(`记忆×${results.memory.length}`);
+      parts.push('【记忆】\n' + results.memory.map((m, i) =>
+        `${i + 1}. ${m.category ? `[${m.category}] ` : ''}${m.content}`
+      ).join('\n'));
+    }
+
+    if (results.profile && Object.keys(results.profile).length > 0) {
+      sources.push('画像');
+      const p = results.profile;
+      const profileParts = [];
+      if (p.name) profileParts.push(`姓名: ${p.name}`);
+      if (p.role) profileParts.push(`角色: ${p.role}`);
+      if (p.company) profileParts.push(`公司: ${p.company}`);
+      if (p.projects?.length) profileParts.push(`项目: ${p.projects.join(', ')}`);
+      if (p.skills?.length) profileParts.push(`技能: ${p.skills.join(', ')}`);
+      if (p.preferences) profileParts.push(`偏好: ${typeof p.preferences === 'string' ? p.preferences : JSON.stringify(p.preferences)}`);
+      if (profileParts.length) parts.push('【用户画像】\n' + profileParts.join('\n'));
+    }
+
+    if (results.tasks?.length) {
+      sources.push(`任务×${results.tasks.length}`);
+      parts.push('【待办任务】\n' + results.tasks.map((t, i) =>
+        `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 10)})` : ''} [${t.priority}/${t.status}]`
+      ).join('\n'));
+    }
+
+    if (results.knowledge?.length) {
+      sources.push(`知识×${results.knowledge.length}`);
+      parts.push('【知识文章】\n' + results.knowledge.map((k, i) =>
+        `${i + 1}. ${k.title}${k.domain ? ` [${k.domain}]` : ''}\n${k.content}`
+      ).join('\n'));
+    }
+
+    if (results.relationship?.persons?.length) {
+      sources.push(`人脉×${results.relationship.persons.length}`);
+      const relParts = ['【人脉图谱】'];
+      relParts.push('### 人物信息');
+      results.relationship.persons.forEach((p, i) => {
+        let line = `${i + 1}. **${p.name}**`;
+        if (p.role) line += ` · ${p.role}`;
+        if (p.company) line += ` @ ${p.company}`;
+        if (p.relation) line += ` (与用户: ${p.relation})`;
+        if (p.projects?.length) line += ` [项目: ${p.projects.join('/')}]`;
+        if (p.interactionCount) line += ` (${p.interactionCount}次交互)`;
+        relParts.push(line);
+        if (p.recentMemories?.length) {
+          p.recentMemories.forEach(m => relParts.push(`   - ${m}`));
+        }
+      });
+      if (results.relationship.relations?.length) {
+        relParts.push('### 人物关系');
+        results.relationship.relations.forEach(r => {
+          const strength = r.strength ? ` (强度${r.strength.toFixed(1)})` : '';
+          relParts.push(`- ${r.source} ↔ ${r.target}: ${r.label || r.type}${strength}`);
+        });
+      }
+      parts.push(relParts.join('\n'));
+    }
+
+    // Token 预算控制：~2000 token ≈ 6000 中文字符
+    let systemRole = parts.join('\n\n');
+    const MAX_CHARS = 6000;
+    if (systemRole.length > MAX_CHARS) {
+      systemRole = systemRole.substring(0, MAX_CHARS) + '\n...(上下文过长，已截断)';
+    }
+
+    if (systemRole) {
+      systemRole = `[用户本地上下文]\n${systemRole}\n\n请基于以上用户上下文回答问题。如果上下文中没有相关信息，请如实说明。`;
+    }
+
+    return { systemRole, sources };
+  },
+
+  /**
+   * 本地上下文注入：兜底策略（分类失败时使用）
+   */
+  async _retrieveLocalContextFallback() {
+    const sources = [];
+    const parts = [];
+
+    // 始终带 profile（轻量，始终有价值）
+    try {
+      const profile = await window.electronAPI.profile.get();
+      if (profile && Object.keys(profile).length > 0) {
+        sources.push('画像');
+        const profileParts = [];
+        if (profile.name) profileParts.push(`姓名: ${profile.name}`);
+        if (profile.role) profileParts.push(`角色: ${profile.role}`);
+        if (profile.company) profileParts.push(`公司: ${profile.company}`);
+        if (profile.projects?.length) profileParts.push(`项目: ${profile.projects.join(', ')}`);
+        if (profileParts.length) parts.push('【用户画像】\n' + profileParts.join('\n'));
+      }
+    } catch (e) { /* ignore */ }
+
+    // 默认带最近 3 条 pending 任务
+    try {
+      const tasks = Store.getTasks().filter(t => t.status !== 'completed').slice(0, 3);
+      if (tasks.length) {
+        sources.push(`任务×${tasks.length}`);
+        parts.push('【待办任务】\n' + tasks.map((t, i) =>
+          `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 10)})` : ''}`
+        ).join('\n'));
+      }
+    } catch (e) { /* ignore */ }
+
+    let systemRole = parts.join('\n\n');
+    if (systemRole) {
+      systemRole = `[用户本地上下文]\n${systemRole}\n\n请基于以上用户上下文回答问题。如果上下文中没有相关信息，请如实说明。`;
+    }
+    return { systemRole, sources };
+  },
+
+  /** AI 小助手任务：执行 - 将任务内容作为 prompt 提交给 AI 助手 */
+  async _executeAITask(task) {
+    console.log('[AI Task] Executing scheduled task:', task.title);
+    
+    // 🔧 修复：构造包含本地知识的 prompt
+    const localContext = await this._buildAITaskLocalContext(task);
+    const basePrompt = task.description
+      ? `${task.title}\n\n${task.description}`
+      : task.title;
+    // 将本地知识拼接在 prompt 前面，让 AI 了解用户当前状态
+    const prompt = localContext
+      ? `${localContext}\n\n---\n\n${basePrompt}`
+      : basePrompt;
+    
+    // 切换到 AI 助手视图（确保 DOM 可用）
+    this.showAIAssistantView();
+    
+    // 创建新对话会话
+    this.createNewChatSession();
+    
+    // 标记为定时任务会话
+    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+    if (session) {
+      session.taskType = 'scheduled';
+      session.taskId = task.id;
+      session.title = `⏰ ${task.title}`;
+      if (task.expertId) {
+        session.expertId = task.expertId;
+        session.expertName = task.expertName || '';
+      }
+      this._saveChatSessions();
+      this._renderChatSessionList();
+    }
+    
+    // 设置专家（需在 createNewChatSession 之后，确保 ADP ConversationId 已重置）
+    const expertId = task.expertId;
+    if (expertId && window.ExpertSystem) {
+      const expert = window.ExpertSystem.getExpertById?.(expertId);
+      if (expert) {
+        // 🔧 修复：不能使用 handleCardClick，因为它有"点击已激活卡片→取消选中"的逻辑
+        // 直接设置专家状态，模拟选中但跳过取消逻辑
+        window.ExpertSystem._activeExpertId = expertId;
+        window.ExpertSystem._activeGroupId = null;
+        window.ExpertSystem._groupChatActive = false;
+        // 更新 UI
+        document.querySelectorAll('.feature-card').forEach(c => c.classList.remove('active'));
+        const cardEl = document.querySelector(`.feature-card[data-type="expert"][data-id="${expertId}"]`);
+        if (cardEl) cardEl.classList.add('active');
+        // 更新快捷访问
+        if (typeof window.ExpertSystem._renderQuickAccess === 'function') {
+          window.ExpertSystem._renderQuickAccess(expert.quickAccesses || []);
+        }
+        // 更新 header
+        if (typeof window.ExpertSystem._updateChatHeader === 'function') {
+          window.ExpertSystem._updateChatHeader(expert.name || 'AI 助手', false);
+        }
+        // 更新当前对话会话的专家关联
+        if (this._activeSessionId) {
+          const curSession = this._chatSessions?.find(s => s.id === this._activeSessionId);
+          if (curSession && !curSession.isGroupChat) {
+            curSession.expertId = expertId;
+            curSession.expertName = expert.name || '';
+            curSession.taskType = 'scheduled';
+            this._saveChatSessions?.();
+          }
+        }
+      }
+    } else {
+      // 无指定专家时，清除专家设置，使用默认助手
+      if (window.ExpertSystem) {
+        window.ExpertSystem._activeExpertId = null;
+        window.ExpertSystem._activeGroupId = null;
+        // 清除卡片选中状态
+        document.querySelectorAll('.feature-card.active').forEach(c => c.classList.remove('active'));
+        // 恢复默认快捷访问
+        if (typeof window.ExpertSystem._renderQuickAccess === 'function') {
+          window.ExpertSystem._renderQuickAccess(window.ExpertSystem._getDefaultQuickAccesses());
+        }
+        if (typeof window.ExpertSystem._updateChatHeader === 'function') {
+          window.ExpertSystem._updateChatHeader('通用 AI 助手', false);
+        }
+      }
+    }
+    
+    // 🔧 关键修复：将 prompt 写入输入框，再调用 sendAIMessage（无参数）
+    // 原因：sendAIMessage 从 #aiChatInput 读取消息内容，传参会当作 forceMode
+    const input = document.getElementById('aiChatInput');
+    if (input) {
+      input.value = prompt;
+    } else {
+      console.error('[AI Task] Chat input not found, cannot send message');
+      return;
+    }
+    
+    try {
+      await this.sendAIMessage();
+    } catch (e) {
+      console.error('[AI Task] sendAIMessage failed:', e);
+    }
+    
+    // 更新任务状态
+    Store.updateTask(task.id, {
+      status: 'completed',
+      completedAt: new Date().toISOString()
+    });
+    this.renderTaskList();
+    Calendar.render();
+  },
+
+  /** 应用启动时恢复所有 AI 小助手定时任务 */
+  _restoreAITaskSchedulers() {
+    const tasks = Store.getTasks().filter(t => 
+      t.status !== 'completed' && 
+      t.taskType === 'ai_scheduled' && 
+      t.dueDate
+    );
+    tasks.forEach(task => this._scheduleAITask(task));
+    if (tasks.length > 0) {
+      console.log(`[AI Task] Restored ${tasks.length} scheduled AI tasks`);
+    }
+  },
+
+  /**
+   * 🔧 新增：为 AI 小助手任务构建本地知识上下文
+   * 将待办任务、记事本等关键信息注入 prompt，让 AI 了解用户当前状态
+   */
+  async _buildAITaskLocalContext(task) {
+    const parts = [];
+    
+    // 用户画像
+    try {
+      const profile = await window.electronAPI?.profile?.get?.();
+      if (profile && Object.keys(profile).length > 0) {
+        const profileParts = [];
+        if (profile.name) profileParts.push(`姓名: ${profile.name}`);
+        if (profile.role) profileParts.push(`角色: ${profile.role}`);
+        if (profile.company) profileParts.push(`公司: ${profile.company}`);
+        if (profile.projects?.length) profileParts.push(`项目: ${profile.projects.join(', ')}`);
+        if (profileParts.length) parts.push('【用户画像】\n' + profileParts.join('\n'));
+      }
+    } catch (e) { /* ignore */ }
+    
+    // 今日待办任务
+    try {
+      const allTasks = Store.getTasks();
+      const today = new Date().toISOString().split('T')[0];
+      const todayTasks = allTasks.filter(t => {
+        if (t.status === 'completed' || t.id === task.id) return false; // 排除自身和已完成
+        if (!t.dueDate) return false;
+        return t.dueDate.startsWith(today);
+      });
+      const pendingTasks = allTasks.filter(t => t.status !== 'completed' && t.id !== task.id).slice(0, 5);
+      const taskList = todayTasks.length > 0 ? todayTasks : pendingTasks;
+      if (taskList.length > 0) {
+        parts.push('【当前待办任务】\n' + taskList.map((t, i) =>
+          `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 16).replace('T', ' ')})` : ''} [${t.priority || '中'}优先级]`
+        ).join('\n'));
+      }
+    } catch (e) { /* ignore */ }
+    
+    // 最近记事本
+    try {
+      const notes = Store.getNotes().slice(0, 3);
+      if (notes.length > 0) {
+        parts.push('【最近笔记】\n' + notes.map((n, i) =>
+          `${i + 1}. ${n.title || '无标题'} (${n.createdAt?.substring(0, 10) || ''})`
+        ).join('\n'));
+      }
+    } catch (e) { /* ignore */ }
+    
+    if (parts.length === 0) return '';
+    return `[当前用户本地上下文]\n${parts.join('\n\n')}\n\n请基于以上上下文信息来回答用户的问题。`;
   },
 
   _renderThemeGrid() {

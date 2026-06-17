@@ -190,6 +190,8 @@
     "is_all_day": true/false
   },
   "priority": "high/medium/low",
+  "task_type": "manual|ai_scheduled",
+  "recurrence": { "type": "daily|weekly|..." } | null,
   "tags": ["工作", "客户", ...],
   "linked_persons": ["命中的高频人物名"],
   "linked_projects": ["命中的活跃项目名"],
@@ -197,12 +199,13 @@
   "recommendation_intent": "query_question|search_knowledge|get_document|doubt|null",
   "recommendation_query": "提取核心问题，≤100字，用于知识库搜索",
   "category": "匹配到的自定义分类key，无则null",
-  "reason": "同时说明：为什么是任务 + 为什么有效 + 为什么需要/不需要推荐",
+  "reason": "同时说明：为什么是任务 + 为什么有效 + 为什么需要/不需要推荐 + 为什么是 manual/ai_scheduled",
   "reasoning_steps": [
     "步骤1：识别到行动动词",
     "步骤2：发现时间词",
-    "步骤3：判断是否需要推荐",
-    "步骤4：综合判定"
+    "步骤3：判断任务类型（手动/AI）",
+    "步骤4：判断是否周期性",
+    "步骤5：综合判定"
   ]
 }
 ```
@@ -235,6 +238,34 @@
   ]
 }
 ```
+
+---
+
+# 任务类型识别（task_type）
+
+根据文本内容判断任务类型：
+- `"manual"`：普通手动待办（默认），需要用户自己完成
+- `"ai_scheduled"`：AI 小助手任务 — 以下信号强制设为 ai_scheduled：
+  - 文本中出现"让 AI"、"AI 帮我"、"帮我生成"、"自动分析"、"自动总结"、"帮我写"、"帮我查"等明确要求 AI 执行的动作
+  - 文本描述的是**信息获取/分析/生成类**需求，而非需要人工物理执行的事项
+  - 例如："帮我总结今天的工作" → `ai_scheduled`
+  - 例如："明天提醒我给张总打电话" → `manual`（需要人工执行）
+  - 例如："AI 帮我分析一下本周进度" → `ai_scheduled`
+
+# 周期性识别（recurrence）
+
+当文本中出现明显的周期性模式时，自动识别：
+- `"daily"`：每天/每日/日常
+- `"weekdays"`：工作日/周一到周五
+- `"weekly"`：每周X/每周
+- `"biweekly"`：隔周/每两周
+- `"monthly"`：每月/月度
+- `null`：无周期性信号时为 null
+
+例如：
+- "每天早上9点提醒我站会" → `recurrence: { type: "daily" }`
+- "每周五发周报" → `recurrence: { type: "weekly", daysOfWeek: [5] }`
+- "下周一开会" → `recurrence: null`（单次事件，不是周期性）
 
 ---
 

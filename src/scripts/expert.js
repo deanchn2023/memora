@@ -250,21 +250,28 @@ ID：${expert.id}`;
     // 检测内容是否超出两行，添加滚动提示
     this._setupScrollHint(container);
 
-    // 设置默认选中第一个
-    const firstCard = container.querySelector('.feature-card');
-    if (firstCard && !container.querySelector('.feature-card.active')) {
-      firstCard.classList.add('active');
-      const type = firstCard.dataset.type;
-      const id = firstCard.dataset.id;
-      if (type === 'expert') {
-        this._activeExpertId = id;
-        this._activeGroupId = null;
-        this._renderQuickAccess(this.getExpertById(id)?.quickAccesses || []);
+    // 🔧 v2.7: 默认不选中任何专家，使用设置中的通用 ADP AppKey
+    // 只有用户主动点击专家卡片时才设置 _activeExpertId
+    // 如果之前有选中的专家/专家团，恢复其 active 状态
+    if (this._activeExpertId || this._activeGroupId) {
+      const activeId = this._activeExpertId || this._activeGroupId;
+      const activeType = this._activeExpertId ? 'expert' : 'group';
+      const activeCard = container.querySelector(`.feature-card[data-type="${activeType}"][data-id="${activeId}"]`);
+      if (activeCard) {
+        activeCard.classList.add('active');
       } else {
-        this._activeGroupId = id;
+        // 之前选中的专家已不存在，清除选择
         this._activeExpertId = null;
-        this._renderQuickAccess(this.getGroupById(id)?.quickAccesses || []);
+        this._activeGroupId = null;
       }
+    }
+    // 渲染快捷访问（无专家时显示通用快捷访问）
+    if (this._activeExpertId) {
+      this._renderQuickAccess(this.getExpertById(this._activeExpertId)?.quickAccesses || []);
+    } else if (this._activeGroupId) {
+      this._renderQuickAccess(this.getGroupById(this._activeGroupId)?.quickAccesses || []);
+    } else {
+      this._renderQuickAccess(this._getDefaultQuickAccesses());
     }
   },
 
@@ -344,6 +351,26 @@ ID：${expert.id}`;
       return;
     }
 
+    // 🔧 v2.7: 点击已激活的卡片 → 取消选中，回到通用助手
+    if (cardEl.classList.contains('active')) {
+      cardEl.classList.remove('active');
+      this._activeExpertId = null;
+      this._activeGroupId = null;
+      this._renderQuickAccess(this._getDefaultQuickAccesses());
+      this._updateChatHeader('通用 AI 助手', false);
+      // 清除对话会话关联的专家
+      const appRef = window.App;
+      if (appRef?._activeSessionId) {
+        const session = appRef._chatSessions?.find(s => s.id === appRef._activeSessionId);
+        if (session) {
+          session.expertId = null;
+          session.expertName = '';
+          appRef._saveChatSessions?.();
+        }
+      }
+      return;
+    }
+
     // 更新选中状态
     document.querySelectorAll('.feature-card').forEach(c => c.classList.remove('active'));
     cardEl.classList.add('active');
@@ -355,6 +382,17 @@ ID：${expert.id}`;
       const expert = this.getExpertById(id);
       this._renderQuickAccess(expert?.quickAccesses || []);
       this._updateChatHeader(expert?.name || 'AI 助手', false);
+      // 标记当前对话会话关联的专家
+      const appRef = window.App;
+      if (appRef?._activeSessionId) {
+        const session = appRef._chatSessions?.find(s => s.id === appRef._activeSessionId);
+        if (session && !session.isGroupChat) {
+          session.expertId = id;
+          session.expertName = expert?.name || '';
+          session.taskType = 'chat';
+          appRef._saveChatSessions?.();
+        }
+      }
     } else {
       this._activeGroupId = id;
       this._activeExpertId = null;
@@ -383,6 +421,17 @@ ID：${expert.id}`;
     if (terminateBtn) {
       terminateBtn.style.display = isGroup ? 'inline-flex' : 'none';
     }
+  },
+
+  /** 通用助手快捷访问（无专家选中时显示） */
+  _getDefaultQuickAccesses() {
+    return [
+      { icon: '📋', label: '今天的日报', prompt: '整理今天的日报' },
+      { icon: '📊', label: '本周周报', prompt: '整理本周的周报' },
+      { icon: '📝', label: '明天任务', prompt: '整理明天的任务' },
+      { icon: '🧠', label: '帮我回忆', prompt: '帮我回忆一下最近的重要事项' },
+      { icon: '💡', label: '知识回顾', prompt: '总结今天记录的知识点' },
+    ];
   },
 
   // ===== 获取当前专家的 ADP 配置 =====
@@ -505,7 +554,10 @@ ID：${expert.id}`;
       session.isGroupChat = true;
       session.groupId = group.id;
       session.groupName = group.name;
+      session.taskType = 'group';
     }
+    // 立即持久化，确保群聊标记不会丢失
+    appRef._saveChatSessions?.();
   },
 
   // ===== 持久化群聊记录 =====

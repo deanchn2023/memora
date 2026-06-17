@@ -1,11 +1,16 @@
 /**
  * Memora v2.6 专家设置面板
  * 管理专家和专家团的 CRUD 操作界面
+ * v2.6.2: 分页、Excel 导入导出、预览区拖动排序
  */
 const ExpertSettings = {
   _editingExpert: null,
   _editingGroup: null,
   _dragState: null,  // 拖拽排序状态
+
+  // 分页状态
+  _expertPage: 1,
+  _expertPageSize: 10,
 
   init() {
     this._bindEvents();
@@ -14,7 +19,19 @@ const ExpertSettings = {
   _bindEvents() {
     document.getElementById('addExpertBtn')?.addEventListener('click', () => this.showExpertEditor());
     document.getElementById('addGroupBtn')?.addEventListener('click', () => this.showGroupEditor());
-    
+    document.getElementById('importExpertBtn')?.addEventListener('click', () => this._importFromExcel());
+    document.getElementById('exportExpertBtn')?.addEventListener('click', () => this._exportToExcel());
+
+    // 分页事件
+    document.getElementById('expertPrevPage')?.addEventListener('click', () => {
+      if (this._expertPage > 1) { this._expertPage--; this._renderExpertList(); }
+    });
+    document.getElementById('expertNextPage')?.addEventListener('click', () => {
+      const experts = window.ExpertSystem?.getExperts?.() || [];
+      const totalPages = Math.ceil(experts.length / this._expertPageSize);
+      if (this._expertPage < totalPages) { this._expertPage++; this._renderExpertList(); }
+    });
+
     document.getElementById('expertList')?.addEventListener('click', (e) => {
       const target = e.target.closest('[data-action]');
       if (!target) return;
@@ -24,7 +41,7 @@ const ExpertSettings = {
       if (action === 'delete-expert') this.confirmDeleteExpert(id);
       if (action === 'set-host') this._setHostFromList(id);
     });
-    
+
     document.getElementById('expertGroupList')?.addEventListener('click', (e) => {
       const target = e.target.closest('[data-action]');
       if (!target) return;
@@ -33,17 +50,19 @@ const ExpertSettings = {
       if (action === 'edit-group') this.showGroupEditor(id);
       if (action === 'delete-group') this.confirmDeleteGroup(id);
     });
-    
+
     // 拖拽排序绑定
     this._bindDragSort('expertList', 'expert');
     this._bindDragSort('expertGroupList', 'group');
+    // 预览区拖拽排序
+    this._bindPreviewDragSort();
   },
-  
+
   // ===== 拖拽排序 =====
   _bindDragSort(containerId, type) {
     const container = document.getElementById(containerId);
     if (!container) return;
-    
+
     container.addEventListener('dragstart', (e) => {
       const item = e.target.closest('.expert-list-item');
       if (!item) return;
@@ -52,14 +71,14 @@ const ExpertSettings = {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', item.dataset.id);
     });
-    
+
     container.addEventListener('dragend', (e) => {
       const item = e.target.closest('.expert-list-item');
       if (item) item.classList.remove('dragging');
       container.querySelectorAll('.expert-list-item').forEach(el => el.classList.remove('drag-over'));
       this._dragState = null;
     });
-    
+
     container.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
@@ -68,28 +87,28 @@ const ExpertSettings = {
       container.querySelectorAll('.expert-list-item').forEach(el => el.classList.remove('drag-over'));
       target.classList.add('drag-over');
     });
-    
+
     container.addEventListener('dragleave', (e) => {
       const target = e.target.closest('.expert-list-item');
       if (target) target.classList.remove('drag-over');
     });
-    
+
     container.addEventListener('drop', async (e) => {
       e.preventDefault();
       const target = e.target.closest('.expert-list-item');
       if (!target || !this._dragState) return;
       target.classList.remove('drag-over');
-      
+
       const items = Array.from(container.querySelectorAll('.expert-list-item'));
       const fromIdx = items.findIndex(el => el.dataset.id === this._dragState.draggedId);
       const toIdx = items.findIndex(el => el === target);
       if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
-      
+
       // 重新排列 DOM
       const orderedIds = items.map(el => el.dataset.id);
       const [moved] = orderedIds.splice(fromIdx, 1);
       orderedIds.splice(toIdx, 0, moved);
-      
+
       // 保存排序
       if (type === 'expert') {
         await window.ExpertSystem?.reorderExperts?.(orderedIds);
@@ -99,10 +118,89 @@ const ExpertSettings = {
       this.render();
     });
   },
-  
+
+  // ===== 预览区拖拽排序 =====
+  _bindPreviewDragSort() {
+    const container = document.getElementById('expertPreview');
+    if (!container) return;
+
+    container.addEventListener('dragstart', (e) => {
+      const card = e.target.closest('.preview-card');
+      if (!card) return;
+      this._previewDrag = { draggedId: card.dataset.id, draggedType: card.dataset.type, draggedEl: card };
+      card.classList.add('preview-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.id);
+    });
+
+    container.addEventListener('dragend', (e) => {
+      const card = e.target.closest('.preview-card');
+      if (card) card.classList.remove('preview-dragging');
+      container.querySelectorAll('.preview-card').forEach(el => el.classList.remove('preview-drag-over'));
+      this._previewDrag = null;
+    });
+
+    container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const card = e.target.closest('.preview-card');
+      if (!card || card === this._previewDrag?.draggedEl) return;
+      container.querySelectorAll('.preview-card').forEach(el => el.classList.remove('preview-drag-over'));
+      card.classList.add('preview-drag-over');
+    });
+
+    container.addEventListener('dragleave', (e) => {
+      const card = e.target.closest('.preview-card');
+      if (card) card.classList.remove('preview-drag-over');
+    });
+
+    container.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const target = e.target.closest('.preview-card');
+      if (!target || !this._previewDrag) return;
+      target.classList.remove('preview-drag-over');
+
+      const cards = Array.from(container.querySelectorAll('.preview-card'));
+      const fromIdx = cards.findIndex(el => el === this._previewDrag.draggedEl);
+      const toIdx = cards.findIndex(el => el === target);
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+
+      // 合并专家+专家团，按 sortOrder 排序
+      const experts = window.ExpertSystem?.getExperts?.() || [];
+      const groups = window.ExpertSystem?.getGroups?.() || [];
+      const all = [...experts.map(e => ({ ...e, _type: 'expert' })), ...groups.map(g => ({ ...g, _type: 'group' }))]
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+      // 移动
+      const [moved] = all.splice(fromIdx, 1);
+      all.splice(toIdx, 0, moved);
+
+      // 分别更新专家和专家团的 sortOrder
+      const expertOrderedIds = all.filter(a => a._type === 'expert').map(a => a.id);
+      const groupOrderedIds = all.filter(a => a._type === 'group').map(a => a.id);
+
+      // 计算新的 sortOrder（专家和专家团统一排序）
+      let sortIdx = 0;
+      for (const item of all) {
+        if (item._type === 'expert') {
+          const expert = experts.find(e => e.id === item.id);
+          if (expert) expert.sortOrder = sortIdx;
+        } else {
+          const group = groups.find(g => g.id === item.id);
+          if (group) group.sortOrder = sortIdx;
+        }
+        sortIdx++;
+      }
+
+      // 保存排序
+      if (expertOrderedIds.length > 0) await window.ExpertSystem?.reorderExperts?.(expertOrderedIds);
+      if (groupOrderedIds.length > 0) await window.ExpertSystem?.reorderGroups?.(groupOrderedIds);
+      this.render();
+    });
+  },
+
   // 从专家列表设置主持人
   _setHostFromList(expertId) {
-    // 找到包含该专家的所有专家团，弹出选择框
     const groups = window.ExpertSystem?.getGroups?.() || [];
     const groupsWithExpert = groups.filter(g => (g.expertIds || []).includes(expertId));
     if (groupsWithExpert.length === 0) {
@@ -110,7 +208,6 @@ const ExpertSettings = {
       return;
     }
     if (groupsWithExpert.length === 1) {
-      // 只有一个团，直接设置
       const group = groupsWithExpert[0];
       group.hostExpertId = expertId;
       window.ExpertSystem?.saveGroup?.(group).then(() => {
@@ -119,7 +216,6 @@ const ExpertSettings = {
       });
       return;
     }
-    // 多个团，选择设置哪个
     const overlay = document.createElement('div');
     overlay.className = 'expert-modal-overlay';
     overlay.id = 'setHostOverlay';
@@ -156,11 +252,24 @@ const ExpertSettings = {
     const container = document.getElementById('expertList');
     if (!container) return;
     const experts = window.ExpertSystem?.getExperts?.() || [];
+    const countEl = document.getElementById('expertCount');
+    if (countEl) countEl.textContent = `(${experts.length})`;
+
     if (experts.length === 0) {
       container.innerHTML = '<div class="expert-empty">暂无专家，点击上方"新增"添加</div>';
+      document.getElementById('expertPagination')?.classList.add('hidden');
       return;
     }
-    container.innerHTML = experts.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(expert => {
+
+    const sorted = experts.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    const totalPages = Math.ceil(sorted.length / this._expertPageSize);
+    if (this._expertPage > totalPages) this._expertPage = totalPages;
+    if (this._expertPage < 1) this._expertPage = 1;
+
+    const start = (this._expertPage - 1) * this._expertPageSize;
+    const pageItems = sorted.slice(start, start + this._expertPageSize);
+
+    container.innerHTML = pageItems.map(expert => {
       const isHostInAnyGroup = (window.ExpertSystem?.getGroups?.() || []).some(g => g.hostExpertId === expert.id);
       return `
       <div class="expert-list-item" draggable="true" data-id="${expert.id}">
@@ -180,6 +289,21 @@ const ExpertSettings = {
         </div>
       </div>`;
     }).join('');
+
+    // 渲染分页
+    const pagination = document.getElementById('expertPagination');
+    const pageInfo = document.getElementById('expertPageInfo');
+    const prevBtn = document.getElementById('expertPrevPage');
+    const nextBtn = document.getElementById('expertNextPage');
+
+    if (totalPages > 1) {
+      pagination?.classList.remove('hidden');
+      if (pageInfo) pageInfo.textContent = `${this._expertPage} / ${totalPages}`;
+      if (prevBtn) prevBtn.disabled = this._expertPage <= 1;
+      if (nextBtn) nextBtn.disabled = this._expertPage >= totalPages;
+    } else {
+      pagination?.classList.add('hidden');
+    }
   },
 
   _renderGroupList() {
@@ -228,11 +352,49 @@ const ExpertSettings = {
     if (all.length === 0) { container.innerHTML = '<div class="expert-empty">添加专家后这里会显示预览</div>'; return; }
     container.innerHTML = all.map(item => {
       if (item._type === 'expert') {
-        return `<div class="preview-card"><span class="preview-icon">${item.icon}</span><div class="preview-name">${this._esc(item.name)}</div><div class="preview-badge expert">专家</div></div>`;
+        return `<div class="preview-card" draggable="true" data-id="${item.id}" data-type="expert"><span class="preview-icon">${item.icon}</span><div class="preview-name">${this._esc(item.name)}</div><div class="preview-badge expert">专家</div></div>`;
       }
       const avatars = (item.expertIds || []).slice(0, 3).map(id => { const e = window.ExpertSystem?.getExpertById?.(id); return e ? e.icon : ''; }).join('');
-      return `<div class="preview-card"><span class="preview-icon">${item.icon}</span><div class="preview-name">${this._esc(item.name)}</div><div class="preview-avatars">${avatars}</div><div class="preview-badge group">专家团</div></div>`;
+      return `<div class="preview-card" draggable="true" data-id="${item.id}" data-type="group"><span class="preview-icon">${item.icon}</span><div class="preview-name">${this._esc(item.name)}</div><div class="preview-avatars">${avatars}</div><div class="preview-badge group">专家团</div></div>`;
     }).join('');
+  },
+
+  // ===== Excel 导入 =====
+  async _importFromExcel() {
+    try {
+      const result = await window.electronAPI?.expertsImportXlsx?.();
+      if (result?.cancelled) return;
+      if (!result?.success) {
+        this._toast('导入失败：' + (result?.error || '未知错误'), 'error');
+        return;
+      }
+      const msg = `成功导入 ${result.imported} 个专家` + (result.skipped > 0 ? `，跳过 ${result.skipped} 个（重复或数据不完整）` : '');
+      this._toast(msg, 'success');
+      this._expertPage = 1; // 重置到第一页
+      this.render();
+    } catch (err) {
+      this._toast('导入异常：' + err.message, 'error');
+    }
+  },
+
+  // ===== Excel 导出 =====
+  async _exportToExcel() {
+    const experts = window.ExpertSystem?.getExperts?.() || [];
+    if (experts.length === 0) {
+      this._toast('暂无专家可导出');
+      return;
+    }
+    try {
+      const result = await window.electronAPI?.expertsExportXlsx?.(experts);
+      if (result?.cancelled) return;
+      if (result?.success) {
+        this._toast(`已导出 ${result.count} 个专家到 Excel`, 'success');
+      } else {
+        this._toast('导出失败：' + (result?.error || '未知错误'), 'error');
+      }
+    } catch (err) {
+      this._toast('导出异常：' + err.message, 'error');
+    }
   },
 
   // ===== 专家编辑器 =====
@@ -485,7 +647,7 @@ const ExpertSettings = {
     const picker = document.createElement('div');
     picker.className = 'emoji-picker-popup';
     picker.innerHTML = emojis.map(e => `<span class="emoji-option" data-emoji="${e}">${e}</span>`).join('');
-    
+
     const target = document.getElementById(targetId);
     if (target) {
       const rect = target.getBoundingClientRect();
@@ -493,7 +655,7 @@ const ExpertSettings = {
       picker.style.top = (rect.bottom + 4) + 'px';
       picker.style.left = rect.left + 'px';
     }
-    
+
     document.body.appendChild(picker);
     picker.addEventListener('click', (e) => {
       const option = e.target.closest('.emoji-option');

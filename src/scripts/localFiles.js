@@ -265,12 +265,22 @@ const LocalFiles = {
 
     this._bindCardEvents(grid);
     this._updateIndexStatus();
+
+    // 多选模式：注入复选框
+    if (Documents._selectMode) {
+      this._injectCheckboxes(grid, 'local-file-card');
+    }
   },
 
   _bindCardEvents(grid) {
-    // 单击复制路径
+    // 单击：多选模式切换选中 / 普通模式复制路径
     grid.querySelectorAll('.local-file-card').forEach(card => {
-      card.addEventListener('click', () => {
+      card.addEventListener('click', (e) => {
+        if (Documents._selectMode) {
+          e.stopPropagation();
+          Documents._toggleCardSelection(card, 'local');
+          return;
+        }
         this._copyPath(card.dataset.path);
       });
       // 双击打开文件
@@ -369,6 +379,18 @@ const LocalFiles = {
       audio: '音频', other: '其他'
     };
     return map[type] || '其他';
+  },
+
+  /** 多选模式注入复选框 */
+  _injectCheckboxes(grid, cardClass) {
+    grid.querySelectorAll(`.${cardClass}`).forEach(card => {
+      if (card.querySelector('.doc-card-checkbox')) return;
+      const checkbox = document.createElement('div');
+      checkbox.className = 'doc-card-checkbox';
+      checkbox.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="2" y="2" width="20" height="20" rx="6" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+      card.style.position = 'relative';
+      card.insertBefore(checkbox, card.firstChild);
+    });
   },
 
   _formatSize(bytes) {

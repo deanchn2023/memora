@@ -1,0 +1,18 @@
+{
+  "name": "memora-reminder-ai-task",
+  "leadAgentId": "de0a1397640842e99505d377eb3fd6ec",
+  "workspacePath": "/Users/congkunzhu/Desktop/codebuddy/Memora",
+  "createdAt": "2026-06-17T08:10:56.931Z",
+  "options": {
+    "workspacePath": "/Users/congkunzhu/Desktop/codebuddy/Memora",
+    "isAutoTeam": false
+  },
+  "members": [
+    {
+      "memberId": "team-lead@memora-reminder-ai-task",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    }
+  ],
+  "isAutoTeam": false
+}

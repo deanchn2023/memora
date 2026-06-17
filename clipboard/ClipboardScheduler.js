@@ -279,7 +279,7 @@ class ClipboardScheduler {
    * 暂存器稳定回调
    * 🔧 修复：先调用AI分析，分析成功后再标记哈希（之前是先标记导致分析被跳过）
    */
-  _onBufferStable(mergedText, fragmentCount, fragmentHashes) {
+  _onBufferStable(mergedText, fragmentCount, fragmentHashes, rawJoinedText) {
     this._log(`[Scheduler] ✨ 缓冲区稳定! ${fragmentCount}条内容已合并, 共${mergedText.length}字`);
     if (fragmentCount > 1) {
       this._log(`[Scheduler] 📝 合并预览: "${mergedText.substring(0, 120).replace(/\n/g, '↵')}..."`);
@@ -297,6 +297,9 @@ class ClipboardScheduler {
     // 🔧 关键修复：先不标记哈希！等 AI 分析完成后再标记
     // 保存 fragmentHashes，在 onAnalysisComplete 后统一标记
     this._pendingFragmentHashes = fragmentHashes || [];
+    // 保存 fragmentCount 和 rawJoinedText，用于 AI 优化合并文本
+    this._pendingFragmentCount = fragmentCount;
+    this._pendingRawJoinedText = rawJoinedText || '';
 
     // 调用分析函数（纯文本，无图片）
     this._log(`[Scheduler] 🤖 提交AI分析...`);

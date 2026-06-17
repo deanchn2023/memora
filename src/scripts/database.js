@@ -78,6 +78,7 @@ class Database {
       source: task.source || 'manual',
       rawText: task.rawText || '',
       isDraft: task.isDraft || false,
+      recurrence: task.recurrence || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       completedAt: null

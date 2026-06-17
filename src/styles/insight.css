@@ -823,6 +823,7 @@
 }
 
 .mm-asset-card {
+  position: relative;
   background: var(--bg-card, #fff);
   border-radius: 14px;
   padding: 14px;
@@ -1564,4 +1565,303 @@
 
 [data-theme="dark"] .activation-card-entity {
   background: rgba(255,255,255,0.06);
+}
+
+/* ============================================
+   v2.7 人脉图谱 — 文本导入弹窗
+   ============================================ */
+
+.rel-import-modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.rel-import-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+}
+
+.rel-import-dialog {
+  position: relative;
+  width: 560px;
+  max-width: 90vw;
+  max-height: 85vh;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .rel-import-dialog {
+  background: var(--bg-card, #1e2433);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.08);
+}
+
+.rel-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 0.5px solid rgba(0,0,0,0.08);
+}
+
+[data-theme="dark"] .rel-import-header {
+  border-bottom-color: rgba(255,255,255,0.08);
+}
+
+.rel-import-header h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.rel-import-close {
+  width: 28px; height: 28px;
+  border: none; background: rgba(0,0,0,0.05);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.rel-import-close:hover {
+  background: rgba(0,0,0,0.1);
+}
+
+[data-theme="dark"] .rel-import-close {
+  background: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .rel-import-close:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+.rel-import-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.rel-import-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.rel-import-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px 14px;
+  border: 0.5px solid rgba(0,0,0,0.12);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  background: rgba(0,0,0,0.02);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  transition: border-color 0.2s;
+}
+
+.rel-import-textarea:focus {
+  outline: none;
+  border-color: #007AFF;
+  background: #fff;
+}
+
+[data-theme="dark"] .rel-import-textarea {
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+}
+
+[data-theme="dark"] .rel-import-textarea:focus {
+  background: rgba(255,255,255,0.06);
+  border-color: #0a84ff;
+}
+
+.rel-import-tip {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin: 8px 0 0;
+}
+
+.rel-import-preview {
+  margin-top: 16px;
+  padding: 14px;
+  background: rgba(0,122,255,0.04);
+  border: 0.5px solid rgba(0,122,255,0.12);
+  border-radius: 10px;
+}
+
+[data-theme="dark"] .rel-import-preview {
+  background: rgba(10,132,255,0.08);
+  border-color: rgba(10,132,255,0.15);
+}
+
+.rel-preview-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #007AFF;
+  margin-bottom: 10px;
+}
+
+[data-theme="dark"] .rel-preview-header {
+  color: #0a84ff;
+}
+
+.rel-preview-persons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.rel-preview-person {
+  font-size: 12px;
+  padding: 4px 10px;
+  background: rgba(0,0,0,0.04);
+  border-radius: 12px;
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .rel-preview-person {
+  background: rgba(255,255,255,0.08);
+}
+
+.rel-preview-relations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rel-preview-relation {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+}
+
+.rel-import-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 20px;
+  border-top: 0.5px solid rgba(0,0,0,0.08);
+}
+
+[data-theme="dark"] .rel-import-footer {
+  border-top-color: rgba(255,255,255,0.08);
+}
+
+.rel-import-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.rel-import-btn.secondary {
+  background: rgba(0,0,0,0.05);
+  color: var(--text-secondary);
+}
+
+.rel-import-btn.secondary:hover {
+  background: rgba(0,0,0,0.08);
+}
+
+.rel-import-btn:not(.secondary):not(.primary) {
+  background: rgba(0,122,255,0.1);
+  color: #007AFF;
+}
+
+.rel-import-btn:not(.secondary):not(.primary):hover {
+  background: rgba(0,122,255,0.18);
+}
+
+.rel-import-btn.primary {
+  background: #007AFF;
+  color: #fff;
+}
+
+.rel-import-btn.primary:hover {
+  background: #0066d6;
+}
+
+.rel-import-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+[data-theme="dark"] .rel-import-btn.secondary {
+  background: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .rel-import-btn:not(.secondary):not(.primary) {
+  background: rgba(10,132,255,0.15);
+  color: #0a84ff;
+}
+
+[data-theme="dark"] .rel-import-btn.primary {
+  background: #0a84ff;
+}
+
+.rel-import-btn.danger {
+  background: #FF3B30;
+  color: #fff;
+  border: none;
+}
+.rel-import-btn.danger:hover {
+  background: #E0342B;
+}
+
+[data-theme="dark"] .rel-import-btn.danger {
+  background: #FF453A;
+  color: #fff;
+}
+[data-theme="dark"] .rel-import-btn.danger:hover {
+  background: #FF6961;
+}
+
+/* 清空重建按钮 */
+.relationship-ai-btn.danger {
+  background: rgba(255,59,48,0.08);
+  color: #FF3B30;
+  border-color: rgba(255,59,48,0.2);
+}
+.relationship-ai-btn.danger:hover {
+  background: rgba(255,59,48,0.15);
+  border-color: rgba(255,59,48,0.3);
+}
+[data-theme="dark"] .relationship-ai-btn.danger {
+  background: rgba(255,69,58,0.12);
+  color: #FF453A;
+  border-color: rgba(255,69,58,0.2);
+}
+[data-theme="dark"] .relationship-ai-btn.danger:hover {
+  background: rgba(255,69,58,0.2);
+  border-color: rgba(255,69,58,0.35);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }

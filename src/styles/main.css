@@ -93,6 +93,7 @@ body {
   color: var(--text-primary);
   overflow: hidden;
   user-select: none;
+  -webkit-user-drag: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -2643,6 +2644,39 @@ body {
   color: var(--bg-glass-light);
   margin-top: 6px;
   text-align: right;
+}
+
+/* 本地上下文注入指示器 */
+.local-context-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: var(--bg-glass);
+  border-radius: 6px;
+}
+.local-context-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border-light);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: ctx-spin 0.8s linear infinite;
+}
+@keyframes ctx-spin {
+  to { transform: rotate(360deg); }
+}
+.local-context-sources {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--accent-blue);
+  margin-top: 4px;
+  padding: 2px 6px;
+  background: rgba(0,122,255,0.08);
+  border-radius: 4px;
 }
 
 .message.assistant .message-time,

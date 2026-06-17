@@ -170,13 +170,15 @@ let autoBackupTimer = null;
 let weeklyOptimizerTimer = null;
 
 // 默认内置API Key（用户未配置时使用，限制10次/天）
-const DEFAULT_API_KEY = 'ark-8884b1e5-d1b2-4e58-9319-0fcfce0543d7-15773';
-const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
-const DEFAULT_MODEL = 'deepseek-v4-flash';
+// 打包版不内置 LLM API Key，用户必须登录从云端同步或手动填写
+// 开发时可通过 .env 的 DEFAULT_API_KEY 覆盖
+const DEFAULT_API_KEY = process.env.DEFAULT_API_KEY || '';
+const DEFAULT_BASE_URL = process.env.DEFAULT_BASE_URL || 'https://ark.cn-beijing.volces.com/api/coding/v3';
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'deepseek-v4-flash';
 
 // 大用量 LLM 默认配置（高并发场景：剪贴板分析、记忆提取等高频调用）
-const DEFAULT_HIGHVOL_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
-const DEFAULT_HIGHVOL_MODEL = 'deepseek-v4-flash';
+const DEFAULT_HIGHVOL_BASE_URL = process.env.DEFAULT_HIGHVOL_BASE_URL || 'https://ark.cn-beijing.volces.com/api/coding/v3';
+const DEFAULT_HIGHVOL_MODEL = process.env.DEFAULT_HIGHVOL_MODEL || 'deepseek-v4-flash';
 
 // 默认限制（使用内置Key时）
 const DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY = 10;
@@ -213,13 +215,13 @@ let authState = {
 let remoteConfig = null;  // 服务器配置（仅内存，不写磁盘，退出登录即清空）
 let configPollTimer = null;  // 配置定期同步计时器
 
-// 环境配置（默认值 — 敏感地址从环境变量读取，不硬编码到安装包）
+// 环境配置（打包后不依赖环境变量，地址直接硬编码）
 const DEFAULT_AUTH_SERVERS = {
   beta: {
     name: 'Beta 版本（测试）',
-    authUrl: process.env.AUTH_SERVER_URL || '',
-    configUrl: process.env.CONFIG_SERVER_URL || '',
-    toolkitUrl: process.env.TOOLKIT_SERVER_URL || '',
+    authUrl: process.env.AUTH_SERVER_URL || 'http://121.5.164.126:3010',
+    configUrl: process.env.CONFIG_SERVER_URL || 'http://121.5.164.126:3450',
+    toolkitUrl: process.env.TOOLKIT_SERVER_URL || 'http://121.5.164.126:3010',
     loginPath: '/api/auth/login',
     loginField: 'username',
     configPath: '/memora/config',
@@ -227,9 +229,9 @@ const DEFAULT_AUTH_SERVERS = {
   },
   production: {
     name: '正式版本',
-    authUrl: process.env.AUTH_SERVER_URL || '',
-    configUrl: process.env.CONFIG_SERVER_URL || '',
-    toolkitUrl: process.env.TOOLKIT_SERVER_URL || '',
+    authUrl: process.env.AUTH_SERVER_URL || 'http://121.5.164.126:3010',
+    configUrl: process.env.CONFIG_SERVER_URL || 'http://121.5.164.126:3450',
+    toolkitUrl: process.env.TOOLKIT_SERVER_URL || 'http://121.5.164.126:3010',
     loginPath: '/api/auth/login',
     loginField: 'username',
     configPath: '/memora/config',
@@ -797,24 +799,25 @@ function getAPIConfig() {
   const userDailyLimit = parseInt(getSetting('api_daily_limit'));
   
   // 🔧 关键校验：自定义 base_url 必须配对对应的 API Key
-  // 如果用户设了 base_url 但没设 api_key，不能回退到 DEFAULT_API_KEY（DeepSeek的key）
-  // 否则用 DeepSeek 的 key 请求其他平台接口会鉴权失败
+  // 如果用户设了 base_url 但没设 api_key，不能回退到 DEFAULT_API_KEY
+  // 否则用内置的 key 请求其他平台接口会鉴权失败
   if (userBaseUrl && !userApiKey) {
-    console.warn('[AI] api_base_url 已设置但无配对 API Key，回退到默认 DeepSeek 配置');
+    console.warn('[AI] api_base_url 已设置但无配对 API Key，回退到默认配置');
     return {
       apiKey: DEFAULT_API_KEY,
       baseUrl: DEFAULT_BASE_URL,
       model: DEFAULT_MODEL,
-      dailyLimit: DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY,
+      dailyLimit: DEFAULT_API_KEY ? DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY : 0,
       isCustomKey: false
     };
   }
   
+  const effectiveApiKey = userApiKey || DEFAULT_API_KEY;
   return {
-    apiKey: userApiKey || DEFAULT_API_KEY,
+    apiKey: effectiveApiKey,
     baseUrl: userBaseUrl || DEFAULT_BASE_URL,
     model: userModel || DEFAULT_MODEL,
-    dailyLimit: userDailyLimit || (userApiKey ? 1000 : DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY),
+    dailyLimit: userDailyLimit || (userApiKey ? 1000 : (DEFAULT_API_KEY ? DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY : 0)),
     isCustomKey: !!userApiKey
   };
 }
@@ -1656,8 +1659,13 @@ function initAICallCount() {
 // 检查是否可以进行AI调用
 function canMakeAICall() {
   initAICallCount();
-  const count = parseInt(getSetting(AI_CALLS_KEY) || '0');
   const config = getAPIConfig();
+  // 无 API Key 时不能调用（未登录且未手动填写 key）
+  if (!config.apiKey) {
+    console.log('[AI] No API key available, AI calls disabled');
+    return false;
+  }
+  const count = parseInt(getSetting(AI_CALLS_KEY) || '0');
   const dailyLimit = config.dailyLimit;
   const allowed = count < dailyLimit;
   console.log('[AI] Call count:', count, '/', dailyLimit, '- Allowed:', allowed, '- Using custom key:', config.isCustomKey);
@@ -1727,6 +1735,61 @@ function setAIDailyLimit(limit) {
   console.log('[AI] Daily limit set to:', limit);
 }
 
+/**
+ * AI 优化合并剪贴板文本
+ * 当用户连续多次复制的内容被缓冲区合并时，用 AI 将拼接的内容优化为通顺完整的表述
+ * 不改变主要意思，只让句子更流畅、更完整
+ * @param {string} rawJoinedText - 纯拼接的原始文本（不含前缀和分隔线）
+ * @param {number} fragmentCount - 拼接片段数量
+ * @returns {Promise<string|null>} 优化后的文本，失败返回 null
+ */
+async function optimizeMergedText(rawJoinedText, fragmentCount) {
+  if (!rawJoinedText || fragmentCount <= 1) return null;
+  if (!canMakeAICall()) {
+    console.log('[Clipboard] AI调用次数达限，跳过合并文本优化');
+    return null;
+  }
+
+  try {
+    const optimizePrompt = `你是一个文本优化助手。用户从聊天中连续复制了 ${fragmentCount} 段内容，这些内容被简单拼接在一起。请将它们优化为一段通顺、完整的表述。
+
+规则：
+1. 不改变原文的主要意思和信息量
+2. 让句子之间的衔接更自然流畅
+3. 去掉重复的表述（多次复制可能包含重复部分）
+4. 保留所有关键信息（人名、数字、时间、专有名词等）
+5. 如果内容本身是独立的几条信息，用适当的分隔方式保持清晰
+6. 只输出优化后的文本，不要解释、不要加前缀后缀`;
+
+    const { response } = await callAI({
+      module: 'clipboard_merge_optimize',
+      category: 'highvol',
+      messages: [
+        { role: 'system', content: optimizePrompt },
+        { role: 'user', content: rawJoinedText }
+      ],
+      fetchOptions: { temperature: 0.2, max_tokens: 2000 },
+    });
+
+    if (!response.ok) {
+      console.log('[Clipboard] 合并文本优化 API 失败:', response.status);
+      return null;
+    }
+
+    incrementAICallCount();
+    const data = await response.json();
+    if (data.choices?.[0]?.message?.content) {
+      const optimized = data.choices[0].message.content.trim();
+      console.log(`[Clipboard] 合并文本优化完成 (${rawJoinedText.length}字 → ${optimized.length}字)`);
+      return optimized;
+    }
+    return null;
+  } catch (err) {
+    console.error('[Clipboard] 合并文本优化失败:', err.message);
+    return null;
+  }
+}
+
 async function analyzeClipboardText(text) {
   // 🔧 修复：空文本也要通知 scheduler 重置 isAnalyzing
   if (!text || text.trim().length === 0) {
@@ -1741,7 +1804,16 @@ async function analyzeClipboardText(text) {
     
     // 1. 去重检查 — 🔧 修复：只对非缓冲区合并的文本做检查
     //    缓冲区合并文本由 scheduler 统一管理去重，不在这里重复检查
-    const isBufferMerged = text.startsWith('[以下是从剪贴板分');
+    const bufferMatch = text.match(/^\[以下是从剪贴板分 (\d+) 次复制的内容，按时间顺序拼接\]/);
+    const isBufferMerged = !!bufferMatch;
+    const fragmentCount = bufferMatch ? parseInt(bufferMatch[1]) : 1;
+    // 从 scheduler 获取纯拼接文本（用于 AI 优化）
+    let rawJoinedText = null;
+    if (isBufferMerged && fragmentCount > 1) {
+      const scheduler = getScheduler();
+      rawJoinedText = scheduler?._pendingRawJoinedText || null;
+    }
+    
     if (!isBufferMerged && isClipboardProcessed(text)) {
       console.log('[AI] 🔁 内容已处理过，跳过AI调用');
       _sendLog('[AI] 🔁 内容已处理过，跳过AI调用');
@@ -2018,11 +2090,28 @@ async function analyzeClipboardText(text) {
         return;
       }
 
+      // 🔧 合并文本 AI 优化：将多次复制拼接的内容优化为通顺完整的表述
+      let optimizedText = text; // 最终用于保存的文本
+      let optimizationSource = null; // 来源标注
+      if (isBufferMerged && fragmentCount > 1 && rawJoinedText) {
+        _sendLog(`[AI] 🔄 开始优化合并文本 (${fragmentCount}次复制, ${rawJoinedText.length}字)...`);
+        const optimized = await optimizeMergedText(rawJoinedText, fragmentCount);
+        if (optimized) {
+          optimizedText = optimized + `\n\n（从剪贴板 ${fragmentCount} 次复制的内容拼接优化）`;
+          optimizationSource = `clipboard_merge_optimized_${fragmentCount}`;
+          _sendLog(`[AI] ✅ 合并文本优化完成，原文 ${rawJoinedText.length}字 → 优化 ${optimized.length}字`);
+        } else {
+          // 优化失败，使用原始拼接文本但标注来源
+          optimizedText = rawJoinedText + `\n\n（从剪贴板 ${fragmentCount} 次复制的内容拼接）`;
+          _sendLog(`[AI] ⚠️ 合并文本优化失败，使用原始拼接文本`);
+        }
+      }
+
       // 仅有效信息保存到记事本
       let savedNoteId = null;
       if (result.is_valid_info && notebook) {
         const noteData = {
-          content: text,
+          content: optimizedText,
           category: noteCategory,
           analyzed: true,
           analysis: {
@@ -2058,7 +2147,7 @@ async function analyzeClipboardText(text) {
 
         // 知识萃取：异步提取知识原子（不阻塞主流程）
         if (knowledgeStore && savedNoteId) {
-          extractKnowledgeAtoms(text, savedNoteId, result.tags).catch(err => {
+          extractKnowledgeAtoms(optimizedText, savedNoteId, result.tags).catch(err => {
             console.error('[Knowledge] Atom extraction error:', err);
           });
         }
@@ -2075,7 +2164,7 @@ async function analyzeClipboardText(text) {
             category: 'highvol',
             messages: [
               { role: 'system', content: getCurrentMemoryPrompt() },
-              { role: 'user', content: `从以下文本中提取结构化记忆：\n\n${text}` }
+              { role: 'user', content: `从以下文本中提取结构化记忆：\n\n${optimizedText}` }
             ],
             traceId,
           });
@@ -2170,7 +2259,7 @@ async function analyzeClipboardText(text) {
         }
         
         mainWindow.webContents.send('clipboard-task-detected', {
-          rawText: text,
+          rawText: optimizedText,
           task: {
             title: result.title,
             description: result.description,
@@ -2188,7 +2277,7 @@ async function analyzeClipboardText(text) {
         console.log('[AI] Medium confidence task, adding to candidates:', result.title, 'confidence:', confidence);
         _sendLog(`[AI] 🟡 中等置信度待办: title="${result.title}" confidence=${confidence}`);
         mainWindow.webContents.send('clipboard-candidate-detected', {
-          rawText: text,
+          rawText: optimizedText,
           task: {
             title: result.title,
             description: result.description,
@@ -2459,7 +2548,10 @@ ipcMain.handle('analyze-task', async (event, text) => {
           confidence: result.confidence || 0,
           isAllDay: result.time?.is_all_day || false,
           tags: result.tags || [],
-          reason: result.reason || ''
+          reason: result.reason || '',
+          // v2.1: AI 分析增强 — 识别周期性任务和 AI 小助手任务
+          taskType: result.task_type || 'manual',
+          recurrence: result.recurrence || null
         }
       };
     }
@@ -2680,6 +2772,72 @@ ipcMain.handle('analyze-clipboard', async (event, text) => {
   }
   
   return { success: false, error: '分析失败' };
+});
+
+// 本地上下文注入：意图分类（Phase 1）
+ipcMain.handle('context:classify-intent', async (event, messageText) => {
+  try {
+    if (!canMakeAICall()) {
+      console.log('[Context] AI call limit reached, using fallback');
+      return { success: true, classification: null }; // 兜底策略由渲染进程处理
+    }
+
+    const classifyPromptPath = path.join(__dirname, 'prompts', 'context-classify.md');
+    let classifyPrompt = '';
+    try {
+      classifyPrompt = fs.readFileSync(classifyPromptPath, 'utf8');
+    } catch (e) {
+      console.error('[Context] Failed to read classify prompt:', e);
+      return { success: true, classification: null };
+    }
+
+    // 3 秒超时
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    const { response } = await callAI({
+      module: 'context_classify',
+      category: 'highvol',
+      messages: [
+        { role: 'system', content: classifyPrompt },
+        { role: 'user', content: messageText }
+      ],
+      fetchOptions: { temperature: 0.1, signal: controller.signal },
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.warn('[Context] LLM classify failed, status:', response.status);
+      return { success: true, classification: null };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+
+    // 提取 JSON（可能被 markdown 代码块包裹）
+    let jsonStr = content;
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+    try {
+      const classification = JSON.parse(jsonStr);
+      incrementAICallCount();
+      console.log('[Context] Intent classified:', classification.intent_summary);
+      return { success: true, classification };
+    } catch (parseErr) {
+      console.warn('[Context] JSON parse failed, content:', content.substring(0, 100));
+      incrementAICallCount();
+      return { success: true, classification: null };
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.warn('[Context] Classify timed out (3s), using fallback');
+      return { success: true, classification: null };
+    }
+    console.error('[Context] Classify error:', error);
+    return { success: true, classification: null };
+  }
 });
 
 ipcMain.handle('optimize-clipboard-prompt', async (event, feedback) => {
@@ -3511,7 +3669,7 @@ async function handleLogout(clearToken = true) {
   // 停止配置轮询
   stopConfigPolling();
   authState = { isLoggedIn: false, token: null, user: null, env, forceLocalConfig: false };
-  remoteConfig = null;  // 清空内存中的服务器配置
+  remoteConfig = null;  // 清空内存中的服务器配置（ADP/LLM key 等随 remoteConfig 一起清空）
 
   if (clearToken) {
     // 清除持久化的 token
@@ -3520,9 +3678,15 @@ async function handleLogout(clearToken = true) {
     deleteSetting('auth_remember_me');
   }
 
-  // 通知渲染进程
+  // 通知渲染进程：配置已清空（让设置页面不再显示云端 key）
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('auth:changed', { isLoggedIn: false });
+    mainWindow.webContents.send('config:updated', {
+      api: null,
+      adp: null,
+      forceLocalConfig: false,
+      reason: 'logout'
+    });
   }
 }
 
@@ -5367,7 +5531,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   // 1. 旧方式：data 是纯文本字符串
   // 2. 新方式：data = { message, attachments } — 附件信息结构化传递给 ADP V2 Contents 数组
   // 3. v2.6 专家模式：data = { message, appKey, adpUrl, _expertMode } — 专家级配置覆盖
-  let message, attachments, expertAppKey, expertAdpUrl;
+  // 4. v2.7 本地上下文注入：data = { message, ..., systemRole } — 意图分类后的本地上下文
+  let message, attachments, expertAppKey, expertAdpUrl, localSystemRole;
   if (typeof data === 'string') {
     message = data;
     attachments = [];
@@ -5376,6 +5541,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
     attachments = data.attachments || [];
     expertAppKey = data.appKey || '';   // v2.6: 专家级 AppKey
     expertAdpUrl = data.adpUrl || '';   // v2.6: 专家级 URL
+    localSystemRole = data.systemRole || '';  // v2.7: 本地上下文注入
   }
 
   // v2.6: 专家模式优先使用专家配置的 appKey/url
@@ -5730,7 +5896,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
     Contents: contents,
     Incremental: true,
     Stream: 'enable',
-    StreamingThrottle: 5
+    StreamingThrottle: 5,
+    ...(localSystemRole ? { SystemRole: localSystemRole } : {}),  // v2.7: 本地上下文注入
   };
 
   // 调试：打印完整请求体结构（脱敏 AppKey，文件 URL 截断）
@@ -6128,7 +6295,125 @@ ipcMain.handle('expert-groups:reorder', async (event, orderedIds) => {
   return { success: true };
 });
 
-// ===== v2.6.1 群聊后台执行引擎 =====
+// ===== 专家 Excel 导入/导出 =====
+ipcMain.handle('experts:import-xlsx', async () => {
+  const XLSX = require('xlsx');
+  const { dialog } = require('electron');
+  const result = await dialog.showOpenDialog({
+    title: '选择专家 Excel 文件',
+    filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+    properties: ['openFile']
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false, cancelled: true };
+
+  try {
+    const workbook = XLSX.readFile(result.filePaths[0]);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet);
+
+    if (rows.length === 0) return { success: false, error: 'Excel 文件为空' };
+
+    const now = new Date().toISOString();
+    const existingData = _loadExpertsData();
+    const existingKeys = new Set((existingData.experts || []).map(e => e.appKey));
+    const existingNames = new Set((existingData.experts || []).map(e => e.name));
+    let imported = 0, skipped = 0;
+
+    for (const row of rows) {
+      const name = String(row['应用名称'] || row['名称'] || row['name'] || '').trim();
+      const appKey = String(row['App Key'] || row['appKey'] || row['app_key'] || '').trim();
+      const desc = String(row['应用描述'] || row['描述'] || row['intro'] || row['description'] || '').trim();
+      const icon = String(row['图标'] || row['icon'] || '🤖').trim();
+      const adpUrl = String(row['访问地址'] || row['adpUrl'] || row['adp_url'] || '').trim();
+
+      if (!name || !appKey) { skipped++; continue; }
+      if (existingKeys.has(appKey) || existingNames.has(name)) { skipped++; continue; }
+
+      // 解析快捷问题（支持多种列名格式）
+      const quickAccesses = [];
+      for (let i = 1; i <= 10; i++) {
+        const label = String(row[`快捷问题${i}`] || row[`快捷${i}`] || row[`qa_${i}`] || '').trim();
+        const prompt = String(row[`提示词${i}`] || row[`prompt_${i}`] || '').trim();
+        const qaIcon = String(row[`图标${i}`] || '💬').trim();
+        if (label && prompt) {
+          quickAccesses.push({ id: `qa_${i}`, icon: qaIcon, label, prompt });
+        }
+      }
+
+      const expert = {
+        id: `expert_import_${Date.now()}_${imported}`,
+        name, appKey, intro: desc.substring(0, 50), icon, adpUrl,
+        expertType: 'claw',
+        quickAccesses,
+        sortOrder: existingData.experts.length + imported,
+        createdAt: now,
+        updatedAt: now
+      };
+      existingData.experts.push(expert);
+      existingKeys.add(appKey);
+      existingNames.add(name);
+      imported++;
+    }
+
+    _saveExpertsData(existingData);
+    return { success: true, imported, skipped, total: rows.length };
+  } catch (err) {
+    console.error('[Experts] Import xlsx error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('experts:export-xlsx', async (event, experts) => {
+  const XLSX = require('xlsx');
+  const { dialog } = require('electron');
+  const result = await dialog.showSaveDialog({
+    title: '导出专家列表',
+    defaultPath: `Memora专家_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+  });
+  if (result.canceled) return { success: false, cancelled: true };
+
+  try {
+    const rows = (experts || []).map((e, i) => ({
+      '序号': i + 1,
+      '图标': e.icon || '🤖',
+      '应用名称': e.name || '',
+      '应用描述': e.intro || '',
+      'App Key': e.appKey || '',
+      '访问地址': e.adpUrl || '',
+      '专家类型': e.expertType || 'claw',
+      ...(() => {
+        const qaCols = {};
+        (e.quickAccesses || []).forEach((qa, j) => {
+          qaCols[`快捷问题${j + 1}`] = qa.label || '';
+          qaCols[`提示词${j + 1}`] = qa.prompt || '';
+          qaCols[`图标${j + 1}`] = qa.icon || '';
+        });
+        return qaCols;
+      })()
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // 设置列宽
+    ws['!cols'] = [
+      { wch: 5 },  // 序号
+      { wch: 5 },  // 图标
+      { wch: 20 }, // 应用名称
+      { wch: 40 }, // 应用描述
+      { wch: 80 }, // App Key
+      { wch: 40 }, // 访问地址
+      { wch: 10 }, // 专家类型
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '专家列表');
+    XLSX.writeFile(wb, result.filePath);
+
+    return { success: true, count: rows.length, path: result.filePath };
+  } catch (err) {
+    console.error('[Experts] Export xlsx error:', err);
+    return { success: false, error: err.message };
+  }
+});
 // 主进程管理群聊状态机，即使渲染进程切走页面也继续执行
 const _groupChatEngines = new Map(); // chatId → GroupChatEngine
 
@@ -7430,35 +7715,74 @@ ipcMain.handle('notebook:get-image', async (event, imagePath) => {
       const localFilename = serverPathToLocalFilename(imagePath);
       localImagePath = `images/${localFilename}`;
 
-      // 如果本地缓存不存在，尝试从服务端静态 URL 下载
+      // 如果本地缓存不存在，尝试从服务端下载
       const fullLocalPath = path.join(app.getPath('userData'), 'notebook', localImagePath);
       if (!fs.existsSync(fullLocalPath)) {
-        // 🔧 修复：通过静态 URL 直接下载（无需认证，express.static 公开访问）
-        // 静态路径格式: /memora/uploads/note-images/{server_path}
         if (authState.isLoggedIn) {
+          let downloaded = false;
+          const server = getAuthServer();
+          const baseUrl = server.configUrl || server.authUrl;
+
+          // 方式1：通过静态 URL 直接下载（无需认证，express.static 公开访问）
           try {
-            const server = getAuthServer();
-            const baseUrl = server.configUrl || server.authUrl;
             const staticUrl = `${baseUrl}/memora/uploads/note-images/${imagePath}`;
-            console.log('[Notebook] Downloading image from server:', staticUrl.substring(0, 80) + '...');
+            console.log('[Notebook] Downloading image from server (static):', staticUrl.substring(0, 80) + '...');
             const res = await fetch(staticUrl, { signal: AbortSignal.timeout(15000) });
             if (res.ok) {
               const buffer = Buffer.from(await res.arrayBuffer());
               if (buffer.length > 100) {  // 忽略损坏的小文件
                 fs.mkdirSync(path.dirname(fullLocalPath), { recursive: true });
                 fs.writeFileSync(fullLocalPath, buffer);
-                console.log('[Notebook] ✅ Image downloaded from server:', imagePath, `(${(buffer.length / 1024).toFixed(1)}KB)`);
+                console.log('[Notebook] ✅ Image downloaded (static):', imagePath, `(${(buffer.length / 1024).toFixed(1)}KB)`);
+                downloaded = true;
               } else {
                 console.warn('[Notebook] Downloaded image too small (likely corrupted):', buffer.length, 'bytes');
-                return { success: false, error: 'Server image corrupted', isServerPath: true };
               }
             } else {
-              console.warn('[Notebook] Static download failed:', res.status);
-              return { success: false, error: `Download failed: HTTP ${res.status}`, isServerPath: true };
+              console.warn('[Notebook] Static download failed:', res.status, '- trying authenticated API...');
             }
           } catch (downloadErr) {
-            console.warn('[Notebook] Image download error:', downloadErr.message);
-            return { success: false, error: 'Download failed: ' + downloadErr.message, isServerPath: true };
+            console.warn('[Notebook] Static download error:', downloadErr.message, '- trying authenticated API...');
+          }
+
+          // 方式2：静态 URL 404 时，fallback 到带认证的 download API
+          // 通过 server_path 查询图片 ID，再通过 /notes/images/:id/download 下载
+          if (!downloaded) {
+            try {
+              console.log('[Notebook] Trying authenticated API for image:', imagePath);
+              // 先通过 server_path 查找图片元数据
+              const listResult = await syncApiRequest(`/notes/images?limit=50`);
+              if (listResult.ok && listResult.images) {
+                const imgMeta = listResult.images.find(img => img.server_path === imagePath);
+                if (imgMeta) {
+                  // 通过 image_id + JWT 认证下载
+                  const downloadUrl = `${baseUrl}/memora/sync/notes/images/${imgMeta.id}/download`;
+                  const downloadRes = await fetch(downloadUrl, {
+                    headers: { 'Authorization': `Bearer ${authState.token}` },
+                    signal: AbortSignal.timeout(15000)
+                  });
+                  if (downloadRes.ok) {
+                    const buffer = Buffer.from(await downloadRes.arrayBuffer());
+                    if (buffer.length > 100) {
+                      fs.mkdirSync(path.dirname(fullLocalPath), { recursive: true });
+                      fs.writeFileSync(fullLocalPath, buffer);
+                      console.log('[Notebook] ✅ Image downloaded (authenticated API):', imagePath, `(${(buffer.length / 1024).toFixed(1)}KB)`);
+                      downloaded = true;
+                    }
+                  } else {
+                    console.warn('[Notebook] Authenticated API download failed:', downloadRes.status);
+                  }
+                } else {
+                  console.warn('[Notebook] Image metadata not found on server:', imagePath);
+                }
+              }
+            } catch (apiErr) {
+              console.warn('[Notebook] Authenticated API download error:', apiErr.message);
+            }
+          }
+
+          if (!downloaded) {
+            return { success: false, error: 'Image download failed (static + API)', isServerPath: true };
           }
         } else {
           console.warn('[Notebook] Image not cached and not logged in:', imagePath);
@@ -13536,6 +13860,194 @@ ${recentMemories.slice(0, 15).join('\n') || '无'}
   } catch (err) {
     console.error('[Relationship] AI infer error:', err);
     return buildPersonData();
+  }
+});
+
+// v2.7: 导入文本 → AI 提取人物和关系
+ipcMain.handle('relationship:import-text', async (event, { text }) => {
+  try {
+    if (!text || text.trim().length < 10) {
+      return { success: false, error: '文本过短，请输入至少10个字符' };
+    }
+    if (text.length > 5000) {
+      text = text.substring(0, 5000);
+    }
+
+    // 读取 Prompt 模板
+    const promptPath = path.join(__dirname, 'prompts', 'relationship-extract.md');
+    let systemPrompt = '';
+    try {
+      systemPrompt = fs.readFileSync(promptPath, 'utf8');
+    } catch (e) {
+      console.error('[Relationship] Failed to read extract prompt:', e);
+      return { success: false, error: '系统 Prompt 加载失败' };
+    }
+
+    // 注入用户姓名
+    const profile = loadProfile();
+    const userName = profile.user?.name || '用户';
+    systemPrompt = systemPrompt.replace('{{userName}}', userName);
+
+    const { response } = await callAI({
+      module: 'relationship_extract',
+      category: 'lowvol',
+      structured: true,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
+      ]
+    });
+
+    if (!response || !response.ok) {
+      const errText = response ? await response.text().catch(() => '') : 'no response';
+      console.warn('[Relationship] Extract API error:', response?.status, errText.substring(0, 200));
+      return { success: false, error: 'AI 解析失败，请重试' };
+    }
+
+    const data = await response.json();
+    let content = data?.choices?.[0]?.message?.content || '';
+    // 兼容 markdown 代码块包裹的 JSON
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) content = jsonMatch[1];
+
+    let extractResult;
+    try {
+      extractResult = JSON.parse(content.trim());
+    } catch (parseErr) {
+      console.warn('[Relationship] Extract JSON parse error:', parseErr.message, content.substring(0, 200));
+      return { success: false, error: 'AI 返回格式错误，请重试' };
+    }
+
+    incrementAICallCount();
+
+    const persons = (extractResult.persons || []).map(p => ({
+      name: p.name,
+      role: p.role || '',
+      company: p.company || '',
+      department: p.department || '',
+      projects: p.projects || [],
+      relation_to_user: p.relation_to_user || null,
+      interactionCount: 1,
+      recentMemories: [],
+      isSelf: false
+    }));
+
+    const relations = (extractResult.relations || []).map(r => ({
+      source: r.source,
+      target: r.target,
+      type: r.type || 'collaboration',
+      label: r.label || '',
+      strength: r.strength || 0.5,
+      confidence: r.confidence || 0.7,
+      aiInferred: false
+    }));
+
+    return { success: true, persons, relations };
+  } catch (err) {
+    console.error('[Relationship] Import text error:', err);
+    return { success: false, error: err.message || '解析失败' };
+  }
+});
+
+// v2.7: 合并导入的人物和关系到图谱
+ipcMain.handle('relationship:merge-imported', async (event, { persons, relations }) => {
+  try {
+    const relDir = getRelationshipPath();
+    const existingPath = path.join(relDir, 'persons.json');
+    let existingData = { persons: [], relations: [] };
+    if (fs.existsSync(existingPath)) {
+      try {
+        existingData = JSON.parse(fs.readFileSync(existingPath, 'utf8'));
+      } catch (_) {}
+    }
+
+    // 合并人物（去重规则：同名合并，角色/公司取非空值）
+    const personMap = {};
+    existingData.persons.forEach(p => { personMap[p.name] = p; });
+    persons.forEach(p => {
+      const key = p.name.trim();
+      if (personMap[key]) {
+        // 合并：补充空字段
+        if (p.role && !personMap[key].role) personMap[key].role = p.role;
+        if (p.company && !personMap[key].company) personMap[key].company = p.company;
+        if (p.department && !personMap[key].department) personMap[key].department = p.department;
+        if (p.relation_to_user && !personMap[key].profileRelation) personMap[key].profileRelation = p.relation_to_user;
+        // 并集合并项目
+        const existingProjects = personMap[key].projects || [];
+        const newProjects = p.projects || [];
+        const projectSet = new Set([...existingProjects, ...newProjects]);
+        personMap[key].projects = [...projectSet];
+        personMap[key].interactionCount = (personMap[key].interactionCount || 0) + 1;
+      } else {
+        personMap[key] = {
+          ...p,
+          name: key,
+          interactionCount: p.interactionCount || 1,
+          projects: p.projects || [],
+          recentMemories: [],
+          isSelf: false
+        };
+      }
+    });
+
+    // 合并关系（去重：source+target 相同则取 strength 更高的）
+    const relMap = {};
+    existingData.relations.forEach(r => {
+      const key = [r.source, r.target].sort().join('→');
+      relMap[key] = r;
+    });
+    relations.forEach(r => {
+      const key = [r.source, r.target].sort().join('→');
+      if (relMap[key]) {
+        if ((r.strength || 0) > (relMap[key].strength || 0)) {
+          relMap[key] = r; // 更高置信度的覆盖
+        }
+      } else {
+        relMap[key] = r;
+      }
+    });
+
+    // 写回文件
+    existingData.persons = Object.values(personMap);
+    existingData.relations = Object.values(relMap);
+    existingData.updatedAt = new Date().toISOString();
+
+    // 重建统计
+    const stats = {
+      total: existingData.persons.length,
+      frequent: existingData.persons.filter(p => (p.interactionCount || 0) >= 5).length,
+      recent: existingData.persons.filter(p => {
+        if (!p.lastInteraction) return false;
+        return (Date.now() - new Date(p.lastInteraction).getTime()) < 7 * 86400000;
+      }).length,
+      stale: existingData.persons.filter(p => {
+        if (!p.lastInteraction) return true;
+        return (Date.now() - new Date(p.lastInteraction).getTime()) > 30 * 86400000;
+      }).length,
+    };
+    existingData.stats = stats;
+
+    fs.writeFileSync(existingPath, JSON.stringify(existingData, null, 2));
+
+    return { success: true, merged: { persons: Object.keys(personMap).length, relations: Object.keys(relMap).length }, data: existingData };
+  } catch (err) {
+    console.error('[Relationship] Merge imported error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// 清空人脉图谱数据
+ipcMain.handle('relationship:clear', async () => {
+  try {
+    const relDir = getRelationshipPath();
+    const cachePath = path.join(relDir, 'persons.json');
+    if (fs.existsSync(cachePath)) {
+      fs.unlinkSync(cachePath);
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[Relationship] Clear error:', err);
+    return { success: false, error: err.message };
   }
 });
 

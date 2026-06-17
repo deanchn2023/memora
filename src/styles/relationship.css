@@ -283,21 +283,48 @@
 
 #relationshipCanvas {
   display: block;
-  transition: transform 0.2s ease;
+  /* 不再使用 CSS transform，改用 canvas 级变换 */
 }
 
-.graph-controls {
+/* 图谱工具栏 */
+.graph-toolbar {
   position: absolute;
   bottom: 16px;
-  right: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
+  align-items: center;
   gap: 4px;
   background: var(--bg-glass, rgba(255,255,255,0.85));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-radius: 10px;
-  padding: 4px;
+  border-radius: 12px;
+  padding: 4px 8px;
   border: 0.5px solid var(--border-light, rgba(0,0,0,0.06));
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  z-index: 20;
+}
+
+.graph-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.graph-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-light, rgba(0,0,0,0.08));
+  margin: 0 4px;
+}
+
+.graph-zoom-label {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  min-width: 36px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 
 .graph-ctrl-btn {
@@ -306,18 +333,47 @@
   border-radius: 8px;
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: 14px;
   color: var(--text-secondary, #86868b);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .graph-ctrl-btn:hover {
   background: rgba(0,0,0,0.05);
   color: var(--text-primary, #1d1d1f);
+}
+
+.graph-ctrl-btn.active {
+  background: var(--primary-color, #007AFF);
+  color: #fff;
+}
+
+/* 图谱提示 */
+.graph-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  background: var(--bg-glass, rgba(255,255,255,0.8));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 0.5px solid var(--border-light, rgba(0,0,0,0.04));
+  transition: opacity 0.5s ease;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.graph-hint.fade-out {
+  opacity: 0;
 }
 
 /* 人物详情面板 */
@@ -584,9 +640,24 @@
   background: rgba(0,0,0,0.2);
 }
 
-[data-theme="dark"] .graph-controls {
+[data-theme="dark"] .graph-toolbar {
   background: rgba(44,44,46,0.9);
   border-color: rgba(255,255,255,0.08);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+
+[data-theme="dark"] .graph-toolbar-divider {
+  background: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .graph-hint {
+  background: rgba(44,44,46,0.9);
+  border-color: rgba(255,255,255,0.06);
+  color: #aeaeb2;
+}
+
+[data-theme="dark"] .graph-zoom-label {
+  color: #aeaeb2;
 }
 
 [data-theme="dark"] .relationship-detail {
@@ -628,6 +699,69 @@
 [data-theme="dark"] .rel-ai-section {
   background: linear-gradient(135deg, rgba(0,122,255,0.08), rgba(88,86,214,0.08));
   border-color: rgba(0,122,255,0.15);
+}
+
+[data-theme="dark"] .relationship-graph-area {
+  background: #151922;
+}
+
+[data-theme="dark"] .rel-infer-result {
+  background: rgba(28,28,30,0.95);
+  border-color: rgba(255,255,255,0.08);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+[data-theme="dark"] .graph-ctrl-btn {
+  color: #e5e5ea;
+}
+
+[data-theme="dark"] .graph-ctrl-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: #e5e5ea;
+}
+
+[data-theme="dark"] .graph-ctrl-btn.active {
+  background: #007AFF;
+  color: #fff;
+}
+
+[data-theme="dark"] .relationship-ai-btn.secondary {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+  color: #e5e5ea;
+}
+
+[data-theme="dark"] .relationship-ai-btn.secondary:hover {
+  background: rgba(0,122,255,0.1);
+  border-color: rgba(0,122,255,0.2);
+  color: #5BA8F7;
+}
+
+[data-theme="dark"] .relationship-list::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+}
+
+[data-theme="dark"] .rel-person-card.self-person {
+  background: rgba(255,149,0,0.1);
+}
+
+[data-theme="dark"] .rel-person-relation {
+  background: rgba(91,168,247,0.12);
+  color: #5BA8F7;
+}
+
+[data-theme="dark"] .rel-project-tag {
+  background: rgba(91,168,247,0.12);
+  color: #5BA8F7;
+}
+
+[data-theme="dark"] .rel-detail-tag {
+  background: rgba(91,168,247,0.12);
+  color: #5BA8F7;
+}
+
+[data-theme="dark"] .stale-text {
+  color: #FBBF24;
 }
 
 /* ===== 响应式 ===== */

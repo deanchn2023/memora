@@ -101,6 +101,8 @@ const translations = {
     'settings.tab.prompts': 'Prompt',
     'settings.tab.memory': '记忆',
     'settings.tab.sync': '同步',
+    'settings.tab.reminder': '提醒',
+    'settings.tab.context': '智能上下文',
     'settings.tab.appearance': '外观',
     'settings.tab.login': '组织登录',
     'settings.tab.server': '服务器配置',
@@ -177,6 +179,10 @@ const translations = {
     'about.feature.clipboard.desc': '智能检测 + 暂存聚合 + 动态频率，内容自动入库',
     'about.feature.org': '组织协作',
     'about.feature.org.desc': '云端配置同步 + 五大 AppKey 独立管控 + 权限管理',
+    'about.feature.expert': '配置专家',
+    'about.feature.expert.desc': '专家知识库 + 专业领域问答 + 个性化推荐配置方案',
+    'about.feature.expertTeam': '专家团群聊',
+    'about.feature.expertTeam.desc': '多 Agent 协作对话 + 主持人自动调度 + 专家观点碰撞与共识',
     'about.changelog': '📋 版本说明',
     'about.v220.f1': '统一知识图谱 — sql.js 存储 + Canvas 力导向图 + 知识体检 + Graph RAG',
     'about.v220.f2': '知识聚类分析 — 自动分组相似内容，主题发现与智能归类',
@@ -341,6 +347,7 @@ const translations = {
     'documents.cloud': '☁️ 云端资料',
     'documents.local': '💻 本地',
     'documents.artifacts': '🤖 Agent 产物',
+    'documents.knowledgeBase': '📚 知识库',
     'documents.cloudDocs': '📄 文档',
     'documents.cloudCases': '💼 案例',
     'documents.cloudDemos': '🎮 Demo',
@@ -415,6 +422,7 @@ const translations = {
     'relationship.recentMemories': '最近记录',
     'relationship.aiSuggest': 'AI 推荐话题',
     'relationship.createTask': '创建联系任务',
+    'relationship.importText': '📝 导入文本',
 
     // 剪贴板检测
     'clipboard.detected': '检测到待办事项',
@@ -672,6 +680,30 @@ const translations = {
 
     // 设置 - 备份
     'settings.backup.exportTitle': '📦 数据导出',
+
+    // 设置 - 提醒
+    'settings.reminder.title': '🔔 提醒设置',
+    'settings.reminder.desc': '控制不同类型的任务提醒方式',
+    'settings.reminder.deadline': '⏰ 截止时间提醒',
+    'settings.reminder.enoughTime': '预留时间提醒',
+    'settings.reminder.enoughTimeDesc': '截止前 2 小时提醒预留时间',
+    'settings.reminder.nearDeadline': '紧急提醒',
+    'settings.reminder.nearDeadlineDesc': '截止前 30 分钟紧急提醒',
+    'settings.reminder.overdue': '🚨 逾期提醒',
+    'settings.reminder.overdueContinuous': '逾期任务持续提醒',
+    'settings.reminder.overdueContinuousDesc': '过期的任务定期弹窗提醒',
+    'settings.reminder.overdueInterval': '逾期提醒间隔',
+    'settings.reminder.interval30min': '30 分钟',
+    'settings.reminder.interval1h': '1 小时',
+    'settings.reminder.interval2h': '2 小时',
+    'settings.reminder.interval4h': '4 小时',
+    'settings.reminder.startupCheck': '启动时检查逾期',
+    'settings.reminder.startupCheckDesc': '应用启动时自动提醒逾期任务',
+    'settings.reminder.method': '📢 提醒方式',
+    'settings.reminder.systemNotify': '系统通知',
+    'settings.reminder.systemNotifyDesc': '在系统通知栏弹出提醒',
+    'settings.reminder.inApp': '应用内弹窗',
+    'settings.reminder.inAppDesc': '在应用右上角弹出提醒卡片',
     'settings.backup.exportDesc': '将所有数据（知识、记忆、画像、笔记、任务、配置等）导出为加密备份文件，可在其他设备上导入恢复',
     'settings.backup.exportPwd': '设置加密密码',
     'settings.backup.exportPwdPh': '至少4位密码，用于加密备份文件',
@@ -682,6 +714,11 @@ const translations = {
     'settings.backup.importDesc': '从加密备份文件恢复数据。支持两种模式：合并（保留现有数据+追加新数据）或替换（完全覆盖）',
     'settings.backup.importPwd': '输入解密密码',
     'settings.backup.importPwdPh': '输入导出时设置的密码',
+
+    // 设置 - 本地上下文注入
+    'settings.context.title': '🧠 智能上下文',
+    'settings.context.enable': '智能上下文注入',
+    'settings.context.enableDesc': '对话时自动检索本地数据（记事本/记忆/待办等）发送给 AI，让回答更精准',
 
     // 业务分类
     'biz.product': '产品',
@@ -790,6 +827,8 @@ const translations = {
     'settings.tab.prompts': 'Prompt',
     'settings.tab.memory': 'Memory',
     'settings.tab.sync': 'Sync',
+    'settings.tab.reminder': 'Reminder',
+    'settings.tab.context': 'Smart Context',
     'settings.tab.appearance': 'Appearance',
     'settings.tab.login': 'Org Login',
     'settings.tab.server': 'Server',
@@ -866,6 +905,10 @@ const translations = {
     'about.feature.clipboard.desc': 'Smart detection + staging aggregation + dynamic frequency, auto-capture content',
     'about.feature.org': 'Team Collaboration',
     'about.feature.org.desc': 'Cloud config sync + five AppKeys independent management + permissions',
+    'about.feature.expert': 'Config Expert',
+    'about.feature.expert.desc': 'Expert knowledge base + domain Q&A + personalized config recommendations',
+    'about.feature.expertTeam': 'Expert Team Chat',
+    'about.feature.expertTeam.desc': 'Multi-Agent collaborative chat + auto moderator + expert perspectives & consensus',
     'about.changelog': '📋 Changelog',
     'about.v220.f1': 'Unified Knowledge Graph — sql.js storage + Canvas force-directed + Knowledge Health + Graph RAG',
     'about.v220.f2': 'Knowledge Clustering — auto-group similar content, topic discovery & smart categorization',
@@ -1030,6 +1073,7 @@ const translations = {
     'documents.cloud': '☁️ Cloud',
     'documents.local': '💻 Local',
     'documents.artifacts': '🤖 Agent Artifacts',
+    'documents.knowledgeBase': '📚 Knowledge Base',
     'documents.cloudDocs': '📄 Docs',
     'documents.cloudCases': '💼 Cases',
     'documents.cloudDemos': '🎮 Demos',
@@ -1104,6 +1148,7 @@ const translations = {
     'relationship.recentMemories': 'Recent Records',
     'relationship.aiSuggest': 'AI Suggest Topics',
     'relationship.createTask': 'Create Task',
+    'relationship.importText': '📝 Import Text',
 
     // Clipboard detector
     'clipboard.detected': 'Task detected',
@@ -1361,6 +1406,30 @@ const translations = {
 
     // Settings - Backup
     'settings.backup.exportTitle': '📦 Data Export',
+
+    // Settings - Reminder
+    'settings.reminder.title': '🔔 Reminder Settings',
+    'settings.reminder.desc': 'Control different types of task reminders',
+    'settings.reminder.deadline': '⏰ Deadline Reminders',
+    'settings.reminder.enoughTime': 'Advance Reminder',
+    'settings.reminder.enoughTimeDesc': 'Remind 2 hours before deadline',
+    'settings.reminder.nearDeadline': 'Urgent Reminder',
+    'settings.reminder.nearDeadlineDesc': 'Urgent reminder 30 minutes before deadline',
+    'settings.reminder.overdue': '🚨 Overdue Reminders',
+    'settings.reminder.overdueContinuous': 'Continuous Overdue Reminder',
+    'settings.reminder.overdueContinuousDesc': 'Periodically remind about overdue tasks',
+    'settings.reminder.overdueInterval': 'Overdue Reminder Interval',
+    'settings.reminder.interval30min': '30 min',
+    'settings.reminder.interval1h': '1 hour',
+    'settings.reminder.interval2h': '2 hours',
+    'settings.reminder.interval4h': '4 hours',
+    'settings.reminder.startupCheck': 'Check Overdue on Startup',
+    'settings.reminder.startupCheckDesc': 'Auto-remind overdue tasks on app startup',
+    'settings.reminder.method': '📢 Reminder Method',
+    'settings.reminder.systemNotify': 'System Notification',
+    'settings.reminder.systemNotifyDesc': 'Show reminders in system notification bar',
+    'settings.reminder.inApp': 'In-App Popup',
+    'settings.reminder.inAppDesc': 'Show reminder card in top-right corner',
     'settings.backup.exportDesc': 'Export all data (knowledge, memories, profile, notes, tasks, config, etc.) as an encrypted backup file',
     'settings.backup.exportPwd': 'Encryption Password',
     'settings.backup.exportPwdPh': 'At least 4 characters for backup encryption',
@@ -1371,6 +1440,11 @@ const translations = {
     'settings.backup.importDesc': 'Restore from encrypted backup. Two modes: Merge (keep existing + add new) or Replace (full overwrite)',
     'settings.backup.importPwd': 'Decryption Password',
     'settings.backup.importPwdPh': 'Enter the password set during export',
+
+    // Settings - Local Context Injection
+    'settings.context.title': '🧠 Smart Context',
+    'settings.context.enable': 'Smart Context Injection',
+    'settings.context.enableDesc': 'Auto-retrieve local data (notes/memories/tasks etc.) and send to AI for more relevant answers',
 
     // Business categories
     'biz.product': 'Product',

@@ -72,10 +72,11 @@ class ClipboardBuffer {
 
     if (this.onStable) {
       const mergedText = this.getMergedText();
+      const rawJoinedText = this.getRawJoinedText();
       const fragmentCount = this.fragments.length;
       const { getClipboardHash } = require('./hashUtils');
       const fragmentHashes = this.fragments.map(f => getClipboardHash(f.text));
-      this.onStable(mergedText, fragmentCount, fragmentHashes);
+      this.onStable(mergedText, fragmentCount, fragmentHashes, rawJoinedText);
     }
 
     this.fragments = [];
@@ -92,10 +93,11 @@ class ClipboardBuffer {
     this.isStable = true;
     if (this.onStable) {
       const mergedText = this.getMergedText();
+      const rawJoinedText = this.getRawJoinedText();
       const fragmentCount = this.fragments.length;
       const { getClipboardHash } = require('./hashUtils');
       const fragmentHashes = this.fragments.map(f => getClipboardHash(f.text));
-      this.onStable(mergedText, fragmentCount, fragmentHashes);
+      this.onStable(mergedText, fragmentCount, fragmentHashes, rawJoinedText);
     }
     this.fragments = [];
   }
@@ -106,6 +108,16 @@ class ClipboardBuffer {
 
     const parts = this.fragments.map((f, i) => f.text);
     return `[以下是从剪贴板分 ${this.fragments.length} 次复制的内容，按时间顺序拼接]\n\n${parts.join('\n\n---\n\n')}`;
+  }
+
+  /**
+   * 获取纯拼接文本（不含前缀和分隔线），用于 AI 优化
+   */
+  getRawJoinedText() {
+    if (this.fragments.length === 0) return '';
+    if (this.fragments.length === 1) return this.fragments[0].text;
+
+    return this.fragments.map(f => f.text).join('\n');
   }
 
   get fragmentCount() {

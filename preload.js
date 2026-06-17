@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   expertChatGetRecords: (data) => ipcRenderer.invoke('expert-chat:get-records', data),
   expertChatDeleteRecord: (data) => ipcRenderer.invoke('expert-chat:delete-record', data),
   expertsOptimizeHostPrompt: (data) => ipcRenderer.invoke('experts:optimize-host-prompt', data),
+  expertsImportXlsx: () => ipcRenderer.invoke('experts:import-xlsx'),
+  expertsExportXlsx: (experts) => ipcRenderer.invoke('experts:export-xlsx', experts),
   onExpertChatEvent: (callback) => {
     ipcRenderer.on('expert-chat:event', (event, data) => callback(data));
   },
@@ -189,6 +191,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   analyzeTask: (text) => ipcRenderer.invoke('analyze-task', text),
   analyzeClipboard: (text) => ipcRenderer.invoke('analyze-clipboard', text),
   optimizeClipboardPrompt: (feedback) => ipcRenderer.invoke('optimize-clipboard-prompt', feedback),
+  // 本地上下文注入
+  contextClassifyIntent: (messageText) => ipcRenderer.invoke('context:classify-intent', messageText),
   aiContinueWrite: (context) => ipcRenderer.invoke('ai-continue-writing', context),
   
   // 记事本系统
@@ -421,6 +425,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   relationshipAiAnalyze: () => ipcRenderer.invoke('relationship:ai-analyze'),
   relationshipAiSuggest: (personName) => ipcRenderer.invoke('relationship:ai-suggest', { personName }),
   relationshipAiInferRelations: () => ipcRenderer.invoke('relationship:ai-infer-relations'),
+  relationshipImportText: (data) => ipcRenderer.invoke('relationship:import-text', data),
+  relationshipMergeImported: (data) => ipcRenderer.invoke('relationship:merge-imported', data),
+  relationshipClear: () => ipcRenderer.invoke('relationship:clear'),
 
   // 数据导出/导入
   dataExport: (password) => ipcRenderer.invoke('data:export', { password }),

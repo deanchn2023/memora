@@ -553,9 +553,11 @@
               </div>
             </div>
             <div class="documents-category-tabs" id="documentsCategoryTabs">
-              <button class="doc-cat-tab active" data-type="cloud" data-i18n="documents.cloud">☁️ 云端资料</button>
+              <button class="doc-cat-tab active" data-type="knowledge-base" data-i18n="documents.knowledgeBase">📚 知识库</button>
+              <button class="doc-cat-tab" data-type="cloud" data-i18n="documents.cloud">☁️ 云端资料</button>
               <button class="doc-cat-tab" data-type="local" data-i18n="documents.local">💻 本地</button>
               <button class="doc-cat-tab" data-type="artifacts" data-i18n="documents.artifacts">🤖 Agent 产物</button>
+              <button class="doc-cat-tab send-to-ai-toggle" id="sendToAIToggle" title="多选文件发送给 AI 助手">🤖 发给 AI</button>
             </div>
             <!-- 云端资料子分类 -->
             <div class="cloud-sub-tabs" id="cloudSubTabs">
@@ -653,13 +655,30 @@
                   </div>
                 </div>
               </div>
+
+              <!-- 知识库区域（多模态资产 + 知识书本） -->
+              <div class="knowledge-base-container hidden" id="knowledgeBaseContainer">
+                <div id="knowledgeBaseContent">
+                  <div class="insight-loading"><div class="spinner"></div><span>加载知识库...</span></div>
+                </div>
+              </div>
+
+              <!-- 多选发送 AI 浮动栏 -->
+              <div class="send-to-ai-bar hidden" id="sendToAIBar">
+                <div class="send-to-ai-info">
+                  <span class="send-to-ai-count" id="sendToAICount">0</span> 个文件已选择
+                </div>
+                <div class="send-to-ai-actions">
+                  <button class="send-to-ai-cancel" id="sendToAICancel">取消选择</button>
+                  <button class="send-to-ai-confirm" id="sendToAIConfirm">🤖 发送给 AI 助手</button>
+                </div>
+              </div>
             </div>
           </div>
           <!-- 洞察视图 v2.3 -->
           <div class="insight-view hidden" id="insightView">
             <div class="insight-tabs">
               <button class="insight-tab active" data-tab="dashboard"><span class="tab-icon">📊</span> <span data-i18n="insight.dashboard">仪表盘</span></button>
-              <button class="insight-tab" data-tab="multimodal"><span class="tab-icon">📚</span> <span data-i18n="insight.knowledgeBase">知识库</span></button>
               <button class="insight-tab" data-tab="activation"><span class="tab-icon">⚡</span> <span data-i18n="insight.activation">知识活化</span></button>
               <button class="insight-tab" data-tab="evolution"><span class="tab-icon">🌱</span> <span data-i18n="insight.evolution">知识演化</span></button>
               <button class="insight-tab" data-tab="conflicts"><span class="tab-icon">⚡</span> <span data-i18n="insight.conflicts">冲突检测</span></button>
@@ -670,12 +689,6 @@
               <div class="insight-panel active" id="insightPanel_dashboard">
                 <div id="insightDashboardContent">
                   <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingDashboard">加载洞察数据...</span></div>
-                </div>
-              </div>
-              <!-- 知识库面板（多模态资产 + 知识书本） -->
-              <div class="insight-panel" id="insightPanel_multimodal">
-                <div id="insightMultimodalContent">
-                  <div class="insight-loading"><div class="spinner"></div><span data-i18n="insight.loadingKB">加载知识库...</span></div>
                 </div>
               </div>
               <!-- 知识活化面板 -->
@@ -850,6 +863,68 @@
             <option value="medium" selected>中</option>
             <option value="high">高</option>
           </select>
+        </div>
+        
+        <!-- 周期性重复设置 -->
+        <div class="form-group">
+          <label for="taskRecurrence">🔁 重复</label>
+          <select id="taskRecurrence">
+            <option value="none">不重复</option>
+            <option value="daily">每天</option>
+            <option value="weekdays">工作日（周一至周五）</option>
+            <option value="weekly">每周</option>
+            <option value="biweekly">隔周</option>
+            <option value="monthly">每月</option>
+            <option value="custom">自定义间隔</option>
+          </select>
+        </div>
+        <div class="form-row hidden" id="recurrenceCustomRow">
+          <div class="form-group">
+            <label for="recurrenceInterval">间隔</label>
+            <input type="number" id="recurrenceInterval" value="2" min="1" max="365">
+          </div>
+          <div class="form-group">
+            <label for="recurrenceUnit">单位</label>
+            <select id="recurrenceUnit">
+              <option value="day">天</option>
+              <option value="week">周</option>
+              <option value="month">月</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group hidden" id="recurrenceWeeklyDaysRow">
+          <label>重复日</label>
+          <div class="weekdays-selector">
+            <button type="button" class="weekday-btn" data-day="1">一</button>
+            <button type="button" class="weekday-btn" data-day="2">二</button>
+            <button type="button" class="weekday-btn" data-day="3">三</button>
+            <button type="button" class="weekday-btn" data-day="4">四</button>
+            <button type="button" class="weekday-btn" data-day="5">五</button>
+            <button type="button" class="weekday-btn" data-day="6">六</button>
+            <button type="button" class="weekday-btn" data-day="0">日</button>
+          </div>
+        </div>
+        <div class="form-group hidden" id="recurrenceEndDateRow">
+          <label for="recurrenceEndDate">重复截止日期</label>
+          <input type="date" id="recurrenceEndDate">
+        </div>
+        
+        <div class="form-group">
+          <label for="taskType">任务类型</label>
+          <select id="taskType">
+            <option value="manual">手动待办</option>
+            <option value="ai_scheduled">🤖 AI 小助手（到时自动提交给 AI 执行）</option>
+          </select>
+        </div>
+
+        <div class="form-group hidden" id="aiExpertGroup">
+          <label for="taskExpert">指定 AI 专家</label>
+          <select id="taskExpert">
+            <option value="">默认助手</option>
+          </select>
+          <div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">
+            任务到期时，任务内容将自动作为 prompt 提交给选定的 AI 专家
+          </div>
         </div>
         
         <div class="form-group">
@@ -1163,6 +1238,8 @@
           <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆</button>
           <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">外观</button>
           <button class="settings-tab" data-tab="sync" data-i18n="settings.tab.sync">同步</button>
+          <button class="settings-tab" data-tab="reminder" data-i18n="settings.tab.reminder">提醒</button>
+          <button class="settings-tab" data-tab="context" data-i18n="settings.tab.context">智能上下文</button>
           <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
@@ -1394,10 +1471,19 @@
         <div class="settings-panel hidden" id="expertPanel">
           <div class="expert-section">
             <div class="expert-panel-header">
-              <h4>🤖 专家管理</h4>
-              <button class="btn primary" id="addExpertBtn" style="font-size:12px;padding:4px 12px;">+ 新增</button>
+              <h4>🤖 专家管理 <span class="expert-count" id="expertCount"></span></h4>
+              <div class="expert-panel-actions">
+                <button class="btn secondary" id="importExpertBtn" style="font-size:11px;padding:3px 8px;" title="从 Excel 导入专家">📥 导入</button>
+                <button class="btn secondary" id="exportExpertBtn" style="font-size:11px;padding:3px 8px;" title="导出专家列表为 Excel">📤 导出</button>
+                <button class="btn primary" id="addExpertBtn" style="font-size:12px;padding:4px 12px;">+ 新增</button>
+              </div>
             </div>
             <div id="expertList"></div>
+            <div class="expert-pagination hidden" id="expertPagination">
+              <button class="btn-icon pagination-btn" id="expertPrevPage" title="上一页">‹</button>
+              <span class="pagination-info" id="expertPageInfo"></span>
+              <button class="btn-icon pagination-btn" id="expertNextPage" title="下一页">›</button>
+            </div>
           </div>
           <div class="expert-section">
             <div class="expert-panel-header">
@@ -1407,8 +1493,8 @@
             <div id="expertGroupList"></div>
           </div>
           <div class="expert-preview">
-            <div class="expert-section-title">预览（与 AI 助手页面一致）</div>
-            <div class="preview-row" id="expertPreview"></div>
+            <div class="expert-section-title">预览 <small style="color:var(--text-tertiary);font-weight:400">（拖动卡片调整排序）</small></div>
+            <div class="preview-row preview-sortable" id="expertPreview"></div>
           </div>
         </div>
 
@@ -1854,6 +1940,92 @@
           </div>
         </div>
 
+        <div class="settings-panel hidden" id="reminderPanel">
+          <div class="reminder-settings-section">
+            <h4 data-i18n="settings.reminder.title">🔔 提醒设置</h4>
+            <p style="color:var(--text-tertiary);font-size:12px;margin:4px 0 16px;" data-i18n="settings.reminder.desc">控制不同类型的任务提醒方式</p>
+
+            <div class="reminder-setting-group">
+              <h5 data-i18n="settings.reminder.deadline">⏰ 截止时间提醒</h5>
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.reminder.enoughTime">预留时间提醒</span>
+                  <span class="setting-desc" data-i18n="settings.reminder.enoughTimeDesc">截止前 2 小时提醒预留时间</span>
+                </div>
+                <input type="checkbox" id="reminderEnoughTime" checked>
+              </label>
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.reminder.nearDeadline">紧急提醒</span>
+                  <span class="setting-desc" data-i18n="settings.reminder.nearDeadlineDesc">截止前 30 分钟紧急提醒</span>
+                </div>
+                <input type="checkbox" id="reminderNearDeadline" checked>
+              </label>
+            </div>
+
+            <div class="reminder-setting-group">
+              <h5 data-i18n="settings.reminder.overdue">🚨 逾期提醒</h5>
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.reminder.overdueContinuous">逾期任务持续提醒</span>
+                  <span class="setting-desc" data-i18n="settings.reminder.overdueContinuousDesc">过期的任务定期弹窗提醒</span>
+                </div>
+                <input type="checkbox" id="reminderOverdue" checked>
+              </label>
+              <div class="setting-input-row">
+                <span class="setting-label" data-i18n="settings.reminder.overdueInterval">逾期提醒间隔</span>
+                <select id="reminderOverdueInterval" style="width:120px;">
+                  <option value="30" data-i18n="settings.reminder.interval30min">30 分钟</option>
+                  <option value="60" selected data-i18n="settings.reminder.interval1h">1 小时</option>
+                  <option value="120" data-i18n="settings.reminder.interval2h">2 小时</option>
+                  <option value="240" data-i18n="settings.reminder.interval4h">4 小时</option>
+                </select>
+              </div>
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.reminder.startupCheck">启动时检查逾期</span>
+                  <span class="setting-desc" data-i18n="settings.reminder.startupCheckDesc">应用启动时自动提醒逾期任务</span>
+                </div>
+                <input type="checkbox" id="reminderStartupCheck" checked>
+              </label>
+            </div>
+
+            <div class="reminder-setting-group">
+              <h5 data-i18n="settings.reminder.method">📢 提醒方式</h5>
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.reminder.systemNotify">系统通知</span>
+                  <span class="setting-desc" data-i18n="settings.reminder.systemNotifyDesc">在系统通知栏弹出提醒</span>
+                </div>
+                <input type="checkbox" id="reminderNotification" checked>
+              </label>
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.reminder.inApp">应用内弹窗</span>
+                  <span class="setting-desc" data-i18n="settings.reminder.inAppDesc">在应用右上角弹出提醒卡片</span>
+                </div>
+                <input type="checkbox" id="reminderInApp" checked>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-panel hidden" id="contextPanel">
+          <div class="reminder-settings-section">
+            <h4 data-i18n="settings.context.title">🧠 智能上下文</h4>
+            <p style="color:var(--text-tertiary);font-size:12px;margin:4px 0 16px;" data-i18n="settings.context.enableDesc">对话时自动检索本地数据（记事本/记忆/待办等）发送给 AI，让回答更精准</p>
+            <div class="reminder-setting-group">
+              <label class="setting-toggle-row">
+                <div>
+                  <span class="setting-label" data-i18n="settings.context.enable">智能上下文注入</span>
+                  <span class="setting-desc" data-i18n="settings.context.enableDesc">对话时自动检索本地数据（记事本/记忆/待办等）发送给 AI，让回答更精准</span>
+                </div>
+                <input type="checkbox" id="localContextEnabled" checked>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-panel hidden" id="backupPanel">
           <div class="data-management-section">
             <div class="data-section-header">
@@ -1953,7 +2125,7 @@
             <div class="about-logo-area">
               <div class="about-logo">M</div>
               <h2 class="about-app-name">Memora</h2>
-              <span class="about-version">v2.5.0</span>
+              <span class="about-version">v2.6.0</span>
             </div>
 
             <div class="about-description">
@@ -2005,11 +2177,36 @@
                     <span data-i18n="about.feature.org.desc">云端配置同步 + 五大 AppKey 独立管控 + 权限管理</span>
                   </div>
                 </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🧑‍💼</span>
+                  <div>
+                    <strong data-i18n="about.feature.expert">配置专家</strong>
+                    <span data-i18n="about.feature.expert.desc">专家知识库 + 专业领域问答 + 个性化推荐配置方案</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">👥</span>
+                  <div>
+                    <strong data-i18n="about.feature.expertTeam">专家团群聊</strong>
+                    <span data-i18n="about.feature.expertTeam.desc">多 Agent 协作对话 + 主持人自动调度 + 专家观点碰撞与共识</span>
+                  </div>
+                </div>
               </div>
             </div>
 
               <div class="about-changelog">
               <h4 data-i18n="about.changelog">📋 版本说明</h4>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v2.6.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li>🤝 专家团系统 — 多 Agent 协作对话，主持人自动调度专家，流式输出渲染优化</li>
+                  <li>📋 剪贴板合并优化 — 多次复制内容 AI 智能拼接优化，表述更通顺完整</li>
+                  <li>📅 日历拖拽重构 — 自定义拖拽实现，兼容 Electron，拖拽阈值防误触</li>
+                  <li>🖼️ 图片下载容错 — 静态 URL 失败自动 fallback 到认证 API 下载</li>
+                  <li>🔐 安全加固 — 移除所有硬编码敏感信息（IP/密钥/凭据），打包版需登录使用 AI</li>
+                </ul>
+              </div>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.5.0</span>
                 <span class="changelog-date">2026-06</span>
