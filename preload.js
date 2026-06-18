@@ -221,6 +221,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   artifactsSave: (data) => ipcRenderer.invoke('artifacts:save', data),
   artifactsDownloadAndSave: (data) => ipcRenderer.invoke('artifacts:download-and-save', data),
   
+  // 读取 src/data/ 目录下的数据文件
+  readDataFile: (fileName) => ipcRenderer.invoke('read-data-file', fileName),
+  
+  // 图谱语义检索 (GraphRAG)
+  graphExtractEntities: (query) => ipcRenderer.invoke('graph:extract-entities', query),
+  graphSemanticSearch: (data) => ipcRenderer.invoke('graph:semantic-search', data),
+  onGraphSSEEvent: (callback) => {
+    ipcRenderer.on('graph:sse-event', (event, data) => callback(data));
+  },
+  removeGraphSSEListeners: () => {
+    ipcRenderer.removeAllListeners('graph:sse-event');
+  },
+  
   // 反馈系统（用于持续优化）
   recordFeedback: (feedback) => ipcRenderer.invoke('record-feedback', feedback),
   optimizePrompts: () => ipcRenderer.invoke('optimize-prompts'),

@@ -1,7 +1,8 @@
 /**
  * Memora v2.5 — 人脉图谱 Schema 定义与数据初始化
- * 7 类实体（Node Labels）+ 12 类关系（Edge Types）
+ * 10 类实体（Node Labels）+ 15 类关系（Edge Types）
  * 以 Architect 为核心的产品架构师团队图谱
+ * 支持插旗表全部 30 列数据字段
  */
 
 const RelationshipSchema = {
@@ -14,7 +15,7 @@ const RelationshipSchema = {
       properties: ['name', 'city', 'role', 'isPrimary', 'joinDate', 'accountId'],
       required: ['name'],
       displayField: 'name',
-      size: 36  // 图谱中节点基础大小
+      size: 36
     },
     Region: {
       label: '区域',
@@ -29,7 +30,7 @@ const RelationshipSchema = {
       label: '行业',
       color: '#34C759',
       icon: '🏭',
-      properties: ['name', 'priority'],
+      properties: ['name', 'level', 'priority', 'parentIndustry'],
       required: ['name'],
       displayField: 'name',
       size: 28
@@ -38,10 +39,28 @@ const RelationshipSchema = {
       label: '客户',
       color: '#AF52DE',
       icon: '🏢',
-      properties: ['name', 'tier', 'sector'],
+      properties: [
+        'name', 'tier', 'industryL1', 'industryL2',
+        'channel', 'aiDemand', 'productForm',
+        'biddingWinner', 'biddingDate', 'tencentParticipated',
+        'cloudProductConnected', 'convertedToOpportunity', 'followupStatus',
+        'signingStatus', 'competitorProducts', 'product',
+        'cemLink', 'notes', 'authorityTag',
+        'supplementaryNote', 'track', 'tag',
+        'region', 'relatedMaterials', 'targetCustomer'
+      ],
       required: ['name'],
       displayField: 'name',
       size: 24
+    },
+    Sales: {
+      label: '行业销售',
+      color: '#FF6B35',
+      icon: '💼',
+      properties: ['name', 'region'],
+      required: ['name'],
+      displayField: 'name',
+      size: 22
     },
     Case: {
       label: '案例',
@@ -60,6 +79,24 @@ const RelationshipSchema = {
       required: ['name'],
       displayField: 'name',
       size: 26
+    },
+    Partner: {
+      label: '伙伴',
+      color: '#00C7BE',
+      icon: '🤝',
+      properties: ['name', 'status', 'channelManager'],
+      required: ['name'],
+      displayField: 'name',
+      size: 22
+    },
+    Channel: {
+      label: '通路',
+      color: '#BF5AF2',
+      icon: '🔀',
+      properties: ['name'],
+      required: ['name'],
+      displayField: 'name',
+      size: 18
     },
     City: {
       label: '城市',
@@ -82,7 +119,7 @@ const RelationshipSchema = {
       color: '#FF9500',
       dashed: false,
       properties: ['isPrimary'],
-      description: '架构师隶属区域（isPrimary 区分专职/兼任）'
+      description: '架构师隶属区域'
     },
     // Architect → Industry
     COVERS: {
@@ -184,6 +221,36 @@ const RelationshipSchema = {
       properties: [],
       description: '客户所属行业'
     },
+    // Customer → Sales
+    SOLD_BY: {
+      label: '销售跟进',
+      source: 'Customer',
+      target: 'Sales',
+      color: '#FF6B35',
+      dashed: false,
+      properties: [],
+      description: '行业销售跟进客户'
+    },
+    // Customer → Channel
+    VIA_CHANNEL: {
+      label: '通路',
+      source: 'Customer',
+      target: 'Channel',
+      color: '#BF5AF2',
+      dashed: true,
+      properties: [],
+      description: '客户通过通路接入'
+    },
+    // Customer → Partner
+    PARTNER_WITH: {
+      label: '伙伴合作',
+      source: 'Customer',
+      target: 'Partner',
+      color: '#00C7BE',
+      dashed: true,
+      properties: ['status'],
+      description: '客户有伙伴合作'
+    },
     // Region → City
     CONTAINS: {
       label: '包含',
@@ -198,34 +265,68 @@ const RelationshipSchema = {
 
   // ===== 颜色映射 =====
   tierColors: {
-    '标杆': '#FF2D55',
-    '重点': '#FF9500',
-    '一般': '#007AFF',
+    '业内 TOP 20（头部标杆）': '#FF2D55',
+    '业内 TOP 50': '#FF9500',
+    '业内 TOP 100': '#007AFF',
     '其他': '#8E8E93'
   },
 
   statusColors: {
-    '已签约': '#34C759',
-    'POC中': '#007AFF',
-    '投标中': '#FF9500',
-    '有机会': '#5AC8FA',
-    '已拜访': '#8E8E93',
-    '无机会': '#AEAEB2',
-    '未拜访': '#C7C7CC',
+    '已中标/签约': '#34C759',
+    '已验收': '#34C759',
+    'poc中': '#007AFF',
+    '投标阶段': '#FF9500',
+    '有机会的商机': '#5AC8FA',
+    '已拜访，暂无机会': '#8E8E93',
+    '未拜访，当前无商机': '#AEAEB2',
+    '各类原因无机会，也无拜访计划': '#C7C7CC',
     '未知': '#C7C7CC'
+  },
+
+  // ===== Excel 列名 → Customer 属性映射 =====
+  columnMapping: {
+    '客户名': 'name',
+    '一级行业': 'industryL1',
+    '二级行业': 'industryL2',
+    '通路': 'channel',
+    '产品架构师': 'architect',
+    '客户对智能体需求': 'aiDemand',
+    '产品形态': 'productForm',
+    '中标方': 'biddingWinner',
+    '中标时间': 'biddingDate',
+    '腾讯是否参与poc/投标': 'tencentParticipated',
+    '行业销售': 'sales',
+    '客户分层': 'tier',
+    '云产三是否已建联': 'cloudProductConnected',
+    '是否转为商机': 'convertedToOpportunity',
+    '跟进状态': 'followupStatus',
+    '参与友商': 'competitorProducts',
+    '产品': 'product',
+    'CEM链接': 'cemLink',
+    '备注': 'notes',
+    '权威标签': 'authorityTag',
+    '重点补充说明': 'supplementaryNote',
+    '伙伴名称': 'partnerName',
+    '伙伴合作状态': 'partnerStatus',
+    '渠道经理': 'channelManager',
+    '赛道': 'track',
+    '标签': 'tag',
+    '区域': 'region',
+    '相关资料': 'relatedMaterials',
+    '目标客户': 'targetCustomer',
+    '签约状态': 'signingStatus'
   }
 };
 
 /**
  * 初始数据集 — 产品架构师团队全景
- * 包含：16位架构师 + 3区域 + 12行业 + 客户数据 + 产品
  */
 const INITIAL_DATA = {
   // ===== 区域 =====
   regions: [
-    { id: 'region-north', name: '北区', code: 'N' },
-    { id: 'region-east', name: '东区', code: 'E' },
-    { id: 'region-south', name: '南区', code: 'S' }
+    { id: 'region-north', name: '华北', code: 'N' },
+    { id: 'region-east', name: '华东', code: 'E' },
+    { id: 'region-south', name: '华南', code: 'S' }
   ],
 
   // ===== 城市 =====
@@ -234,22 +335,6 @@ const INITIAL_DATA = {
     { id: 'city-sh', name: '上海' },
     { id: 'city-sz', name: '深圳' },
     { id: 'city-gz', name: '广州' }
-  ],
-
-  // ===== 行业 =====
-  industries: [
-    { id: 'ind-paninternet', name: '泛互/战略', priority: 'high' },
-    { id: 'ind-education', name: '教育', priority: 'high' },
-    { id: 'ind-retail', name: '零售消费', priority: 'high' },
-    { id: 'ind-finance', name: '金融', priority: 'high' },
-    { id: 'ind-energy', name: '能源/制造/消费电子', priority: 'high' },
-    { id: 'ind-medical', name: '医疗', priority: 'high' },
-    { id: 'ind-carrier', name: '运营商', priority: 'medium' },
-    { id: 'ind-gov', name: '政务政法', priority: 'medium' },
-    { id: 'ind-travel', name: '文旅地产', priority: 'medium' },
-    { id: 'ind-digifin', name: '数金交传', priority: 'medium' },
-    { id: 'ind-transport', name: '出行', priority: 'medium' },
-    { id: 'ind-overseas', name: '海外', priority: 'low' }
   ],
 
   // ===== 产品 =====
@@ -263,10 +348,22 @@ const INITIAL_DATA = {
     { id: 'prod-coze', name: 'Coze', version: '' },
     { id: 'prod-dify', name: 'Dify', version: '' },
     { id: 'prod-fastgpt', name: 'FastGPT', version: '' },
-    { id: 'prod-hiagent', name: 'HiAgent', version: '' }
+    { id: 'prod-hiagent', name: 'HiAgent', version: '' },
+    { id: 'prod-ti', name: 'Ti', version: '' },
+    { id: 'prod-dlr', name: '数智人', version: '' },
+    { id: 'prod-cs-ai', name: '大模型客服', version: '' }
   ],
 
-  // ===== 架构师（16人 + 5公线 + 3实习生） =====
+  // ===== 通路 =====
+  channels: [
+    { id: 'ch-ka', name: 'KA' },
+    { id: 'ch-region', name: '区域' },
+    { id: 'ch-channel', name: '渠道' },
+    { id: 'ch-region-sales', name: '区域销售' },
+    { id: 'ch-channel-sales', name: '渠道销售' }
+  ],
+
+  // ===== 架构师 =====
   architects: [
     // 北区 5人
     { id: 'arch-ww', name: '王巍', city: 'city-bj', role: '产品架构师', accountId: 'viviweiwang', isPrimary: true },
@@ -302,13 +399,11 @@ const INITIAL_DATA = {
 
   // ===== 架构师-区域关系 =====
   architectRegions: [
-    // 北区
     { architect: 'arch-ww', region: 'region-north', isPrimary: true },
     { architect: 'arch-lzy', region: 'region-north', isPrimary: true },
     { architect: 'arch-fzk', region: 'region-north', isPrimary: true },
     { architect: 'arch-wy', region: 'region-north', isPrimary: true },
     { architect: 'arch-sym', region: 'region-north', isPrimary: true },
-    // 东区
     { architect: 'arch-ml', region: 'region-east', isPrimary: true },
     { architect: 'arch-xcc', region: 'region-east', isPrimary: true },
     { architect: 'arch-lt', region: 'region-east', isPrimary: true },
@@ -317,11 +412,9 @@ const INITIAL_DATA = {
     { architect: 'arch-zdw', region: 'region-east', isPrimary: true },
     { architect: 'arch-yd', region: 'region-east', isPrimary: true },
     { architect: 'arch-hz', region: 'region-east', isPrimary: true },
-    // 南区
     { architect: 'arch-htt', region: 'region-south', isPrimary: true },
     { architect: 'arch-qlm', region: 'region-south', isPrimary: true },
     { architect: 'arch-kcr', region: 'region-south', isPrimary: true },
-    // 跨区兼任（南区+东区）
     { architect: 'arch-lt', region: 'region-south', isPrimary: false },
     { architect: 'arch-ldc', region: 'region-south', isPrimary: false },
     { architect: 'arch-zdw', region: 'region-south', isPrimary: false },
@@ -329,49 +422,37 @@ const INITIAL_DATA = {
 
   // ===== 架构师-行业覆盖 =====
   architectIndustries: [
-    // 泛互/战略
     { architect: 'arch-ww', industry: 'ind-paninternet' },
     { architect: 'arch-ml', industry: 'ind-paninternet' },
     { architect: 'arch-hz', industry: 'ind-paninternet' },
-    // 教育
     { architect: 'arch-ww', industry: 'ind-education' },
     { architect: 'arch-xcc', industry: 'ind-education' },
     { architect: 'arch-htt', industry: 'ind-education' },
-    // 零售消费
     { architect: 'arch-ww', industry: 'ind-retail' },
     { architect: 'arch-xcc', industry: 'ind-retail' },
     { architect: 'arch-kcr', industry: 'ind-retail' },
     { architect: 'arch-zdw', industry: 'ind-retail' },
-    // 金融
     { architect: 'arch-wy', industry: 'ind-finance' },
     { architect: 'arch-sym', industry: 'ind-finance' },
     { architect: 'arch-zdw', industry: 'ind-finance' },
     { architect: 'arch-kcr', industry: 'ind-finance' },
-    // 能源/制造/消费电子
     { architect: 'arch-lzy', industry: 'ind-energy' },
     { architect: 'arch-fzk', industry: 'ind-energy' },
     { architect: 'arch-qy', industry: 'ind-energy' },
     { architect: 'arch-qlm', industry: 'ind-energy' },
-    // 医疗
     { architect: 'arch-fzk', industry: 'ind-medical' },
     { architect: 'arch-qy', industry: 'ind-medical' },
     { architect: 'arch-zdw', industry: 'ind-medical' },
-    // 运营商
     { architect: 'arch-lzy', industry: 'ind-carrier' },
     { architect: 'arch-lt', industry: 'ind-carrier' },
     { architect: 'arch-zdw', industry: 'ind-carrier' },
-    // 政务政法
     { architect: 'arch-lt', industry: 'ind-gov' },
-    // 文旅地产
     { architect: 'arch-ldc', industry: 'ind-travel' },
-    // 数金交传
     { architect: 'arch-lzy', industry: 'ind-digifin' },
     { architect: 'arch-yd', industry: 'ind-digifin' },
     { architect: 'arch-qlm', industry: 'ind-digifin' },
-    // 出行
     { architect: 'arch-qy', industry: 'ind-transport' },
     { architect: 'arch-kcr', industry: 'ind-transport' },
-    // 海外
     { architect: 'arch-hz', industry: 'ind-overseas' },
   ],
 
@@ -383,7 +464,7 @@ const INITIAL_DATA = {
     { region: 'region-south', city: 'city-gz' }
   ],
 
-  // ===== 跨区兼任关系（Architect → Architect） =====
+  // ===== 跨区兼任关系 =====
   crossRegions: [
     { source: 'arch-lt', target: 'arch-lt', note: '东+南跨区' },
     { source: 'arch-ldc', target: 'arch-ldc', note: '东+南跨区' },
@@ -403,4 +484,4 @@ const INITIAL_DATA = {
 // 导出
 window.RelationshipSchema = RelationshipSchema;
 window.INITIAL_DATA = INITIAL_DATA;
-console.log('[RelationshipSchema] Schema & initial data loaded');
+console.log('[RelationshipSchema] Schema & initial data loaded (v2 - full columns)');

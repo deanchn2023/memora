@@ -2177,7 +2177,7 @@ const App = {
     }
   },
 
-  async sendAIMessage(forceMode) {
+  async sendAIMessage(forceMode, options = {}) {
     const input = document.getElementById('aiChatInput');
     const message = input.value.trim();
     
@@ -2415,11 +2415,12 @@ const App = {
         }
 
         // v2.7 本地上下文注入：在发送给 ADP 前检索本地数据
-        let localContextSystemRole = '';
-        let localContextSources = [];
+        // 如果调用方已传入 systemRole（如定时任务），则跳过 LLM 分类
+        let localContextSystemRole = options.systemRole || '';
+        let localContextSources = options.sources || [];
         const contextEnabled = this._settings?.localContextEnabled !== false; // 默认开启
         const userMsgEl = this._currentUserMsgContent;
-        if (contextEnabled && message) {
+        if (!localContextSystemRole && contextEnabled && message) {
           try {
             // 显示检索提示
             const contextIndicator = userMsgEl?.querySelector('.local-context-indicator');
@@ -11395,6 +11396,7 @@ ${JSON.stringify(reportData, null, 2)}`;
           }
           return filtered.slice(0, 10).map(t => ({
             title: t.title || '',
+            description: (t.description || '').substring(0, 200),
             dueDate: t.dueDate || '',
             priority: t.priority || 'medium',
             status: t.status || 'pending'
@@ -11517,9 +11519,11 @@ ${JSON.stringify(reportData, null, 2)}`;
 
     if (results.tasks?.length) {
       sources.push(`任务×${results.tasks.length}`);
-      parts.push('【待办任务】\n' + results.tasks.map((t, i) =>
-        `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 10)})` : ''} [${t.priority}/${t.status}]`
-      ).join('\n'));
+      parts.push('【待办任务】\n' + results.tasks.map((t, i) => {
+        let line = `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 16).replace('T', ' ')})` : ''} [${t.priority}/${t.status}]`;
+        if (t.description) line += `\n   备注: ${t.description}`;
+        return line;
+      }).join('\n'));
     }
 
     if (results.knowledge?.length) {
@@ -11612,15 +11616,44 @@ ${JSON.stringify(reportData, null, 2)}`;
   async _executeAITask(task) {
     console.log('[AI Task] Executing scheduled task:', task.title);
     
-    // 🔧 修复：构造包含本地知识的 prompt
-    const localContext = await this._buildAITaskLocalContext(task);
+    // 🔧 修复：使用与正常聊天相同的 _retrieveLocalContext 获取完整本地数据
+    // 构建强制分类，确保获取今日待办、今日笔记、用户画像等完整上下文
+    const forcedClassification = {
+      need_profile: true,
+      need_tasks: true,
+      task_filter: 'pending',
+      task_time_range: '7d',
+      need_notebook: true,
+      notebook_query: '',
+      notebook_time_range: 'today',
+      need_memory: false,
+      need_knowledge: false,
+      need_relationship: false,
+      intent_summary: `定时任务：${task.title}`
+    };
+    
+    let localContextSystemRole = '';
+    let localContextSources = [];
+    try {
+      const contextData = await this._retrieveLocalContext(forcedClassification);
+      localContextSystemRole = contextData.systemRole;
+      localContextSources = contextData.sources;
+      console.log('[AI Task] Local context retrieved, sources:', localContextSources.join(', '));
+    } catch (e) {
+      console.warn('[AI Task] _retrieveLocalContext failed, trying fallback:', e.message);
+      try {
+        const fallbackData = await this._retrieveLocalContextFallback();
+        localContextSystemRole = fallbackData.systemRole;
+        localContextSources = fallbackData.sources;
+      } catch (e2) {
+        console.error('[AI Task] Fallback context also failed:', e2.message);
+      }
+    }
+    
+    // 只将任务本身的 prompt 作为消息内容（不含本地上下文，上下文通过 systemRole 注入）
     const basePrompt = task.description
       ? `${task.title}\n\n${task.description}`
       : task.title;
-    // 将本地知识拼接在 prompt 前面，让 AI 了解用户当前状态
-    const prompt = localContext
-      ? `${localContext}\n\n---\n\n${basePrompt}`
-      : basePrompt;
     
     // 切换到 AI 助手视图（确保 DOM 可用）
     this.showAIAssistantView();
@@ -11694,16 +11727,17 @@ ${JSON.stringify(reportData, null, 2)}`;
     
     // 🔧 关键修复：将 prompt 写入输入框，再调用 sendAIMessage（无参数）
     // 原因：sendAIMessage 从 #aiChatInput 读取消息内容，传参会当作 forceMode
+    // 本地上下文通过 options.systemRole 注入，不拼接到消息文本中
     const input = document.getElementById('aiChatInput');
     if (input) {
-      input.value = prompt;
+      input.value = basePrompt;
     } else {
       console.error('[AI Task] Chat input not found, cannot send message');
       return;
     }
     
     try {
-      await this.sendAIMessage();
+      await this.sendAIMessage(undefined, { systemRole: localContextSystemRole, sources: localContextSources });
     } catch (e) {
       console.error('[AI Task] sendAIMessage failed:', e);
     }

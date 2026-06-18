@@ -8030,6 +8030,217 @@ ipcMain.handle('artifacts:show-in-folder', async (event, { filePath }) => {
   } catch {}
 });
 
+// 读取 src/data/ 目录下的数据文件（供渲染进程加载图谱数据）
+ipcMain.handle('read-data-file', async (event, fileName) => {
+  try {
+    const dataPath = path.join(__dirname, 'src', 'data', fileName);
+    if (fs.existsSync(dataPath)) {
+      const content = fs.readFileSync(dataPath, 'utf-8');
+      return content;
+    }
+    return null;
+  } catch (e) {
+    console.error('[read-data-file] Error:', e.message);
+    return null;
+  }
+});
+
+// ===== 图谱语义检索 (GraphRAG) =====
+
+// 图谱实体提取 — 从自然语言查询中提取实体
+ipcMain.handle('graph:extract-entities', async (event, query) => {
+  try {
+    const extractPrompt = `你是一个实体提取助手。从用户的问题中提取以下实体类型，返回纯JSON格式（不要markdown，不要解释）：
+
+{
+  "architects": ["架构师姓名，如：邱毅、马磊"],
+  "regions": ["区域名称，如：华东、华北、华南"],
+  "industries": ["行业名称，如：金融、教育、能源"],
+  "customers": ["客户名称，如：重工集团、中国移动"],
+  "intent": "问题的核心意图，简短描述"
+}
+
+规则：
+1. 模糊匹配：用户说"重工集团"可能指"中国重工集团"等，提取原词即可
+2. 只提取明确提到的实体，不要猜测
+3. 如果没有某类实体，对应数组为空
+4. 意图描述不超过20字
+
+用户问题：${query}`;
+
+    const { response } = await callAI({
+      module: 'graph_entity_extract',
+      category: 'highvol',
+      messages: [
+        { role: 'system', content: '你是一个精确的实体提取助手，只输出纯JSON。' },
+        { role: 'user', content: extractPrompt }
+      ],
+      fetchOptions: { temperature: 0.1, response_format: { type: 'json_object' } },
+    });
+
+    if (response && response.ok) {
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || '{}';
+      const entities = JSON.parse(content);
+      return { success: true, entities };
+    }
+    return { success: false, error: 'LLM调用失败', entities: { architects: [], regions: [], industries: [], customers: [], intent: query } };
+  } catch (e) {
+    console.error('[graph:extract-entities] Error:', e);
+    return { success: false, error: e.message, entities: { architects: [], regions: [], industries: [], customers: [], intent: query } };
+  }
+});
+
+// 图谱语义检索 ADP 流式输出
+ipcMain.handle('graph:semantic-search', async (event, { query, graphContext }) => {
+  try {
+    // 使用统一的 ADP 配置获取
+    const adpConfig = await getADPConfigInternal();
+    const appKey = adpConfig.appKey;
+    const url = adpConfig.url;
+    const configSource = appKey ? (authState.isLoggedIn && remoteConfig?.adp ? 'cloud' : 'local') : 'default';
+
+    if (!appKey || appKey.trim() === '') {
+      console.warn('[GraphRAG] No ADP AppKey configured, returning error');
+      event.sender.send('graph:sse-event', { type: 'error', error: '未配置 ADP AppKey，无法进行智能分析。请在设置中配置 ADP AppKey。' });
+      return { success: false, error: 'No ADP AppKey' };
+    }
+
+    const convId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+    const requestId = Array.from({ length: 32 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
+
+    const systemRole = `你是一个人脉图谱分析助手。根据以下图谱数据回答用户的问题。
+
+## 图谱数据
+${graphContext}
+
+## 要求
+1. 基于图谱数据中的实际信息回答，不要编造
+2. 回答使用 Markdown 格式，支持表格、列表、标题
+3. 如果数据不足以回答，明确说明"图谱中暂无相关数据"
+4. 对于客户列表、架构师列表等结构化信息，优先使用 Markdown 表格展示
+5. 回答简洁专业，突出关键信息`;
+
+    const body = {
+      AppKey: appKey,
+      ConversationId: convId,
+      VisitorId: 'memora_graph_user',
+      Contents: [{ Type: 'text', Text: query }],
+      RequestId: requestId,
+      Incremental: true,
+      Stream: 'enable',
+      SystemRole: systemRole,
+    };
+
+    console.log(`[GraphRAG] Starting ADP stream, configSource=${configSource}, url=${url}`);
+
+    const fetchResponse = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!fetchResponse.ok) {
+      const errText = await fetchResponse.text();
+      event.sender.send('graph:sse-event', { type: 'error', error: `ADP请求失败: ${fetchResponse.status} ${errText}` });
+      return { success: false, error: 'ADP request failed' };
+    }
+
+    // 解析 SSE 流
+    const reader = fetchResponse.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let currentEvent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim();
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          const dataStr = line.slice(5).trim();
+          if (!dataStr || dataStr === '[DONE]') {
+            event.sender.send('graph:sse-event', { type: 'done' });
+            continue;
+          }
+          try {
+            const evt = JSON.parse(dataStr);
+            // 优先使用 SSE event: 行的类型，其次尝试 JSON 内的 event 字段
+            const eventType = currentEvent || evt.event || '';
+
+            // text.delta — 增量文本
+            if (eventType === 'text.delta' || eventType === 'content.added' || eventType === 'message.added') {
+              let text = '';
+              // ADP V2 格式1: { content: [{ type: "text", text: "..." }] }
+              const content = evt.content || evt.data?.content;
+              if (Array.isArray(content)) {
+                for (const c of content) {
+                  if (c.type === 'text' && c.text) text += c.text;
+                  else if (typeof c === 'string') text += c;
+                }
+              } else if (typeof content === 'string') {
+                text = content;
+              }
+              // 格式2: { data: { text: "..." } }
+              if (!text && evt.data?.text) text = evt.data.text;
+              // 格式3: { text: "..." }
+              if (!text && evt.text) text = evt.text;
+              // 格式4: { delta: { content: "..." } } (OpenAI 兼容)
+              if (!text && evt.delta?.content) text = evt.delta.content;
+              // 格式5: { Choices: [{ Delta: { Content: "..." } }] } (PascalCase)
+              if (!text && evt.Choices?.[0]?.Delta?.Content) text = evt.Choices[0].Delta.Content;
+
+              // 过滤 JSON 格式内容（ADP 有时在 text.delta 中夹杂 JSON）
+              if (text && !text.startsWith('{"content":') && !text.startsWith('{"choices":')) {
+                event.sender.send('graph:sse-event', { type: 'text', text });
+              }
+            } else if (eventType === 'text.replace') {
+              // text.replace — 替换全部内容
+              let text = '';
+              const content = evt.content || evt.data?.content;
+              if (Array.isArray(content)) {
+                for (const c of content) {
+                  if (c.type === 'text' && c.text) text += c.text;
+                }
+              } else if (typeof content === 'string') {
+                text = content;
+              }
+              if (text) {
+                event.sender.send('graph:sse-event', { type: 'replace', text });
+              }
+            } else if (eventType === 'message.done' || eventType === 'response.completed' || eventType === 'done') {
+              event.sender.send('graph:sse-event', { type: 'done' });
+            } else if (eventType === 'error') {
+              const errMsg = evt.error?.message || evt.data?.error?.message || evt.message || 'ADP错误';
+              event.sender.send('graph:sse-event', { type: 'error', error: errMsg });
+            }
+            // 其他事件类型（request_ack, response.created, response.processing, message.added, quote_info.added, reference.added 等）静默忽略
+          } catch (e) {
+            // 非 JSON，忽略
+          }
+          // 重置 currentEvent（每个 data: 后 event 已消费）
+          currentEvent = '';
+        }
+      }
+    }
+
+    event.sender.send('graph:sse-event', { type: 'done' });
+    return { success: true };
+  } catch (e) {
+    console.error('[graph:semantic-search] Error:', e);
+    event.sender.send('graph:sse-event', { type: 'error', error: e.message });
+    return { success: false, error: e.message };
+  }
+});
+
 // 保存产物（从 AI 对话中调用）
 ipcMain.handle('artifacts:save', async (event, { content, fileName, source }) => {
   try {
