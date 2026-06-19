@@ -3476,6 +3476,24 @@ ipcMain.handle('skillhub:install-cli', async () => {
   }
 });
 
+/** 安全解析 JSON，处理 CLI 返回纯文本（如 "No skills found."）的情况 */
+function _safeJsonParse(output) {
+  const trimmed = output.trim();
+  if (!trimmed) return null;
+  // 尝试 JSON 解析
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // 提取输出中可能包含的 JSON 块（CLI 可能混入日志）
+    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
+    }
+    // 非纯文本时返回 null（调用方自行处理）
+    return null;
+  }
+}
+
 // 搜索 SkillHub 市场技能
 ipcMain.handle('skillhub:search', async (event, { query, limit = 20 }) => {
   try {
@@ -3483,8 +3501,14 @@ ipcMain.handle('skillhub:search', async (event, { query, limit = 20 }) => {
     const escapedQuery = query ? query.replace(/"/g, '\\"') : '';
     const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade search --json --search-limit ${limit} ${escapedQuery ? `"${escapedQuery}"` : ''}`;
     const output = execSync(cmd, { encoding: 'utf-8', timeout: 15000, env: EXEC_ENV });
-    const data = JSON.parse(output);
-    return { success: true, results: data.results || [], count: data.count || 0, query: data.query || query };
+    const data = _safeJsonParse(output);
+    // CLI 在无结果时返回纯文本 "No skills found."，此时 data 为 null
+    if (!data) {
+      return { success: true, results: [], count: 0, query };
+    }
+    // 兼容两种格式：{ results: [...] } 或直接 [...]
+    const results = Array.isArray(data) ? data : (data.results || []);
+    return { success: true, results, count: data.count || results.length, query: data.query || query };
   } catch (e) {
     return { success: false, error: e.message, results: [] };
   }
@@ -3498,8 +3522,12 @@ ipcMain.handle('skillhub:install', async (event, { slug, targetDir }) => {
     const escapedSlug = slug.replace(/"/g, '\\"');
     const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade install --json --dir "${targetDir}" "${escapedSlug}"`;
     const output = execSync(cmd, { encoding: 'utf-8', timeout: 60000, env: EXEC_ENV });
-    const data = JSON.parse(output);
-    return { success: data.success !== false, targetDir: data.targetDir, slug: data.slug, name: data.name, version: data.version };
+    const data = _safeJsonParse(output);
+    if (!data) {
+      // 非 JSON 输出视为成功（CLI 可能输出纯文本确认信息）
+      return { success: true, targetDir, slug, name: slug, version: '' };
+    }
+    return { success: data.success !== false, targetDir: data.targetDir || targetDir, slug: data.slug || slug, name: data.name, version: data.version };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -3511,7 +3539,20 @@ ipcMain.handle('skillhub:list', async (event, { dir }) => {
     const { execSync } = require('child_process');
     const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade list --dir "${dir}"`;
     const output = execSync(cmd, { encoding: 'utf-8', timeout: 10000, env: EXEC_ENV });
-    const skills = output.trim().split('\n').filter(Boolean).map(line => {
+    const trimmed = output.trim();
+    if (!trimmed || trimmed.toLowerCase().includes('no skills')) {
+      return { success: true, skills: [] };
+    }
+    // 优先尝试 JSON 解析
+    const data = _safeJsonParse(trimmed);
+    if (data && Array.isArray(data)) {
+      return { success: true, skills: data.map(s => ({ slug: s.slug || s.name || '', version: s.version || '' })) };
+    }
+    if (data && data.skills && Array.isArray(data.skills)) {
+      return { success: true, skills: data.skills };
+    }
+    // 回退到纯文本行解析
+    const skills = trimmed.split('\n').filter(Boolean).map(line => {
       const parts = line.trim().split(/\s+/);
       const version = parts.length > 1 ? parts[parts.length - 1] : '';
       const slug = parts.slice(0, parts.length > 1 ? -1 : undefined).join(' ');
