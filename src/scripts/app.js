@@ -212,8 +212,19 @@ const App = {
     setTimeout(() => this.updateInitTest(''), 2000);
     console.log('[App] init() finished');
 
+    // 预加载 CC 默认工作目录（无需用户打开设置页即可使用）
+    this._preloadCCDefaultWorkdir();
+
     // 延迟检查更新（不阻塞初始化）
     setTimeout(() => this._checkForUpdate(), 3000);
+  },
+
+  /** 预加载 CC 默认工作目录，供 SkillHub 和对话区使用 */
+  _preloadCCDefaultWorkdir() {
+    if (!window.electronAPI?.ccGetConfig) return;
+    window.electronAPI.ccGetConfig().then(config => {
+      this._ccDefaultWorkdir = config.defaultWorkdir || '';
+    }).catch(() => {});
   },
 
   // 从数据库加载数据并同步到 Store
@@ -2354,7 +2365,10 @@ const App = {
   },
 
   /** 设置当前对话的 CC 工作目录（null=用默认） */
-  _setCCWorkdir(workdir) {
+  async _setCCWorkdir(workdir) {
+    const oldWorkdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    const newWorkdir = workdir || this._ccDefaultWorkdir || '';
+
     if (this._activeSessionId) {
       const session = this._chatSessions.find(s => s.id === this._activeSessionId);
       if (session) {
@@ -2363,6 +2377,74 @@ const App = {
       }
     }
     this._updateCCWorkdirBar();
+
+    // 检查是否需要迁移技能
+    if (oldWorkdir && newWorkdir && oldWorkdir !== newWorkdir) {
+      await this._checkSkillMigration(oldWorkdir, newWorkdir);
+    }
+  },
+
+  /** 检查旧工作目录是否有已安装技能，提示用户迁移 */
+  async _checkSkillMigration(oldWorkdir, newWorkdir) {
+    const oldSkillDir = `${oldWorkdir}/.claude/skills`;
+    const newSkillDir = `${newWorkdir}/.claude/skills`;
+
+    try {
+      // 列出旧目录中的技能
+      const listResult = await window.electronAPI?.skillhubList?.({ dir: oldSkillDir });
+      if (!listResult?.success || !listResult.skills || listResult.skills.length === 0) {
+        return; // 旧目录没有技能，无需迁移
+      }
+
+      const skillNames = listResult.skills.map(s => s.slug).join(', ');
+      const count = listResult.skills.length;
+
+      // 弹窗询问用户是否迁移
+      const shouldMigrate = confirm(
+        `检测到旧工作目录中有 ${count} 个已安装技能：\n${skillNames}\n\n` +
+        `更换工作目录后，这些技能将不再对新目录生效。\n\n` +
+        `是否将这些技能迁移到新工作目录？\n` +
+        `（原目录中的技能不会被删除）`
+      );
+
+      if (!shouldMigrate) {
+        this.showToast(
+          `已切换工作目录。旧目录中有 ${count} 个技能未迁移，如需使用请在 SkillHub 市场重新安装`,
+          'info'
+        );
+        return;
+      }
+
+      // 逐个迁移（复制到新目录）
+      let successCount = 0;
+      let failCount = 0;
+      for (const skill of listResult.skills) {
+        const installResult = await window.electronAPI?.skillhubInstall?.({
+          slug: skill.slug,
+          targetDir: newSkillDir
+        });
+        if (installResult?.success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      }
+
+      if (failCount === 0) {
+        this.showToast(`技能迁移完成：${successCount} 个技能已安装到新工作目录`, 'success');
+      } else {
+        this.showToast(
+          `迁移完成：${successCount} 成功，${failCount} 失败。失败的可手动在 SkillHub 市场重新安装`,
+          'info'
+        );
+      }
+
+      // 刷新 SkillHub 已安装列表和 Skill 下拉框
+      await this._refreshSkillHubInstalled();
+      this._refreshCCSkillSelect();
+    } catch (e) {
+      console.error('[CC] Skill migration check failed:', e);
+    }
   },
 
   /** 获取当前对话的 CC 工作目录（优先 session 级，回退默认） */
@@ -6808,6 +6890,10 @@ ${JSON.stringify(reportData, null, 2)}`;
           envVars: this._collectCCEnvVars(),
         });
       }
+
+      // 更新缓存的默认工作目录
+      this._ccDefaultWorkdir = document.getElementById('ccDefaultWorkdir')?.value.trim() || '';
+      this._updateCCWorkdirBar();
       
       // Phase 3: 保存用户画像
       await this.saveProfileFromEditor();
