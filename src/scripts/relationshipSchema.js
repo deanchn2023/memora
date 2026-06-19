@@ -421,6 +421,8 @@ const INITIAL_DATA = {
   ],
 
   // ===== 架构师-行业覆盖 =====
+  // ⚠️ 已废弃：COVERS 边现在从插旗表数据自动推导（见 relationshipStore.js initFromFlagmapData）
+  // 此处保留仅作参考，不再用于图谱构建
   architectIndustries: [
     { architect: 'arch-ww', industry: 'ind-paninternet' },
     { architect: 'arch-ml', industry: 'ind-paninternet' },

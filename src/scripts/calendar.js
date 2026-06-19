@@ -75,6 +75,7 @@ const Calendar = {
     // 离开 AI 助手时保存当前对话
     window.app?._saveCurrentSessionMessages?.();
     document.getElementById('calendarView')?.classList.remove('hidden');
+    document.getElementById('documentsView')?.classList.remove('hidden');
     document.getElementById('documentsView')?.classList.add('hidden');
     document.getElementById('notebookView')?.classList.add('hidden');
     document.getElementById('knowledgeView')?.classList.add('hidden');
@@ -87,6 +88,8 @@ const Calendar = {
       t.classList.toggle('active', t.dataset.cal === this.currentView);
     });
     this.showDateNavigator();
+    // 强制重新渲染（处理数据变更后切换到日历的场景）
+    this._needsRender = false;
     this.render();
   },
 
@@ -335,7 +338,12 @@ const Calendar = {
   render() {
     this.updateDateDisplay();
 
-    if (!this.calendarActive) return;
+    if (!this.calendarActive) {
+      // 即使日历不可见，也标记需要下次渲染时刷新
+      this._needsRender = true;
+      return;
+    }
+    this._needsRender = false;
 
     switch (this.currentView) {
       case 'day':
@@ -897,6 +905,10 @@ const Calendar = {
     }
     if (confirm(`确定要删除任务"${task.title}"吗？`)) {
       Store.deleteTask(task.id);
+      // 同步删除系统日历事件
+      if (window.electronAPI?.removeFromCalendar) {
+        window.electronAPI.removeFromCalendar(task.title);
+      }
       console.log('[Calendar] Task deleted:', task.title);
       this.render();
       if (typeof App !== 'undefined') {

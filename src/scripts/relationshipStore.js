@@ -20,7 +20,7 @@ const RelationshipStore = {
       nodes: [],
       edges: [],
       meta: {
-        version: 5,
+        version: 6,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         nodeCount: 0,
@@ -35,28 +35,10 @@ const RelationshipStore = {
       const raw = localStorage.getItem(this._getStorageKey());
       if (raw) {
         this._data = JSON.parse(raw);
-        // 版本检测：v5 修复 BELONGS_TO 区域 ID 映射缺失问题
-        if (!this._data.meta || this._data.meta.version < 5) {
-          const customerCount = this._data.nodes.filter(n => n.label === 'Customer').length;
-          const indEdges = this._data.edges.filter(e => e.type === 'COVERS').length;
-          // 如果没有COVERS边（行业映射bug的旧数据），或没有客户，清除重新初始化
-          if (customerCount === 0 || (indEdges === 0 && customerCount > 0)) {
-            console.log(`[RelationshipStore] Old data v${this._data.meta?.version || 0}, customers=${customerCount}, COVERS edges=${indEdges}, clearing for re-init`);
-            this.clear();
-          } else {
-            // 检查 BELONGS_TO 边是否指向不存在的区域节点（v4 数据有此 bug）
-            const belongsEdges = this._data.edges.filter(e => e.type === 'BELONGS_TO');
-            const regionIds = new Set(this._data.nodes.filter(n => n.label === 'Region').map(n => n.id));
-            const brokenBelongs = belongsEdges.filter(e => !regionIds.has(e.target));
-            if (brokenBelongs.length > 0) {
-              console.log(`[RelationshipStore] v${this._data.meta?.version || 0} data has ${brokenBelongs.length} broken BELONGS_TO edges (region ID mismatch), clearing for re-init`);
-              this.clear();
-            } else {
-              // 数据正常，升级版本号
-              this._data.meta.version = 5;
-              this.save();
-            }
-          }
+        // 版本检测：v6 修复 COVERS 边从硬编码改为自动推导，旧数据行业映射全部错误，必须重建
+        if (!this._data.meta || this._data.meta.version < 6) {
+          console.log(`[RelationshipStore] Old data v${this._data.meta?.version || 0}, COVERS edges were hardcoded (wrong industries), forcing re-init`);
+          this.clear();
         }
         return this._data;
       }
@@ -236,6 +218,7 @@ const RelationshipStore = {
     if (!this._data) this.load();
 
     let centerNodes = [];
+    const hasScopeFilter = !!(region || industry || tier);
 
     // 多条件组合筛选
     if (centerNodeId) {
@@ -250,7 +233,11 @@ const RelationshipStore = {
         }
         return false;
       });
-    } else if (region || industry || tier) {
+      // 类型筛选叠加：搜索结果中只保留指定类型的节点
+      if (labels && centerNodes.length > 0) {
+        centerNodes = centerNodes.filter(n => labels.includes(n.label));
+      }
+    } else if (hasScopeFilter) {
       // 层级筛选组合：以客户为核心，找到满足所有条件的客户，再扩展关联
       let matchingCustomerIds = null; // null = 未开始筛选, Set = 已筛选
 
@@ -333,8 +320,9 @@ const RelationshipStore = {
       }
 
       // 构建中心节点：匹配的客户 + 它们的直接关联节点
-      const matchedCustomers = (matchingCustomerIds || new Set())
-        .map ? [...matchingCustomerIds].map(id => this.getNode(id)).filter(Boolean) : [];
+      const matchedCustomers = matchingCustomerIds
+        ? [...matchingCustomerIds].map(id => this.getNode(id)).filter(Boolean)
+        : [];
 
       // 收集所有需要展示的节点
       const resultNodeIds = new Set(matchedCustomers.map(n => n.id));
@@ -361,17 +349,42 @@ const RelationshipStore = {
       }
 
       centerNodes = [...resultNodeIds].map(id => this.getNode(id)).filter(Boolean);
+
+      // 类型筛选叠加：范围筛选后，只保留指定类型的节点作为中心
+      if (labels && centerNodes.length > 0) {
+        centerNodes = centerNodes.filter(n => labels.includes(n.label));
+      }
     } else if (labels && labels.length > 0) {
       centerNodes = this._data.nodes.filter(n => labels.includes(n.label));
     }
 
     // 扩展关联
+    // 根据筛选类型调整展开深度：
+    // - 范围筛选（区域/行业/客户分层）：maxDepth=0，scope 分支已做 1 跳扩展，
+    //   不再从架构师等 hub 节点继续展开（避免拉入其他行业的客户）
+    // - 仅类型筛选（无范围）：maxDepth=0，只显示该类型节点本身
+    // - 类型+搜索筛选（无范围）：maxDepth=1，显示该类型节点+其直接关联
+    // - 无筛选：使用原始 maxDepth
+    let effectiveMaxDepth = maxDepth;
+    if (!centerNodeId) {
+      if (hasScopeFilter) {
+        // 范围筛选时，scope 分支已收集匹配客户+1跳邻居，不再继续展开
+        effectiveMaxDepth = 0;
+      } else if (labels && labels.length > 0) {
+        if (search) {
+          effectiveMaxDepth = 1;
+        } else {
+          effectiveMaxDepth = 0;
+        }
+      }
+    }
+
     const visited = new Set();
     const resultNodes = new Set();
     const resultEdges = new Set();
 
     const expand = (nodes, depth) => {
-      if (depth > maxDepth) return;
+      if (depth > effectiveMaxDepth) return;
       nodes.forEach(n => {
         if (visited.has(n.id)) return;
         visited.add(n.id);
@@ -401,9 +414,112 @@ const RelationshipStore = {
       expand(centerNodes, 0);
     }
 
+    // ===== 后过滤：移除违反筛选条件的节点 =====
+    // 当设置了行业/区域筛选时，扩展过程会带入不相关的节点（如架构师覆盖的其他行业、
+    // 客户的其他行业节点等），需要在这里清理
+    if (industry) {
+      const indNode = this._data.nodes.find(n => n.label === 'Industry' && n.properties.name === industry);
+      const filteredIndIds = new Set(indNode ? [indNode.id] : []);
+      // 如果是 L1 行业，也保留其下属 L2 行业节点
+      if (indNode && indNode.properties.level === 'L1') {
+        this._data.nodes.filter(n =>
+          n.label === 'Industry' && n.properties.level === 'L2' && n.properties.parentL1 === industry
+        ).forEach(n => filteredIndIds.add(n.id));
+      }
+
+      // 需要移除的节点 ID
+      const toRemove = new Set();
+      [...resultNodes].forEach(id => {
+        const node = this.getNode(id);
+        if (!node) { toRemove.add(id); return; }
+
+        if (node.label === 'Industry') {
+          // 只保留匹配的行业节点（及其子行业）
+          if (!filteredIndIds.has(id)) toRemove.add(id);
+        } else if (node.label === 'Architect') {
+          // 架构师必须覆盖该行业（COVERS 边），否则移除
+          const covers = this.getConnectedNodes(id, ['COVERS']).filter(n => n.label === 'Industry');
+          const coversFiltered = covers.some(n => filteredIndIds.has(n.id));
+          if (!coversFiltered) toRemove.add(id);
+        } else if (node.label === 'Customer') {
+          // 客户必须属于该行业（属性或 CUSTOMER_IN 边），否则移除
+          const byProp = node.properties.industryL1 === industry || node.properties.industryL2 === industry;
+          const byEdge = this.getConnectedNodes(id, ['CUSTOMER_IN']).some(n => filteredIndIds.has(n.id));
+          if (!byProp && !byEdge) toRemove.add(id);
+        }
+      });
+
+      // 执行移除
+      toRemove.forEach(id => {
+        resultNodes.delete(id);
+        // 同时移除涉及被删除节点的边
+        [...resultEdges].forEach(key => {
+          const [, src, tgt] = key.split('|');
+          if (src === id || tgt === id) resultEdges.delete(key);
+        });
+      });
+    }
+
+    if (region) {
+      const toRemove = new Set();
+      [...resultNodes].forEach(id => {
+        const node = this.getNode(id);
+        if (!node) { toRemove.add(id); return; }
+
+        if (node.label === 'Region') {
+          // 只保留匹配的区域节点
+          if (node.properties.name !== region) toRemove.add(id);
+        } else if (node.label === 'Architect') {
+          // 架构师必须属于该区域（BELONGS_TO 边），否则移除
+          const belongs = this.getConnectedNodes(id, ['BELONGS_TO']).filter(n => n.label === 'Region');
+          const inRegion = belongs.some(n => n.properties.name === region);
+          if (!inRegion) toRemove.add(id);
+        } else if (node.label === 'Customer') {
+          // 客户必须属于该区域（属性或边），否则移除
+          const byProp = node.properties.region === region;
+          const byEdge = this.getConnectedNodes(id, ['CUSTOMER_IN']).some(n => n.label === 'Region' && n.properties.name === region);
+          if (!byProp && !byEdge) toRemove.add(id);
+        }
+      });
+
+      toRemove.forEach(id => {
+        resultNodes.delete(id);
+        [...resultEdges].forEach(key => {
+          const [, src, tgt] = key.split('|');
+          if (src === id || tgt === id) resultEdges.delete(key);
+        });
+      });
+    }
+
+    // tier 后过滤：移除不符合客户分层条件的客户节点
+    if (tier) {
+      const toRemove = new Set();
+      [...resultNodes].forEach(id => {
+        const node = this.getNode(id);
+        if (!node) { toRemove.add(id); return; }
+        if (node.label === 'Customer' && node.properties.tier !== tier) {
+          toRemove.add(id);
+        }
+      });
+      toRemove.forEach(id => {
+        resultNodes.delete(id);
+        [...resultEdges].forEach(key => {
+          const [, src, tgt] = key.split('|');
+          if (src === id || tgt === id) resultEdges.delete(key);
+        });
+      });
+    }
+
+    // 过滤边：只保留两端节点都在结果集中的边
+    // （展开过程中可能添加了指向未展开节点的边）
+    const finalEdges = [...resultEdges].filter(key => {
+      const [, src, tgt] = key.split('|');
+      return resultNodes.has(src) && resultNodes.has(tgt);
+    });
+
     return {
       nodes: [...resultNodes].map(id => this.getNode(id)).filter(Boolean),
-      edges: [...resultEdges].map(key => {
+      edges: finalEdges.map(key => {
         const [type, source, target] = key.split('|');
         return this._data.edges.find(e => e.type === type && e.source === source && e.target === target);
       }).filter(Boolean)
@@ -447,6 +563,116 @@ const RelationshipStore = {
     }
   },
 
+  /**
+   * 合并新图谱数据到现有图谱（增量合并，按名称去重）
+   * @param {Array} newNodes - [{ label, name, properties }]
+   * @param {Array} newEdges - [{ type, source, target, properties }]
+   * @returns { addedNodes, updatedNodes, addedEdges, skippedEdges }
+   */
+  mergeGraph(newNodes, newEdges) {
+    if (!this._data) this.load();
+    const schema = window.RelationshipSchema;
+
+    // 构建名称→节点 ID 的索引（用于边查找和去重）
+    const nameToNodeId = {};
+    this._data.nodes.forEach(n => {
+      const key = `${n.label}::${(n.properties.name || '').toLowerCase()}`;
+      if (!nameToNodeId[key]) nameToNodeId[key] = n.id;
+      // 也按 name 跨类型索引（用于边匹配）
+      const nameKey = (n.properties.name || '').toLowerCase();
+      if (nameKey && !nameToNodeId[nameKey]) nameToNodeId[nameKey] = n.id;
+    });
+
+    const result = { addedNodes: 0, updatedNodes: 0, addedEdges: 0, skippedEdges: 0, duplicates: [] };
+
+    // 1. 合并节点
+    const newNodeIdMap = {}; // source-name → actual node ID
+    (newNodes || []).forEach(item => {
+      const label = item.label || 'Customer';
+      const name = item.name || item.properties?.name || '';
+      if (!name) return;
+
+      // 检查是否已存在同类型同名节点
+      const key = `${label}::${name.toLowerCase()}`;
+      const existingId = nameToNodeId[key];
+
+      if (existingId) {
+        // 已存在：合并属性（新属性覆盖旧属性）
+        const existing = this.getNode(existingId);
+        if (existing && item.properties) {
+          Object.assign(existing.properties, item.properties);
+          result.updatedNodes++;
+        }
+        newNodeIdMap[`${name.toLowerCase()}`] = existingId;
+      } else {
+        // 新节点
+        const node = this.addNode(label, { ...item.properties, name });
+        nameToNodeId[key] = node.id;
+        nameToNodeId[name.toLowerCase()] = node.id;
+        newNodeIdMap[`${name.toLowerCase()}`] = node.id;
+        result.addedNodes++;
+      }
+    });
+
+    // 2. 合并边
+    (newEdges || []).forEach(item => {
+      const type = item.type;
+      const sourceName = (item.source || '').toLowerCase();
+      const targetName = (item.target || '').toLowerCase();
+
+      // 通过名称查找节点 ID
+      const sourceId = newNodeIdMap[sourceName] || nameToNodeId[sourceName];
+      const targetId = newNodeIdMap[targetName] || nameToNodeId[targetName];
+
+      if (!sourceId || !targetId) {
+        result.skippedEdges++;
+        return;
+      }
+
+      // 检查边是否已存在
+      const dup = this._data.edges.find(e =>
+        e.type === type && e.source === sourceId && e.target === targetId
+      );
+      if (dup) {
+        result.skippedEdges++;
+        return;
+      }
+
+      this.addEdge(type, sourceId, targetId, item.properties || {});
+      result.addedEdges++;
+    });
+
+    this.save();
+
+    // 检查 localStorage 容量
+    try {
+      const raw = localStorage.getItem(this._getStorageKey()) || '';
+      const sizeMB = (new Blob([raw]).size / 1024 / 1024).toFixed(2);
+      result.storageSizeMB = parseFloat(sizeMB);
+      console.log(`[RelationshipStore] Merge complete: +${result.addedNodes} nodes, +${result.addedEdges} edges. Storage: ${sizeMB}MB`);
+    } catch (e) {}
+
+    return result;
+  },
+
+  /** 获取存储大小信息 */
+  getStorageInfo() {
+    if (!this._data) this.load();
+    try {
+      const raw = localStorage.getItem(this._getStorageKey()) || '';
+      const sizeBytes = new Blob([raw]).size;
+      return {
+        sizeMB: parseFloat((sizeBytes / 1024 / 1024).toFixed(2)),
+        sizeKB: Math.round(sizeBytes / 1024),
+        nodeCount: this._data.nodes.length,
+        edgeCount: this._data.edges.length,
+        localStorageLimitMB: 10 // 浏览器一般限制 5-10MB
+      };
+    } catch (e) {
+      return { sizeMB: 0, sizeKB: 0, nodeCount: 0, edgeCount: 0, localStorageLimitMB: 10 };
+    }
+  },
+
   // ===== 从插旗表全量数据初始化 =====
 
   /** 从插旗表全量 JSON 数据初始化图谱 */
@@ -483,12 +709,8 @@ const RelationshipStore = {
     flagmapRecords.forEach(r => {
       if (r['一级行业']) l1Names.add(r['一级行业'].trim());
     });
-    // 合并初始数据中的行业
-    const initialIndustries = [
-      '泛互/战略', '教育', '零售消费', '金融', '能源/制造/消费电子',
-      '医疗', '运营商', '政务政法', '文旅地产', '数金交传', '出行', '海外'
-    ];
-    initialIndustries.forEach(n => l1Names.add(n));
+    // 不再合并硬编码的初始行业列表 — 行业完全从插旗表实际数据推导
+    // 旧列表（泛互/战略、出行、数金交传等）与实际数据不匹配，会导致错误行业节点
     [...l1Names].sort().forEach(name => {
       const id = `ind-l1-${this._slugId(name)}`;
       this.addNode('Industry', { id, name, level: 'L1', priority: 'medium' });
@@ -629,21 +851,8 @@ const RelationshipStore = {
 
     // ===== 10. 关系建立 =====
 
-    // 行业 ID 映射：INITIAL_DATA 中的旧 ID → flagmap 数据创建的新 ID
-    const industryIdMap = {
-      'ind-paninternet': nameIndex.industryL1['泛互/战略'],
-      'ind-education': nameIndex.industryL1['教育'],
-      'ind-retail': nameIndex.industryL1['零售消费'],
-      'ind-finance': nameIndex.industryL1['金融'],
-      'ind-energy': nameIndex.industryL1['能源/制造/消费电子'],
-      'ind-medical': nameIndex.industryL1['医疗'],
-      'ind-carrier': nameIndex.industryL1['运营商'],
-      'ind-gov': nameIndex.industryL1['政务政法'],
-      'ind-travel': nameIndex.industryL1['文旅地产'],
-      'ind-digifin': nameIndex.industryL1['数金交传'],
-      'ind-transport': nameIndex.industryL1['出行'],
-      'ind-overseas': nameIndex.industryL1['海外']
-    };
+    // 行业 ID 映射已废弃 — COVERS 边现在从插旗表数据自动推导
+    // const industryIdMap = { ... };
 
     // 区域 ID 映射：INITIAL_DATA 中的旧 ID → flagmap 数据创建的新 ID
     const regionIdMap = {
@@ -663,14 +872,10 @@ const RelationshipStore = {
       }
     });
 
-    // 架构师-行业（映射旧 ID 到新 ID）
-    (window.INITIAL_DATA?.architectIndustries || []).forEach(r => {
-      const mappedIndId = industryIdMap[r.industry] || r.industry;
-      const indNode = this.getNode(mappedIndId);
-      if (indNode) {
-        this.addEdge('COVERS', r.architect, mappedIndId, {});
-      }
-    });
+    // 架构师-行业覆盖（COVERS）：从插旗表数据自动推导
+    // 不再使用硬编码的 INITIAL_DATA.architectIndustries（与实际数据严重不匹配）
+    // 逻辑：遍历插旗表每行 → 架构师 + 客户所属一级行业 → 自动建立 COVERS 边
+    // 这样 COVERS 边始终与实际数据一致，无需手动维护
 
     // 架构师-城市
     (window.INITIAL_DATA?.architects || []).forEach(a => {
@@ -812,6 +1017,28 @@ const RelationshipStore = {
           });
         }
       }
+    });
+
+    // ===== 自动推导 COVERS（架构师 → 行业覆盖）边 =====
+    // 从插旗表数据推导：架构师 → 支持的客户 → 客户所属一级行业
+    const archIndustrySet = new Set(); // 去重: "archId|indId"
+    flagmapRecords.forEach(r => {
+      const archStr = (r['产品架构师'] || '').trim();
+      const indL1 = (r['一级行业'] || '').trim();
+      if (!archStr || !indL1) return;
+      const indId = nameIndex.industryL1[indL1];
+      if (!indId) return;
+      archStr.split(/[,，、;；\s]+/).forEach(archName => {
+        archName = archName.trim();
+        if (!archName) return;
+        const archId = nameIndex.architect[archName];
+        if (!archId) return;
+        const key = `${archId}|${indId}`;
+        if (!archIndustrySet.has(key)) {
+          archIndustrySet.add(key);
+          this.addEdge('COVERS', archId, indId, {});
+        }
+      });
     });
 
     this.save();

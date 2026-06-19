@@ -10032,6 +10032,10 @@ ${JSON.stringify(reportData, null, 2)}`;
 
     dialog.querySelector('.recur-delete-this').addEventListener('click', () => {
       Store.deleteTask(task.id);
+      // 同步删除系统日历事件
+      if (window.electronAPI?.removeFromCalendar) {
+        window.electronAPI.removeFromCalendar(task.title);
+      }
       close();
       this.renderTaskList();
       Calendar.render();
@@ -10043,6 +10047,10 @@ ${JSON.stringify(reportData, null, 2)}`;
       // 删除模板和所有实例
       Store.deleteTask(parentId);
       Store.deleteRecurringAll(parentId);
+      // 同步删除系统日历事件
+      if (window.electronAPI?.removeFromCalendar) {
+        window.electronAPI.removeFromCalendar(task.title);
+      }
       close();
       this.renderTaskList();
       Calendar.render();
@@ -10734,6 +10742,10 @@ ${JSON.stringify(reportData, null, 2)}`;
             const confirmed = await this.showConfirmDialog('删除确认', `确定要删除任务"${task.title}"吗？`);
             if (confirmed) {
               Store.deleteTask(taskId);
+              // 同步删除系统日历事件
+              if (window.electronAPI?.removeFromCalendar) {
+                window.electronAPI.removeFromCalendar(task.title);
+              }
               this.renderTaskList();
               Calendar.render();
             }
@@ -13066,12 +13078,18 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
     
     try {
-      await this.sendAIMessage(undefined, { systemRole: localContextSystemRole, sources: localContextSources });
+      // 使用 Promise.race 添加超时保护：如果 5 分钟内 AI 未完成，仍然更新任务状态
+      await Promise.race([
+        this.sendAIMessage(undefined, { systemRole: localContextSystemRole, sources: localContextSources }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('AI 响应超时（5分钟）')), 300000))
+      ]);
     } catch (e) {
-      console.error('[AI Task] sendAIMessage failed:', e);
+      console.error('[AI Task] sendAIMessage failed or timed out:', e);
+      // 确保停止任何正在进行的流式输出
+      if (this._adpStreaming) this.stopADPGeneration();
     }
     
-    // 更新任务状态
+    // 更新任务状态（无论成功或超时都更新）
     Store.updateTask(task.id, {
       status: 'completed',
       completedAt: new Date().toISOString()

@@ -265,6 +265,7 @@ const Relationship = {
               <button class="relationship-ai-btn secondary" id="relExpandBtn">🔍 展开子图</button>
               <button class="relationship-ai-btn secondary" id="relImportBtn">📥 导入</button>
               <button class="relationship-ai-btn secondary" id="relExportBtn">📤 导出</button>
+              <button class="relationship-ai-btn secondary" id="relReinitBtn">🔄 重新初始化</button>
               <button class="relationship-ai-btn danger" id="relClearBtn">🗑 清空</button>
             </div>
           </div>
@@ -1160,6 +1161,12 @@ const Relationship = {
     document.getElementById('relExportBtn')?.addEventListener('click', () => this._exportGraph());
     // 清空
     document.getElementById('relClearBtn')?.addEventListener('click', () => this._showClearConfirm());
+    // 重新初始化
+    document.getElementById('relReinitBtn')?.addEventListener('click', () => {
+      if (confirm('确定要重新初始化图谱吗？\n\n当前所有图谱数据将被清除，并从插旗表数据重新构建。\n（COVERS 行业覆盖关系将自动从实际数据推导）')) {
+        this._initGraphFromData();
+      }
+    });
 
     // 节点列表点击
     document.getElementById('relationshipList')?.addEventListener('click', (e) => {
@@ -1773,9 +1780,11 @@ const Relationship = {
     const streamContent = document.getElementById('relStreamContent');
     const streamStatus = document.getElementById('relStreamStatus');
     let streamBuffer = '';
+    let streamDone = false; // 防止 done 事件重复处理
 
     // 监听 SSE 事件
     window.electronAPI?.onGraphSSEEvent?.((evt) => {
+      console.log('[GraphRAG] SSE event received:', evt?.type, evt?.text?.substring(0, 50));
       if (evt.type === 'text' && evt.text) {
         streamBuffer += evt.text;
         if (streamContent) {
@@ -1792,16 +1801,40 @@ const Relationship = {
           body.scrollTop = body.scrollHeight;
         }
       } else if (evt.type === 'done') {
+        if (streamDone) return; // 防止重复处理
+        streamDone = true;
         if (streamContent) {
           streamContent.innerHTML = this._renderMarkdown(streamBuffer);
         }
         if (streamStatus) {
           streamStatus.innerHTML = `<span style="font-size:11px;color:#34C759;">✓ AI 分析完成</span>`;
         }
+        // 添加"复制结果"按钮
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'relationship-ai-btn secondary';
+        copyBtn.style.cssText = 'margin-top:12px;width:auto;align-self:flex-start;padding:6px 16px;font-size:12px;';
+        copyBtn.textContent = '📋 复制结果';
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(streamBuffer).then(() => {
+            copyBtn.textContent = '✓ 已复制';
+            setTimeout(() => { copyBtn.textContent = '📋 复制结果'; }, 2000);
+          }).catch(() => {
+            // 降级方案
+            const ta = document.createElement('textarea');
+            ta.value = streamBuffer;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            copyBtn.textContent = '✓ 已复制';
+            setTimeout(() => { copyBtn.textContent = '📋 复制结果'; }, 2000);
+          });
+        });
+        body.appendChild(copyBtn);
         // 添加"返回本地摘要"按钮
         const backBtn = document.createElement('button');
         backBtn.className = 'relationship-ai-btn secondary';
-        backBtn.style.cssText = 'margin-top:12px;width:100%;';
+        backBtn.style.cssText = 'margin-top:8px;width:100%;';
         backBtn.textContent = '← 返回本地摘要';
         backBtn.addEventListener('click', () => {
           // 重新触发语义检索，会先生成本地摘要
@@ -2052,53 +2085,334 @@ const Relationship = {
   _showImportDialog() {
     const existing = document.getElementById('relImportModal');
     if (existing) existing.remove();
+
+    const store = window.RelationshipStore;
+    const storageInfo = store?.getStorageInfo?.() || {};
+
     const modal = document.createElement('div');
     modal.id = 'relImportModal';
     modal.className = 'rel-import-modal';
     modal.innerHTML = `
       <div class="rel-import-overlay"></div>
-      <div class="rel-import-dialog">
-        <div class="rel-import-header"><h3>📥 导入图谱数据</h3><button class="rel-import-close" id="relImportClose">✕</button></div>
-        <div class="rel-import-body">
-          <p class="rel-import-hint">粘贴之前导出的 JSON 数据，或上传 JSON 文件：</p>
-          <textarea id="relImportTextarea" class="rel-import-textarea" rows="8" placeholder='粘贴 JSON 数据...'></textarea>
-          <input type="file" id="relImportFile" accept=".json" style="margin-top:8px;font-size:12px;">
+      <div class="rel-import-dialog" style="max-width:680px;">
+        <div class="rel-import-header">
+          <h3>📥 导入图谱数据</h3>
+          <button class="rel-import-close" id="relImportClose">✕</button>
+        </div>
+        <div class="rel-import-body" id="relImportBody">
+          <!-- 步骤指示器 -->
+          <div style="display:flex;gap:8px;margin-bottom:16px;font-size:12px;">
+            <span class="rel-step-badge active" id="relStep1" style="padding:4px 12px;border-radius:8px;background:var(--accent-blue,#007AFF);color:#fff;">1. 输入数据</span>
+            <span style="color:var(--text-tertiary);">→</span>
+            <span class="rel-step-badge" id="relStep2" style="padding:4px 12px;border-radius:8px;background:var(--bg-glass,#e5e5ea);color:var(--text-secondary);">2. AI 提取</span>
+            <span style="color:var(--text-tertiary);">→</span>
+            <span class="rel-step-badge" id="relStep3" style="padding:4px 12px;border-radius:8px;background:var(--bg-glass,#e5e5ea);color:var(--text-secondary);">3. 确认合并</span>
+          </div>
+
+          <!-- 存储信息 -->
+          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">
+            当前图谱：${storageInfo.nodeCount || 0} 节点, ${storageInfo.edgeCount || 0} 边, 存储 ${storageInfo.sizeMB || 0}MB / ${storageInfo.localStorageLimitMB || 10}MB
+          </div>
+
+          <!-- Step 1: 输入区域 -->
+          <div id="relStep1Content">
+            <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+              <button class="relationship-ai-btn" id="relPickFileBtn" style="width:auto;padding:8px 16px;font-size:13px;">
+                📄 选择文件
+              </button>
+              <span style="font-size:11px;color:var(--text-tertiary);align-self:center;">
+                支持 Excel/Word/PDF/Markdown/文本/CSV
+              </span>
+            </div>
+            <div id="relFileName" style="font-size:12px;color:var(--accent-blue,#007AFF);margin-bottom:8px;display:none;"></div>
+            <textarea id="relImportTextarea" class="rel-import-textarea" rows="10"
+              placeholder="粘贴文本内容，或选择文件后自动填充...&#10;&#10;支持格式：&#10;- Excel 表格（客户清单、架构师信息等）&#10;- Word 文档（会议纪要、项目总结等）&#10;- PDF 文档（需要系统安装 pdftotext）&#10;- Markdown / 纯文本"></textarea>
+            <div style="display:flex;gap:8px;margin-top:12px;align-items:center;">
+              <button class="relationship-ai-btn primary" id="relGenerateBtn" style="width:auto;padding:8px 20px;font-size:13px;">
+                🤖 AI 提取图谱
+              </button>
+              <span style="font-size:11px;color:var(--text-tertiary);" id="relImportHint">
+                将调用 AI 从文本中提取人物、组织、行业等实体及关系
+              </span>
+            </div>
+          </div>
+
+          <!-- Step 2: AI 生成中 -->
+          <div id="relStep2Content" style="display:none;">
+            <div style="text-align:center;padding:30px;">
+              <div class="rel-loading-spinner" style="display:inline-block;width:32px;height:32px;border:3px solid var(--bg-glass,#e5e5ea);border-top-color:var(--accent-blue,#007AFF);border-radius:50%;animation:rel-spin 0.8s linear infinite;"></div>
+              <p style="margin-top:12px;font-size:13px;color:var(--text-secondary);">AI 正在分析文本，提取实体和关系...</p>
+              <p style="font-size:11px;color:var(--text-tertiary);margin-top:4px;">这可能需要 10-30 秒</p>
+            </div>
+          </div>
+
+          <!-- Step 3: 预览 -->
+          <div id="relStep3Content" style="display:none;">
+            <div id="relPreviewSummary" style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;"></div>
+            <div style="max-height:350px;overflow-y:auto;border:1px solid var(--border-light,rgba(0,0,0,0.08));border-radius:8px;">
+              <div id="relPreviewNodes"></div>
+              <div id="relPreviewEdges" style="margin-top:8px;"></div>
+            </div>
+          </div>
         </div>
         <div class="rel-import-footer">
           <button class="rel-import-btn secondary" id="relImportCancelBtn">取消</button>
-          <button class="rel-import-btn primary" id="relImportConfirmBtn">导入</button>
+          <button class="rel-import-btn primary" id="relImportConfirmBtn" style="display:none;">确认合并到图谱</button>
+          <button class="rel-import-btn secondary" id="relBackBtn" style="display:none;">← 返回</button>
         </div>
       </div>
     `;
     document.body.appendChild(modal);
 
-    document.getElementById('relImportClose')?.addEventListener('click', () => modal.remove());
-    document.getElementById('relImportCancelBtn')?.addEventListener('click', () => modal.remove());
+    // 状态
+    let currentStep = 1;
+    let generatedGraph = null;
+    let extractedText = '';
+
+    const closeBtn = document.getElementById('relImportClose');
+    const cancelBtn = document.getElementById('relImportCancelBtn');
+    const confirmBtn = document.getElementById('relImportConfirmBtn');
+    const backBtn = document.getElementById('relBackBtn');
+    const generateBtn = document.getElementById('relGenerateBtn');
+    const pickFileBtn = document.getElementById('relPickFileBtn');
+    const step1Content = document.getElementById('relStep1Content');
+    const step2Content = document.getElementById('relStep2Content');
+    const step3Content = document.getElementById('relStep3Content');
+    const step1Badge = document.getElementById('relStep1');
+    const step2Badge = document.getElementById('relStep2');
+    const step3Badge = document.getElementById('relStep3');
+
+    closeBtn?.addEventListener('click', () => modal.remove());
+    cancelBtn?.addEventListener('click', () => modal.remove());
     modal.querySelector('.rel-import-overlay')?.addEventListener('click', () => modal.remove());
 
-    document.getElementById('relImportFile')?.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          document.getElementById('relImportTextarea').value = ev.target.result;
-        };
-        reader.readAsText(file);
+    // 文件选择
+    pickFileBtn?.addEventListener('click', async () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.xlsx,.xls,.docx,.doc,.pdf,.md,.txt,.csv,.json';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        // Electron 环境下 file.path 可用
+        const filePath = file.path || (file.webkitRelativePath);
+        if (!filePath) {
+          // 降级：用 FileReader 读取文本
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            document.getElementById('relImportTextarea').value = ev.target.result;
+            document.getElementById('relFileName').style.display = 'block';
+            document.getElementById('relFileName').textContent = `📄 ${file.name}`;
+            extractedText = ev.target.result;
+          };
+          reader.readAsText(file);
+          return;
+        }
+        document.getElementById('relFileName').style.display = 'block';
+        document.getElementById('relFileName').textContent = `📄 ${file.name}（读取中...）`;
+        const result = await window.electronAPI?.graphReadFile?.(filePath);
+        if (result?.success) {
+          document.getElementById('relImportTextarea').value = result.text.substring(0, 10000) + (result.text.length > 10000 ? '\n\n[... 仅显示前10000字符，完整文本已加载 ...]' : '');
+          document.getElementById('relFileName').textContent = `📄 ${file.name}（${result.text.length} 字符）`;
+          extractedText = result.text;
+        } else {
+          document.getElementById('relFileName').textContent = `❌ ${result?.error || '文件读取失败'}`;
+          document.getElementById('relFileName').style.color = '#FF3B30';
+        }
+      };
+      input.click();
+    });
+
+    // 生成图谱
+    generateBtn?.addEventListener('click', async () => {
+      const text = extractedText || document.getElementById('relImportTextarea')?.value?.trim();
+      if (!text || text.length < 10) {
+        this._showToast('请输入或选择至少 10 个字符的文本', 'warning');
+        return;
+      }
+      if (text.length > 50000) {
+        this._showToast(`文本过长（${text.length}字符），将截取前 50000 字符分析`, 'warning');
+      }
+
+      // 切到 Step 2
+      currentStep = 2;
+      step1Content.style.display = 'none';
+      step2Content.style.display = 'block';
+      step3Content.style.display = 'none';
+      step1Badge.style.background = 'var(--bg-glass,#e5e5ea)';
+      step1Badge.style.color = 'var(--text-secondary)';
+      step2Badge.style.background = 'var(--accent-blue,#007AFF)';
+      step2Badge.style.color = '#fff';
+      generateBtn.style.display = 'none';
+      confirmBtn.style.display = 'none';
+      backBtn.style.display = 'none';
+
+      // 构建已有图谱上下文（帮助 AI 去重）
+      const store = window.RelationshipStore;
+      const existingNodes = store?.getNodes?.() || [];
+      const existingSummary = existingNodes.slice(0, 200).map(n =>
+        `${n.label}: ${n.properties.name || n.id}`
+      ).join(', ');
+
+      const result = await window.electronAPI?.graphGenerateFromText?.({
+        text,
+        existingContext: existingSummary
+      });
+
+      if (result?.success && result.graphData) {
+        generatedGraph = result.graphData;
+        currentStep = 3;
+        this._renderImportPreview(generatedGraph, modal);
+        step2Content.style.display = 'none';
+      step2Badge.style.background = 'var(--bg-glass,#e5e5ea)';
+      step2Badge.style.color = 'var(--text-secondary)';
+        step3Content.style.display = 'block';
+        step3Badge.style.background = 'var(--accent-blue,#007AFF)';
+        step3Badge.style.color = '#fff';
+        confirmBtn.style.display = 'block';
+        backBtn.style.display = 'block';
+      } else {
+        this._showToast('AI 提取失败: ' + (result?.error || '未知错误'), 'error');
+        // 返回 Step 1
+        currentStep = 1;
+        step2Content.style.display = 'none';
+        step1Content.style.display = 'block';
+        step2Badge.style.background = 'var(--bg-glass,#e5e5ea)';
+        step2Badge.style.color = 'var(--text-secondary)';
+        step1Badge.style.background = 'var(--accent-blue,#007AFF)';
+        step1Badge.style.color = '#fff';
+        generateBtn.style.display = 'block';
       }
     });
 
-    document.getElementById('relImportConfirmBtn')?.addEventListener('click', () => {
-      const text = document.getElementById('relImportTextarea')?.value?.trim();
-      if (!text) { this._showToast('请输入或选择 JSON 数据', 'warning'); return; }
-      const result = window.RelationshipStore?.importJSON(text);
-      if (result?.success) {
-        this._showToast(`导入成功：${result.nodeCount} 个节点, ${result.edgeCount} 条边`, 'success');
+    // 返回
+    backBtn?.addEventListener('click', () => {
+      currentStep = 1;
+      step3Content.style.display = 'none';
+      step2Content.style.display = 'none';
+      step1Content.style.display = 'block';
+      step3Badge.style.background = 'var(--bg-glass,#e5e5ea)';
+      step3Badge.style.color = 'var(--text-secondary)';
+      step1Badge.style.background = 'var(--accent-blue,#007AFF)';
+      step1Badge.style.color = '#fff';
+      confirmBtn.style.display = 'none';
+      backBtn.style.display = 'none';
+      generateBtn.style.display = 'block';
+    });
+
+    // 确认合并
+    confirmBtn?.addEventListener('click', () => {
+      if (!generatedGraph) return;
+      const nodes = generatedGraph.nodes || [];
+      const edges = generatedGraph.edges || [];
+      const result = store?.mergeGraph(nodes, edges);
+      if (result) {
+        this._showToast(
+          `合并完成：新增 ${result.addedNodes} 节点, 更新 ${result.updatedNodes} 节点, 新增 ${result.addedEdges} 边` +
+          (result.storageSizeMB ? `（存储 ${result.storageSizeMB}MB）` : ''),
+          'success'
+        );
         modal.remove();
         this._render();
       } else {
-        this._showToast('导入失败: ' + (result?.error || '无效 JSON'), 'error');
+        this._showToast('合并失败', 'error');
       }
     });
+  },
+
+  /** 渲染导入预览 */
+  _renderImportPreview(graphData, modal) {
+    const nodes = graphData.nodes || [];
+    const edges = graphData.edges || [];
+    const summary = document.getElementById('relPreviewSummary');
+    const nodesEl = document.getElementById('relPreviewNodes');
+    const edgesEl = document.getElementById('relPreviewEdges');
+
+    if (summary) {
+      summary.innerHTML = `AI 提取完成：<strong>${nodes.length}</strong> 个实体, <strong>${edges.length}</strong> 条关系。请检查后确认合并。`;
+    }
+
+    // 按类型分组节点
+    const grouped = {};
+    nodes.forEach(n => {
+      const label = n.label || 'Other';
+      if (!grouped[label]) grouped[label] = [];
+      grouped[label].push(n);
+    });
+
+    // 渲染节点
+    if (nodesEl) {
+      let html = '';
+      const labelNames = {
+        Architect: '架构师', Customer: '客户', Industry: '行业', Region: '区域',
+        Sales: '销售', Product: '产品', Partner: '伙伴', Channel: '通路',
+        Case: '案例', City: '城市'
+      };
+      Object.entries(grouped).forEach(([label, items]) => {
+        html += `<div style="margin-bottom:8px;">`;
+        html += `<div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">${labelNames[label] || label} (${items.length})</div>`;
+        items.forEach((n, idx) => {
+          const name = n.name || n.properties?.name || '未命名';
+          const propsStr = Object.entries(n.properties || {})
+            .filter(([k]) => k !== 'name')
+            .slice(0, 5)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(', ');
+          html += `<div class="rel-preview-item" data-node-idx="${idx}" style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;font-size:12px;border-bottom:1px solid var(--border-light,rgba(0,0,0,0.04));">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              <strong>${this._esc(name)}</strong>${propsStr ? `<span style="color:var(--text-tertiary);margin-left:8px;">${this._esc(propsStr)}</span>` : ''}
+            </span>
+            <button class="rel-preview-del" data-node-idx="${idx}" style="background:none;border:none;color:#FF3B30;cursor:pointer;font-size:14px;padding:2px 8px;">✕</button>
+          </div>`;
+        });
+        html += `</div>`;
+      });
+      nodesEl.innerHTML = html;
+
+      // 删除按钮
+      nodesEl.querySelectorAll('.rel-preview-del').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.nodeIdx);
+          const nodeName = graphData.nodes[idx]?.name || graphData.nodes[idx]?.properties?.name || '';
+          // 删除节点
+          graphData.nodes.splice(idx, 1);
+          // 删除引用该节点的边
+          graphData.edges = graphData.edges.filter(ed => ed.source !== nodeName && ed.target !== nodeName);
+          this._renderImportPreview(graphData, modal);
+        });
+      });
+    }
+
+    // 渲染边
+    if (edgesEl) {
+      const edgeTypeNames = {
+        BELONGS_TO: '属于', COVERS: '覆盖', SUPPORTS: '支持', LEADS: '主导',
+        LOCATED_IN: '位于', CUSTOMER_IN: '属于', SOLD_BY: '销售',
+        VIA_CHANNEL: '通路', PARTNER_WITH: '合作', FOR: '属于',
+        IN: '属于', USES: '使用', CONTAINS: '包含', CROSS_REGION: '跨区', COOPERATES: '协作'
+      };
+      let html = `<div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">关系 (${edges.length})</div>`;
+      edges.forEach((e, idx) => {
+        html += `<div class="rel-preview-item" style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;font-size:12px;border-bottom:1px solid var(--border-light,rgba(0,0,0,0.04));">
+          <span>
+            <strong>${this._esc(e.source || '?')}</strong>
+            <span style="color:var(--accent-blue,#007AFF);margin:0 6px;">—${edgeTypeNames[e.type] || e.type}→</span>
+            <strong>${this._esc(e.target || '?')}</strong>
+          </span>
+          <button class="rel-preview-del-edge" data-edge-idx="${idx}" style="background:none;border:none;color:#FF3B30;cursor:pointer;font-size:14px;padding:2px 8px;">✕</button>
+        </div>`;
+      });
+      edgesEl.innerHTML = html;
+
+      edgesEl.querySelectorAll('.rel-preview-del-edge').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.edgeIdx);
+          graphData.edges.splice(idx, 1);
+          this._renderImportPreview(graphData, modal);
+        });
+      });
+    }
   },
 
   _exportGraph() {

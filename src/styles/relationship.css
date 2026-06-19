@@ -3,6 +3,9 @@
    Apple Design Language
    ============================================ */
 
+/* 导入弹窗 loading 动画 */
+@keyframes rel-spin { to { transform: rotate(360deg); } }
+
 /* 关系人脉布局 */
 .relationship-layout {
   display: flex;

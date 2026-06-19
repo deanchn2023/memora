@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   estimateDuration: (task) => ipcRenderer.invoke('estimate-duration', task),
   addToCalendar: (task) => ipcRenderer.invoke('add-to-calendar', task),
+  removeFromCalendar: (taskTitle) => ipcRenderer.invoke('remove-from-calendar', taskTitle),
   showNotification: (title, body) => ipcRenderer.invoke('show-notification', title, body),
   getWindowFocusState: () => ipcRenderer.invoke('window:get-focus-state'),
   flashWindowAttention: () => ipcRenderer.invoke('window:flash-attention'),
@@ -258,6 +259,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 图谱语义检索 (GraphRAG)
   graphExtractEntities: (query) => ipcRenderer.invoke('graph:extract-entities', query),
   graphSemanticSearch: (data) => ipcRenderer.invoke('graph:semantic-search', data),
+  graphReadFile: (filePath) => ipcRenderer.invoke('graph:read-file', filePath),
+  graphGenerateFromText: (data) => ipcRenderer.invoke('graph:generate-from-text', data),
   onGraphSSEEvent: (callback) => {
     ipcRenderer.on('graph:sse-event', (event, data) => callback(data));
   },

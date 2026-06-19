@@ -2493,6 +2493,30 @@ end tell
   });
 }
 
+function removeFromCalendar(taskTitle) {
+  if (!taskTitle) return;
+  // 删除 TaskFlow 日历中标题匹配的事件
+  const script = `
+tell application "Calendar"
+  if exists calendar "TaskFlow" then
+    tell calendar "TaskFlow"
+      set eventsToDelete to every event whose summary is "${taskTitle.replace(/"/g, '\\"')}"
+      repeat with evt in eventsToDelete
+        delete evt
+      end repeat
+    end tell
+  end if
+end tell
+`;
+  exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error) => {
+    if (error) {
+      console.error('[Calendar] 删除日历事件失败:', error);
+    } else {
+      console.log('[Calendar] 已删除日历事件:', taskTitle);
+    }
+  });
+}
+
 function showNotification(title, body) {
   console.log('[Notification] show:', title, '|', body, '| isSupported:', Notification.isSupported());
   if (Notification.isSupported()) {
@@ -2919,6 +2943,11 @@ ${feedback}
 
 ipcMain.handle('add-to-calendar', async (event, task) => {
   addToCalendar(task);
+  return { success: true };
+});
+
+ipcMain.handle('remove-from-calendar', async (event, taskTitle) => {
+  removeFromCalendar(taskTitle);
   return { success: true };
 });
 
@@ -8966,6 +8995,186 @@ ipcMain.handle('read-data-file', async (event, fileName) => {
 
 // ===== 图谱语义检索 (GraphRAG) =====
 
+// 图谱文件导入：读取文件内容并提取文本
+ipcMain.handle('graph:read-file', async (event, filePath) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const ext = path.extname(filePath).toLowerCase();
+    const fileName = path.basename(filePath);
+
+    if (['.txt', '.md', '.csv', '.json'].includes(ext)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      return { success: true, text: content, fileName, ext: ext.slice(1) };
+    }
+
+    if (['.xlsx', '.xls'].includes(ext)) {
+      const XLSX = require('xlsx');
+      const workbook = XLSX.readFile(filePath);
+      const sheets = [];
+      workbook.SheetNames.forEach(name => {
+        const ws = workbook.Sheets[name];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        // 转为文本表格
+        const text = rows.map(r => r.map(c => String(c || '')).join('\t')).join('\n');
+        sheets.push(`=== 工作表: ${name} ===\n${text}`);
+      });
+      return { success: true, text: sheets.join('\n\n'), fileName, ext: ext.slice(1) };
+    }
+
+    if (ext === '.docx') {
+      // .docx 是 zip 文件，提取 word/document.xml 中的文本
+      const { execSync } = require('child_process');
+      try {
+        // 尝试用 unzip 提取
+        const tmpXml = `/tmp/docx_extract_${Date.now()}.xml`;
+        execSync(`unzip -p "${filePath}" word/document.xml > "${tmpXml}"`);
+        const xml = fs.readFileSync(tmpXml, 'utf-8');
+        fs.unlinkSync(tmpXml);
+        // 从 XML 中提取文本节点
+        const text = xml
+          .replace(/<w:p[^>]*>/g, '\n')
+          .replace(/<w:tab[^>]*\/>/g, '\t')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+        return { success: true, text, fileName, ext: 'docx' };
+      } catch (extractErr) {
+        return { success: false, error: `无法解析 .docx 文件: ${extractErr.message}` };
+      }
+    }
+
+    if (ext === '.pdf') {
+      // PDF 文本提取：尝试用 pdftotext（系统命令）
+      const { execSync } = require('child_process');
+      try {
+        const tmpTxt = `/tmp/pdf_extract_${Date.now()}.txt`;
+        execSync(`pdftotext "${filePath}" "${tmpTxt}" 2>/dev/null`, { stdio: 'pipe' });
+        const text = fs.readFileSync(tmpTxt, 'utf-8');
+        fs.unlinkSync(tmpTxt);
+        return { success: true, text, fileName, ext: 'pdf' };
+      } catch {
+        return { success: false, error: 'PDF 解析需要安装 pdftotext（poppler）。请将 PDF 内容复制为文本后粘贴导入。' };
+      }
+    }
+
+    if (ext === '.doc') {
+      return { success: false, error: '不支持 .doc 旧格式，请另存为 .docx 或复制文本后粘贴导入。' };
+    }
+
+    // 其他格式尝试作为文本读取
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return { success: true, text: content, fileName, ext: ext.slice(1) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 图谱 AI 生成：从文本中提取实体和关系，返回结构化图谱数据
+ipcMain.handle('graph:generate-from-text', async (event, { text, existingContext }) => {
+  try {
+    // 限制输入文本长度（避免超出 Token 限制）
+    const maxChars = 50000;
+    const truncatedText = text.length > maxChars ? text.substring(0, maxChars) + '\n\n[... 文本已截断，仅分析前 ' + maxChars + ' 字符 ...]' : text;
+
+    const prompt = `你是一个人脉关系图谱分析专家。请从以下文本中提取所有人物、组织、行业、区域、产品等实体，以及它们之间的关系。
+
+## 已有图谱上下文（用于去重参考）
+${existingContext || '（无已有数据）'}
+
+## 文本内容
+${truncatedText}
+
+## 提取要求
+请提取以下类型的实体和关系，返回**纯JSON格式**（不要markdown代码块，不要解释文字）：
+
+{
+  "nodes": [
+    {
+      "label": "实体类型（必须是以下之一：Architect, Region, Industry, Customer, Sales, Case, Product, Partner, Channel, City）",
+      "name": "实体名称",
+      "properties": { "该实体的其他属性，如 role/tier/industryL1/industryL2/region 等" }
+    }
+  ],
+  "edges": [
+    {
+      "type": "关系类型（必须是以下之一：BELONGS_TO, COVERS, SUPPORTS, LEADS, LOCATED_IN, CROSS_REGION, COOPERATES, FOR, IN, USES, CUSTOMER_IN, CONTAINS, SOLD_BY, VIA_CHANNEL, PARTNER_WITH）",
+      "source": "源实体名称（必须与 nodes 中的 name 对应）",
+      "target": "目标实体名称（必须与 nodes 中的 name 对应）",
+      "properties": {}
+    }
+  ]
+}
+
+## 关系类型说明
+- BELONGS_TO: 架构师→区域（架构师属于某区域）
+- COVERS: 架构师→行业（架构师覆盖某行业）
+- SUPPORTS: 架构师→客户（架构师支持某客户）
+- LEADS: 架构师→案例（架构师主导某案例）
+- LOCATED_IN: 架构师→城市（架构师位于某城市）
+- CUSTOMER_IN: 客户→行业/区域（客户属于某行业或区域）
+- SOLD_BY: 客户→销售（客户由某销售负责）
+- VIA_CHANNEL: 客户→通路（客户通过某通路）
+- PARTNER_WITH: 客户→伙伴（客户与伙伴合作）
+- FOR: 案例→客户（案例属于某客户）
+- IN: 案例→行业（案例属于某行业）
+- USES: 案例→产品（案例使用某产品）
+- CONTAINS: 区域→城市（区域包含某城市）
+
+## 注意
+1. 只提取文本中明确提到的实体和关系，不要编造
+2. 实体名称用全称，不要缩写
+3. 如果文本是表格数据（如 Excel），每一行可能代表一个客户及其属性
+4. 如果已有图谱中存在同名实体，仍然提取它（后续合并时会自动去重）
+5. 返回纯 JSON，不要有任何 markdown 格式或解释文字`;
+
+    const { response } = await callAI({
+      module: 'graph_import',
+      category: 'lowvol',
+      messages: [
+        { role: 'system', content: '你是一个图谱数据提取专家，只输出纯JSON格式数据，不包含任何markdown或解释文字。' },
+        { role: 'user', content: prompt }
+      ],
+      structured: true
+    });
+
+    if (!response || !response.ok) {
+      return { success: false, error: 'AI 调用失败，请检查网络或 API 配置' };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    if (!content) {
+      return { success: false, error: 'AI 返回内容为空' };
+    }
+
+    // 解析 JSON（兼容 AI 可能返回 markdown 代码块的情况）
+    let jsonStr = content.trim();
+    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    // 移除可能的前后多余文本
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+    }
+
+    const graphData = JSON.parse(jsonStr);
+    if (!graphData.nodes || !Array.isArray(graphData.nodes)) {
+      return { success: false, error: 'AI 返回的数据格式不正确：缺少 nodes 数组' };
+    }
+
+    console.log(`[Graph Import] AI extracted ${graphData.nodes?.length || 0} nodes, ${graphData.edges?.length || 0} edges`);
+    return { success: true, graphData };
+  } catch (e) {
+    console.error('[graph:generate-from-text] Error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
 // 图谱实体提取 — 从自然语言查询中提取实体
 ipcMain.handle('graph:extract-entities', async (event, query) => {
   try {
@@ -9019,9 +9228,14 @@ ipcMain.handle('graph:semantic-search', async (event, { query, graphContext }) =
     const url = adpConfig.url;
     const configSource = appKey ? (authState.isLoggedIn && remoteConfig?.adp ? 'cloud' : 'local') : 'default';
 
+    const sendSSE = (payload) => {
+      // 只通过 event.sender 发送（避免双通道导致前端收到重复事件）
+      try { event.sender.send('graph:sse-event', payload); } catch (e) {}
+    };
+
     if (!appKey || appKey.trim() === '') {
       console.warn('[GraphRAG] No ADP AppKey configured, returning error');
-      event.sender.send('graph:sse-event', { type: 'error', error: '未配置 ADP AppKey，无法进行智能分析。请在设置中配置 ADP AppKey。' });
+      sendSSE({ type: 'error', error: '未配置 ADP AppKey，无法进行智能分析。请在设置中配置 ADP AppKey。' });
       return { success: false, error: 'No ADP AppKey' };
     }
 
@@ -9061,101 +9275,144 @@ ${graphContext}
 
     if (!fetchResponse.ok) {
       const errText = await fetchResponse.text();
-      event.sender.send('graph:sse-event', { type: 'error', error: `ADP请求失败: ${fetchResponse.status} ${errText}` });
+      sendSSE({ type: 'error', error: `ADP请求失败: ${fetchResponse.status} ${errText}` });
       return { success: false, error: 'ADP request failed' };
     }
 
-    // 解析 SSE 流
-    const reader = fetchResponse.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let currentEvent = '';
+    // 立即返回成功，后续通过 IPC 事件流式推送每个 SSE event（与 AI 助手相同模式）
+    // 异步处理 SSE 流
+    (async () => {
+      const reader = fetchResponse.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentData = '';
+      let fullText = '';
+      let firstDeltaLogged = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (line.startsWith('event:')) {
-          currentEvent = line.slice(6).trim();
-          continue;
-        }
-        if (line.startsWith('data:')) {
-          const dataStr = line.slice(5).trim();
-          if (!dataStr || dataStr === '[DONE]') {
-            event.sender.send('graph:sse-event', { type: 'done' });
-            continue;
-          }
-          try {
-            const evt = JSON.parse(dataStr);
-            // 优先使用 SSE event: 行的类型，其次尝试 JSON 内的 event 字段
-            const eventType = currentEvent || evt.event || '';
+          for (const line of lines) {
+            const trimmed = line.replace(/\r$/, '');
 
-            // text.delta — 增量文本
-            if (eventType === 'text.delta' || eventType === 'content.added' || eventType === 'message.added') {
-              let text = '';
-              // ADP V2 格式1: { content: [{ type: "text", text: "..." }] }
-              const content = evt.content || evt.data?.content;
-              if (Array.isArray(content)) {
-                for (const c of content) {
-                  if (c.type === 'text' && c.text) text += c.text;
-                  else if (typeof c === 'string') text += c;
+            // 跳过 SSE 注释/心跳行
+            if (trimmed.startsWith(':')) continue;
+
+            if (trimmed.startsWith('event:')) {
+              currentEvent = trimmed.substring(6).trim();
+            } else if (trimmed.startsWith('data:')) {
+              // 累积 data（支持多行 data: 拼接）
+              currentData += trimmed.substring(5).trim();
+            } else if (trimmed === '') {
+              // SSE 事件边界（空行）— 完整事件处理
+              if (!currentData) {
+                currentEvent = '';
+                continue;
+              }
+
+              if (currentData === '[DONE]') {
+                console.log(`[GraphRAG] Stream done [DONE], total text: ${fullText.length}`);
+                sendSSE({ type: 'done' });
+                return;
+              }
+
+              try {
+                const parsed = JSON.parse(currentData);
+                const evt = currentEvent || parsed.Type || parsed.event || '';
+
+                // ADP V2 文本提取（仅 PascalCase，与 AI 助手一致）
+                const extractDeltaText = (obj) => {
+                  return obj.Text
+                    || obj.Content?.[0]?.Text
+                    || obj.payload?.content?.[0]?.text
+                    || obj.content?.[0]?.text
+                    || '';
+                };
+
+                // 完成事件
+                if (evt === 'message.done' || evt === 'response.completed' || evt === 'done') {
+                  console.log(`[GraphRAG] Done event: ${evt}, total text: ${fullText.length}`);
+                  sendSSE({ type: 'done' });
+                  return;
                 }
-              } else if (typeof content === 'string') {
-                text = content;
-              }
-              // 格式2: { data: { text: "..." } }
-              if (!text && evt.data?.text) text = evt.data.text;
-              // 格式3: { text: "..." }
-              if (!text && evt.text) text = evt.text;
-              // 格式4: { delta: { content: "..." } } (OpenAI 兼容)
-              if (!text && evt.delta?.content) text = evt.delta.content;
-              // 格式5: { Choices: [{ Delta: { Content: "..." } }] } (PascalCase)
-              if (!text && evt.Choices?.[0]?.Delta?.Content) text = evt.Choices[0].Delta.Content;
 
-              // 过滤 JSON 格式内容（ADP 有时在 text.delta 中夹杂 JSON）
-              if (text && !text.startsWith('{"content":') && !text.startsWith('{"choices":')) {
-                event.sender.send('graph:sse-event', { type: 'text', text });
-              }
-            } else if (eventType === 'text.replace') {
-              // text.replace — 替换全部内容
-              let text = '';
-              const content = evt.content || evt.data?.content;
-              if (Array.isArray(content)) {
-                for (const c of content) {
-                  if (c.type === 'text' && c.text) text += c.text;
+                // 错误事件
+                if (evt === 'error') {
+                  const errMsg = parsed.Error?.Message || parsed.error?.message || parsed.message || 'ADP错误';
+                  console.error(`[GraphRAG] Error event: ${errMsg}`);
+                  sendSSE({ type: 'error', error: errMsg });
                 }
-              } else if (typeof content === 'string') {
-                text = content;
+                // text.replace 事件 — 替换全部内容
+                else if (evt === 'text.replace') {
+                  const replaceText = extractDeltaText(parsed);
+                  if (replaceText && !replaceText.startsWith('{"')) {
+                    fullText = replaceText;
+                    sendSSE({ type: 'replace', text: replaceText });
+                  }
+                }
+                // 增量文本事件（仅这些事件类型包含需要追加的文本，与 AI 助手 line 6032 一致）
+                else if (evt === 'text.delta' || evt === 'content.added' || evt === 'message.added') {
+                  const deltaText = extractDeltaText(parsed);
+                  if (deltaText) {
+                    fullText += deltaText;
+                    if (!firstDeltaLogged) {
+                      firstDeltaLogged = true;
+                      console.log(`[GraphRAG] First text.delta: "${deltaText.substring(0, 120)}" | event: ${evt}`);
+                    }
+                    sendSSE({ type: 'text', text: deltaText });
+                  }
+                }
+                // 其他事件（request_ack, response.created, response.processing, quote_info.added 等）不提取文本
+              } catch (e) {
+                // 非 JSON，忽略
               }
-              if (text) {
-                event.sender.send('graph:sse-event', { type: 'replace', text });
-              }
-            } else if (eventType === 'message.done' || eventType === 'response.completed' || eventType === 'done') {
-              event.sender.send('graph:sse-event', { type: 'done' });
-            } else if (eventType === 'error') {
-              const errMsg = evt.error?.message || evt.data?.error?.message || evt.message || 'ADP错误';
-              event.sender.send('graph:sse-event', { type: 'error', error: errMsg });
+
+              // 重置当前事件
+              currentEvent = '';
+              currentData = '';
             }
-            // 其他事件类型（request_ack, response.created, response.processing, message.added, quote_info.added, reference.added 等）静默忽略
-          } catch (e) {
-            // 非 JSON，忽略
           }
-          // 重置 currentEvent（每个 data: 后 event 已消费）
-          currentEvent = '';
         }
-      }
-    }
 
-    event.sender.send('graph:sse-event', { type: 'done' });
+        // 流自然结束（reader done），处理残留数据
+        if (currentData && currentData !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(currentData);
+            const deltaText = parsed.Text
+              || parsed.Content?.[0]?.Text
+              || parsed.payload?.content?.[0]?.text
+              || parsed.content?.[0]?.text
+              || '';
+            if (deltaText && !deltaText.startsWith('{"')) {
+              sendSSE({ type: 'text', text: deltaText });
+              fullText += deltaText;
+            }
+          } catch (e) {}
+        }
+
+        console.log(`[GraphRAG] Stream ended naturally, total text: ${fullText.length}`);
+        sendSSE({ type: 'done' });
+      } catch (err) {
+        console.error('[GraphRAG] SSE stream error:', err);
+        sendSSE({ type: 'error', error: err.message });
+      }
+    })();
+
+    // 立即返回（SSE 流在后台异步推送）
     return { success: true };
   } catch (e) {
     console.error('[graph:semantic-search] Error:', e);
-    event.sender.send('graph:sse-event', { type: 'error', error: e.message });
+    const sendSSE = (payload) => {
+      try { event.sender.send('graph:sse-event', payload); } catch (err) {}
+    };
+    sendSSE({ type: 'error', error: e.message });
     return { success: false, error: e.message };
   }
 });
