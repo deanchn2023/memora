@@ -70,6 +70,7 @@
           <div class="ai-mode-toggle" id="aiModeToggle">
             <button class="ai-mode-btn active" data-mode="agent" id="aiModeAgent">🤖 Agent</button>
             <button class="ai-mode-btn" data-mode="llm" id="aiModeLLM">💬 LLM</button>
+            <button class="ai-mode-btn" data-mode="cc" id="aiModeCC">🧠 CC</button>
           </div>
           <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M5 20a7 7 0 0114 0"/><circle cx="10" cy="9.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="14" cy="9.5" r="0.8" fill="currentColor" stroke="none"/><path d="M10 12.5c.6.5 3.4.5 4 0"/><path d="M9 6c-1.5-1-3.5-.5-3.5 1.5"/><path d="M15 6c1.5-1 3.5-.5 3.5 1.5"/></svg></button>
           <button class="audit-btn" id="openAuditBtn" data-tooltip="审计日志"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></button>
@@ -284,6 +285,19 @@
                 <div class="chat-attachments" id="chatAttachments"></div>
                 <div class="chat-input-area">
                   <input type="file" id="chatFileInput" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.zip,.rar,.txt,.md,.csv" style="display:none">
+                  <!-- CC 工作目录指示器（仅 CC 模式显示） -->
+                  <div class="cc-workdir-bar hidden" id="ccWorkdirBar">
+                    <span class="cc-workdir-label">📂 工作目录:</span>
+                    <span class="cc-workdir-path" id="ccWorkdirPath" title="">默认</span>
+                    <button class="cc-workdir-change-btn" id="ccWorkdirChangeBtn" title="切换工作目录">🔄 切换</button>
+                    <button class="cc-workdir-reset-btn" id="ccWorkdirResetBtn" title="重置为默认">↩ 默认</button>
+                    <span class="cc-skill-label">🧩 Skill:</span>
+                    <select class="cc-skill-select" id="ccSkillSelect" title="选择要启用的 Skill（仅显示已安装）">
+                      <option value="">不使用 Skill</option>
+                    </select>
+                    <button class="cc-skill-manage-btn" id="ccSkillManageBtn" title="管理 Skill（上传/安装）">⚙️</button>
+                    <button class="cc-restart-btn" id="ccRestartBtn" title="重启 CC 会话（安装 skill 后需重启生效）">🔁 重启CC</button>
+                  </div>
                   <div class="input-wrapper">
                     <button class="file-upload-btn" id="chatFileUploadBtn" title="上传文件">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -559,6 +573,7 @@
               <button class="doc-cat-tab" data-type="cloud" data-i18n="documents.cloud">☁️ 云端资料</button>
               <button class="doc-cat-tab" data-type="local" data-i18n="documents.local">💻 本地</button>
               <button class="doc-cat-tab" data-type="artifacts" data-i18n="documents.artifacts">🤖 Agent 产物</button>
+              <button class="doc-cat-tab" data-type="skill">🧩 Skill</button>
               <button class="doc-cat-tab send-to-ai-toggle" id="sendToAIToggle" title="多选文件发送给 AI 助手">🤖 发给 AI</button>
             </div>
             <!-- 云端资料子分类 -->
@@ -654,6 +669,25 @@
                     <div class="empty-icon">🤖</div>
                     <p data-i18n="documents.noArtifacts">暂无 Agent 产物</p>
                     <span class="empty-hint" data-i18n="documents.noArtifactsHint">AI 助手生成的文档、HTML 等交付物将保存在这里</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Skill 管理区域 -->
+              <div class="skill-container hidden" id="skillContainer">
+                <div class="skill-toolbar">
+                  <button class="btn primary" id="skillUploadBtn">📤 上传 Skill（zip）</button>
+                  <input type="file" id="skillFileInput" accept=".zip" style="display:none">
+                  <span class="skill-hint" style="color: var(--text-secondary); font-size: 12px; margin-left: 8px;">
+                    上传 .zip 格式的 Skill 包，在 CC 模式对话中可选择启用
+                  </span>
+                </div>
+                <div class="skill-body" id="skillBody">
+                  <div class="skill-grid" id="skillGrid"></div>
+                  <div class="skill-empty" id="skillEmpty">
+                    <div class="empty-icon">🧩</div>
+                    <p>暂无 Skill</p>
+                    <span class="empty-hint">上传 .zip 格式的 Skill 包，在 CC 模式中使用</span>
                   </div>
                 </div>
               </div>
@@ -1234,6 +1268,7 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="llm" data-i18n="settings.tab.llm">LLM</button>
           <button class="settings-tab" data-tab="agent" data-i18n="settings.tab.agent">Agent</button>
+          <button class="settings-tab" data-tab="cc">CC</button>
           <button class="settings-tab" data-tab="expert" data-i18n="settings.tab.expert">专家</button>
           <button class="settings-tab" data-tab="prompt" data-i18n="settings.tab.prompts">Prompt</button>
           <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">画像</button>
@@ -1468,7 +1503,102 @@
             <span id="adpConfigStatus">当前状态: 未配置</span>
           </div>
         </div>
-        
+
+        <!-- Claude Code 配置 -->
+        <div class="settings-panel hidden" id="ccPanel">
+          <h4 class="settings-section-title">🧠 Claude Code（火山引擎 Coding Plan）</h4>
+          <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
+            对接火山引擎方舟 Coding Plan，原生兼容 Anthropic API。支持 DeepSeek-V3.2、GLM-4.7、Kimi-K2.5 等模型（在火山引擎控制台切换）。无需翻墙，国内直连。
+          </small>
+
+          <div class="form-group">
+            <label for="ccAuthToken">Auth Token（火山引擎 API Key）</label>
+            <input type="password" id="ccAuthToken" placeholder="ark-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+              从火山引擎控制台「方舟 → API Key 管理」获取。格式以 ark- 开头。
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="ccBaseUrl">Base URL（Anthropic 兼容地址）</label>
+            <input type="text" id="ccBaseUrl" placeholder="https://ark.cn-beijing.volces.com/api/coding">
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="ccModel">模型名称</label>
+              <input type="text" id="ccModel" placeholder="ark-code-latest">
+              <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                推荐使用 ark-code-latest，实际模型在火山控制台切换。
+              </small>
+            </div>
+            <div class="form-group">
+              <label for="ccPermissionMode">权限模式</label>
+              <select id="ccPermissionMode">
+                <option value="default">default（默认，危险操作需确认）</option>
+                <option value="acceptEdits">acceptEdits（自动接受文件编辑）</option>
+                <option value="plan">plan（规划模式，不执行工具）</option>
+                <option value="bypassPermissions">bypassPermissions（⚠️ 跳过所有权限检查，有风险）</option>
+              </select>
+              <small style="color: var(--danger); margin-top: 4px; display: none;" id="ccPermissionWarn">
+                ⚠️ bypassPermissions 会跳过所有工具权限检查。已通过 disallowedTools 拦截 Bash/Write/Edit 等危险工具，但仍建议仅在可信环境使用。
+              </small>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="ccAllowedTools">允许的工具（逗号分隔）</label>
+              <input type="text" id="ccAllowedTools" placeholder="Read,Glob,Grep,WebSearch">
+            </div>
+            <div class="form-group">
+              <label for="ccMaxTurns">最大轮次</label>
+              <input type="number" id="ccMaxTurns" min="1" max="200" value="50">
+            </div>
+          </div>
+
+          <button class="btn secondary" id="testCCBtn" style="margin-bottom: 12px;">🔗 测试连接</button>
+          <span id="testCCResult" style="margin-left: 8px; font-size: 13px;"></span>
+
+          <div class="form-group" style="margin-top: 16px;">
+            <label>🧠 跨会话记忆（CLAUDE.md）</label>
+            <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
+              Memora 记忆库自动同步到 CC 工作目录的 CLAUDE.md，实现跨会话记忆。
+              每天晚上 22 点自动整理，每次 CC 对话前自动刷新。
+              CC 回复中标记 [MEMORY: 内容] 的信息会自动提取到 Memora 记忆库。
+            </small>
+            <button class="btn secondary" id="ccSyncMemoryBtn" style="margin-bottom: 12px;">🔄 立即同步记忆</button>
+            <span id="ccSyncMemoryResult" style="margin-left: 8px; font-size: 13px;"></span>
+          </div>
+
+          <div class="form-group" style="margin-top: 16px;">
+            <label>🔧 Skill 环境变量 / API Key</label>
+            <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
+              部分 Skill 需要环境变量或 API Key（如 FIRECRAWL_API_KEY、GITHUB_TOKEN 等）。
+              添加的变量会在 CC 子进程启动时注入环境，所有 Skill 均可读取。
+            </small>
+            <div id="ccEnvVarsList" style="margin-bottom: 8px;">
+              <!-- 动态生成的环境变量行 -->
+            </div>
+            <button class="btn secondary" id="ccAddEnvVarBtn" style="font-size: 12px;">+ 添加环境变量</button>
+          </div>
+
+          <div class="form-group" style="margin-top: 16px;">
+            <label for="ccDefaultWorkdir">默认工作目录</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="ccDefaultWorkdir" placeholder="选择默认工作目录" style="flex: 1;">
+              <button class="btn secondary" id="ccPickWorkdirBtn" style="white-space: nowrap;">📁 选择</button>
+            </div>
+            <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+              CC 模式的默认工作目录。自动任务使用此目录；对话中可临时切换其他目录。
+            </small>
+          </div>
+
+          <div class="config-status" id="ccStatus">
+            <span id="ccConfigStatus">配置状态: 未检测</span>
+          </div>
+        </div>
+
         <!-- 专家配置 -->
         <div class="settings-panel hidden" id="expertPanel">
           <div class="expert-section">

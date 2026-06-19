@@ -400,8 +400,10 @@ const ExpertSettings = {
   // ===== 专家编辑器 =====
   showExpertEditor(expertId) {
     const expert = expertId ? window.ExpertSystem?.getExpertById?.(expertId) : null;
-    this._editingExpert = expert ? { ...expert } : { name: '', intro: '', icon: '🤖', adpUrl: '', appKey: '', expertType: 'claw', quickAccesses: [] };
+    this._editingExpert = expert ? { ...expert } : { name: '', intro: '', icon: '🤖', adpUrl: '', appKey: '', expertType: 'claw', modes: ['agent'], quickAccesses: [] };
     const _e = this._editingExpert;
+    // 兼容：如果没有 modes 字段，默认 ['agent']
+    const modes = _e.modes || ['agent'];
 
     const overlay = document.createElement('div');
     overlay.className = 'expert-modal-overlay';
@@ -415,20 +417,18 @@ const ExpertSettings = {
             <div class="form-group" style="flex:1"><label>名称</label><input type="text" id="expertNameInput" value="${this._esc(_e.name)}" placeholder="专家名称" maxlength="20"></div>
           </div>
           <div class="form-group"><label>介绍</label><input type="text" id="expertIntroInput" value="${this._esc(_e.intro)}" placeholder="一句话介绍" maxlength="50"></div>
-          <h4 class="settings-section-title" style="margin-top:16px">🏷️ 专家类型</h4>
+          <h4 class="settings-section-title" style="margin-top:16px">🏷️ 适用模式（多选）</h4>
           <div class="form-group">
-            <label>对话模式</label>
-            <select id="expertTypeInput" style="width:100%">
-              <option value="claw" ${(!_e.expertType || _e.expertType === 'claw') ? 'selected' : ''}>🦀 Claw 模式（默认）</option>
-              <option value="standard" ${_e.expertType === 'standard' ? 'selected' : ''} disabled>📋 标准模式（暂不支持）</option>
-              <option value="workflow" ${_e.expertType === 'workflow' ? 'selected' : ''} disabled>🔄 工作流模式（暂不支持）</option>
-              <option value="multiagent" ${_e.expertType === 'multiagent' ? 'selected' : ''} disabled>🤝 MultiAgent 模式（暂不支持）</option>
-            </select>
-            <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">Claw 模式支持文档对话和工具调用，其他模式开发中</div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeAgent" ${modes.includes('agent') ? 'checked' : ''}>🤖 Agent（ADP）</label>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeLlm" ${modes.includes('llm') ? 'checked' : ''}>💬 LLM</label>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeCc" ${modes.includes('cc') ? 'checked' : ''}>🧠 CC（Claude Code）</label>
+            </div>
+            <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">选择该专家在哪些对话模式下显示。至少选择一个。</div>
           </div>
-          <h4 class="settings-section-title" style="margin-top:16px">🔌 ADP 配置</h4>
+          <h4 class="settings-section-title" style="margin-top:16px">🔌 ADP 配置 <small style="color:var(--text-tertiary);font-weight:normal">（仅 Agent 模式需要）</small></h4>
           <div class="form-group"><label>访问地址 <small style="color:var(--text-tertiary)">留空用默认</small></label><input type="text" id="expertAdpUrlInput" value="${this._esc(_e.adpUrl)}" placeholder="https://wss.lke.cloud.tencent.com/adp/v2/chat"></div>
-          <div class="form-group"><label>AppKey <small style="color:var(--text-tertiary)">必填</small></label><input type="password" id="expertAppKeyInput" value="${this._esc(_e.appKey)}" placeholder="ADP AppKey"></div>
+          <div class="form-group"><label>AppKey <small style="color:var(--text-tertiary)">Agent 模式必填</small></label><input type="password" id="expertAppKeyInput" value="${this._esc(_e.appKey)}" placeholder="ADP AppKey"></div>
           <h4 class="settings-section-title" style="margin-top:16px">⚡ 快捷访问</h4>
           <div id="expertQAEditor"></div>
           <button class="btn secondary" id="addExpertQABtn" style="margin-top:8px">+ 添加快捷访问</button>
@@ -447,15 +447,22 @@ const ExpertSettings = {
   async _saveExpert() {
     const name = document.getElementById('expertNameInput')?.value?.trim();
     if (!name) { this._toast('请输入专家名称'); return; }
+    // 收集多选模式
+    const modes = [];
+    if (document.getElementById('modeAgent')?.checked) modes.push('agent');
+    if (document.getElementById('modeLlm')?.checked) modes.push('llm');
+    if (document.getElementById('modeCc')?.checked) modes.push('cc');
+    if (modes.length === 0) { this._toast('请至少选择一个适用模式'); return; }
     const appKey = document.getElementById('expertAppKeyInput')?.value?.trim();
-    if (!appKey) { this._toast('请输入 AppKey'); return; }
+    // Agent 模式需要 AppKey
+    if (modes.includes('agent') && !appKey) { this._toast('Agent 模式需要填写 AppKey'); return; }
     const expert = {
       ...this._editingExpert,
-      name, appKey,
+      name, appKey, modes,
       intro: document.getElementById('expertIntroInput')?.value?.trim() || '',
       icon: document.getElementById('expertIconDisplay')?.textContent || '🤖',
       adpUrl: document.getElementById('expertAdpUrlInput')?.value?.trim() || '',
-      expertType: document.getElementById('expertTypeInput')?.value || 'claw',
+      expertType: 'claw', // 保留兼容
       quickAccesses: this._collectQA('expertQAEditor')
     };
     const result = await window.ExpertSystem?.saveExpert?.(expert);

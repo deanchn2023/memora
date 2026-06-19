@@ -29,6 +29,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onGlobalAIModeChanged: (callback) => {
     ipcRenderer.on('global-ai-mode-changed', (event, mode) => callback(mode));
   },
+
+  // Claude Code 模式（v2.7）
+  ccInvoke: (data) => ipcRenderer.invoke('cc:invoke', data),
+  ccStop: () => ipcRenderer.invoke('cc:stop'),
+  ccNewSession: () => ipcRenderer.invoke('cc:new-session'),
+  ccTestConnection: (params) => ipcRenderer.invoke('cc:test-connection', params),
+  ccGetConfig: () => ipcRenderer.invoke('cc:get-config'),
+  ccSetConfig: (config) => ipcRenderer.invoke('cc:set-config', config),
+  ccPickDirectory: () => ipcRenderer.invoke('cc:pick-directory'),
+  // Skill 管理（v2.7 CC 模式）
+  skillUpload: (data) => ipcRenderer.invoke('skill:upload', data),
+  skillList: () => ipcRenderer.invoke('skill:list'),
+  skillListWithStatus: (data) => ipcRenderer.invoke('skill:list-with-status', data),
+  skillDelete: (data) => ipcRenderer.invoke('skill:delete', data),
+  skillInstallToCC: (data) => ipcRenderer.invoke('skill:install-to-cc', data),
+  skillUninstallFromCC: (data) => ipcRenderer.invoke('skill:uninstall-from-cc', data),
+  // CC 记忆同步
+  ccSyncMemory: () => ipcRenderer.invoke('cc:sync-memory'),
+  onCCStream: (callback) => {
+    ipcRenderer.on('cc:stream', (event, data) => callback(data));
+  },
+  removeCCListeners: () => {
+    ipcRenderer.removeAllListeners('cc:stream');
+  },
   
   // ADP配置
   getADPConfig: () => ipcRenderer.invoke('get-adp-config'),

@@ -56,6 +56,7 @@ const Documents = {
         const localContainer = document.getElementById('localFilesContainer');
         const artifactsContainer = document.getElementById('agentArtifactsContainer');
         const kbContainer = document.getElementById('knowledgeBaseContainer');
+        const skillContainer = document.getElementById('skillContainer');
         const normalElements = document.querySelectorAll('#documentsGrid, #documentsPagination, #documentsLoading');
         const cloudSubTabs = document.getElementById('cloudSubTabs');
         const sortTabs = document.getElementById('documentsSortTabs');
@@ -64,6 +65,7 @@ const Documents = {
         if (localContainer) localContainer.classList.add('hidden');
         if (artifactsContainer) artifactsContainer.classList.add('hidden');
         if (kbContainer) kbContainer.classList.add('hidden');
+        if (skillContainer) skillContainer.classList.add('hidden');
         normalElements.forEach(el => el.classList.add('hidden'));
         if (cloudSubTabs) cloudSubTabs.classList.add('hidden');
 
@@ -83,6 +85,9 @@ const Documents = {
         } else if (this.currentType === 'artifacts') {
           if (artifactsContainer) artifactsContainer.classList.remove('hidden');
           AgentArtifacts.onShow();
+        } else if (this.currentType === 'skill') {
+          if (skillContainer) skillContainer.classList.remove('hidden');
+          if (window.App) App._loadSkillList();
         } else {
           // cloud
           normalElements.forEach(el => el.classList.remove('hidden'));

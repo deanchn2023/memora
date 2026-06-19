@@ -2595,6 +2595,27 @@ body {
   overflow-wrap: break-word;
   word-break: break-word;
   min-width: 0;
+  overflow-x: auto;
+  /* 允许鼠标选择文字复制 */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 代码块水平滚动，防止溢出对话框 */
+.message-content pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.message-content pre code {
+  white-space: pre;
+  word-break: normal;
+}
+
+/* CC 模式进度步骤区域限制宽度 */
+.message-content .adp-progress-steps {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .message.user .message-content {
@@ -2736,17 +2757,10 @@ body {
   justify-content: center;
   opacity: 0.5;
   transition: all 0.2s;
-}
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: all 0.2s var(--transition);
-  z-index: 2;
+  z-index: 10;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .message.assistant:hover .copy-btn {
@@ -3765,6 +3779,458 @@ body {
 .agent-badge-adp {
   background: rgba(52, 199, 89, 0.12);
   color: #34C759;
+}
+
+/* Claude Code 徽标 - 紫色调 */
+.agent-badge-cc {
+  background: rgba(120, 80, 245, 0.12);
+  color: #7850F5;
+}
+
+/* CC 流式文本区域 */
+.cc-stream-text {
+  margin-top: 8px;
+}
+
+/* CC 执行过程折叠区域 */
+.cc-process-wrapper {
+  margin-bottom: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+}
+
+.cc-process-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary, rgba(0,0,0,0.03));
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cc-process-header:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.06));
+}
+
+.cc-process-toggle {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.cc-process-wrapper:not(.collapsed) .cc-process-toggle {
+  transform: rotate(90deg);
+}
+
+.cc-process-body {
+  padding: 8px 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  transition: max-height 0.2s;
+}
+
+.cc-process-wrapper.collapsed .cc-process-body {
+  display: none;
+}
+
+/* CC 代码块工具栏 */
+.cc-code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary, rgba(0,0,0,0.05));
+  border-radius: 4px 4px 0 0;
+  font-size: 11px;
+  position: relative;
+  z-index: 1;
+}
+
+/* CC 预览按钮样式 */
+.cc-code-preview-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--primary-color, #007AFF);
+  white-space: nowrap;
+}
+
+.cc-code-preview-btn:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+/* CC HTML 预览弹窗 */
+.cc-preview-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cc-preview-modal {
+  width: 90vw;
+  height: 85vh;
+  background: var(--bg-primary, #fff);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.cc-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-bottom: 1px solid var(--border-light, rgba(0,0,0,0.08));
+}
+
+.cc-preview-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.cc-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cc-preview-save-btn,
+.cc-preview-close-btn,
+.cc-preview-open-link {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-secondary, #86868b);
+}
+
+.cc-preview-save-btn:hover,
+.cc-preview-open-link:hover {
+  background: rgba(0, 122, 255, 0.08);
+  color: var(--primary-color, #007AFF);
+}
+
+.cc-preview-close-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary, #1d1d1f);
+}
+
+.cc-preview-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.cc-preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+}
+
+.cc-code-lang {
+  color: var(--text-secondary);
+  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cc-code-save-btn,
+.cc-code-open-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cc-code-save-btn:hover,
+.cc-code-open-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.08));
+  color: var(--text-primary);
+}
+
+/* 代码块紧跟工具栏，去掉顶部圆角 */
+.message-content .cc-code-toolbar + pre {
+  border-radius: 0 0 4px 4px;
+  margin-top: 0;
+}
+
+/* ===== Skill 管理区域 ===== */
+.skill-container {
+  padding: 16px;
+}
+
+.skill-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.skill-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  box-shadow: var(--shadow-xs);
+}
+
+.skill-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.skill-card-icon {
+  font-size: 20px;
+}
+
+.skill-card-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.skill-card-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skill-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.skill-delete-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--danger, #ff3b30);
+}
+
+.skill-delete-btn:hover {
+  background: rgba(255, 59, 48, 0.08);
+}
+
+/* CC 环境变量行 */
+.cc-env-var-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cc-env-var-key {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.cc-env-var-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.cc-env-var-del {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  color: var(--danger, #ff3b30);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.cc-env-var-del:hover {
+  background: rgba(255, 59, 48, 0.08);
+}
+
+/* CC Skill 选择器 */
+.cc-skill-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.cc-skill-select {
+  font-size: 12px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  max-width: 150px;
+}
+
+.cc-skill-manage-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.cc-skill-manage-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+}
+
+/* Skill 安装状态徽标 */
+.skill-status-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.skill-status-badge.installed {
+  background: rgba(52, 199, 89, 0.12);
+  color: #34C759;
+}
+
+.skill-status-badge.not-installed {
+  background: rgba(142, 142, 147, 0.12);
+  color: #8E8E93;
+}
+
+/* Skill 安装/卸载按钮 */
+.skill-install-btn {
+  background: none;
+  border: 1px solid var(--primary-color, #007AFF);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--primary-color, #007AFF);
+}
+
+.skill-install-btn:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.skill-uninstall-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.skill-uninstall-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+}
+
+/* CC 工作目录指示器 */
+.cc-workdir-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary, rgba(0,0,0,0.03));
+  border-radius: var(--radius-sm, 6px) var(--radius-sm, 6px) 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cc-workdir-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cc-workdir-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.cc-workdir-change-btn,
+.cc-workdir-reset-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cc-workdir-change-btn:hover,
+.cc-workdir-reset-btn:hover,
+.cc-restart-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text-primary);
+}
+
+.cc-restart-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--primary-color, #007AFF);
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 /* Agent 结果卡片 */

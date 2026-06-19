@@ -446,6 +446,84 @@ const App = {
     document.getElementById('clearAPIKeyBtn')?.addEventListener('click', () => this.clearAPIKey());
     document.getElementById('testLLMBtn')?.addEventListener('click', () => this._testLLMConnection('lowvol'));
     document.getElementById('testHighvolLLMBtn')?.addEventListener('click', () => this._testLLMConnection('highvol'));
+    document.getElementById('testCCBtn')?.addEventListener('click', () => this._testCCConnection());
+    // CC 手动同步记忆
+    document.getElementById('ccSyncMemoryBtn')?.addEventListener('click', async () => {
+      const result = await window.electronAPI?.ccSyncMemory?.();
+      const resultEl = document.getElementById('ccSyncMemoryResult');
+      if (resultEl) {
+        resultEl.innerHTML = result?.success
+          ? '<span style="color: var(--success);">✅ 记忆已同步到 CLAUDE.md</span>'
+          : `<span style="color: var(--danger);">❌ 同步失败: ${result?.error || '未知错误'}</span>`;
+      }
+      this.showToast(result?.success ? '记忆已同步' : '同步失败', result?.success ? 'success' : 'error');
+    });
+    // CC 环境变量动态添加
+    document.getElementById('ccAddEnvVarBtn')?.addEventListener('click', () => this._addCCEnvVarRow());
+    // CC 权限模式警告
+    document.getElementById('ccPermissionMode')?.addEventListener('change', (e) => {
+      const warnEl = document.getElementById('ccPermissionWarn');
+      if (warnEl) warnEl.style.display = e.target.value === 'bypassPermissions' ? 'block' : 'none';
+    });
+    // CC 默认工作目录选择
+    document.getElementById('ccPickWorkdirBtn')?.addEventListener('click', async () => {
+      const result = await window.electronAPI?.ccPickDirectory?.();
+      if (result?.success) {
+        document.getElementById('ccDefaultWorkdir').value = result.path;
+      }
+    });
+    // CC 对话工作目录切换
+    document.getElementById('ccWorkdirChangeBtn')?.addEventListener('click', async () => {
+      console.log('[CC] Workdir change button clicked');
+      try {
+        const result = await window.electronAPI?.ccPickDirectory?.();
+        console.log('[CC] Pick directory result:', result);
+        if (result?.success) {
+          this._setCCWorkdir(result.path);
+        } else if (result?.error) {
+          this.showToast('选择目录失败: ' + result.error, 'error');
+        }
+      } catch (e) {
+        console.error('[CC] Pick directory error:', e);
+        this.showToast('选择目录异常: ' + e.message, 'error');
+      }
+    });
+    document.getElementById('ccWorkdirResetBtn')?.addEventListener('click', () => {
+      this._setCCWorkdir(null);
+    });
+    // CC Skill 管理（跳转到文档 → Skill 标签）
+    document.getElementById('ccSkillManageBtn')?.addEventListener('click', () => {
+      // 切换到文档视图
+      document.querySelector('.view-tab[data-view="documents"]')?.click();
+      // 切换到 Skill 标签
+      setTimeout(() => {
+        document.querySelector('.doc-cat-tab[data-type="skill"]')?.click();
+      }, 100);
+    });
+    // CC 重启会话（不重启 memora，仅清除 ccSessionId 让下次 query 新建子进程）
+    document.getElementById('ccRestartBtn')?.addEventListener('click', async () => {
+      if (!confirm('重启 CC 会话将清除当前对话的 CC 上下文（安装的 skill 需重启才能生效）。是否继续？')) return;
+      await window.electronAPI?.ccNewSession?.();
+      // 清除当前会话的 ccSessionId
+      if (this._activeSessionId) {
+        const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+        if (session) {
+          session.ccSessionId = null;
+          this._saveChatSessions();
+        }
+      }
+      this.showToast('CC 会话已重启，新 skill 将在下次对话生效');
+    });
+    // Skill 管理事件
+    document.getElementById('skillUploadBtn')?.addEventListener('click', () => {
+      document.getElementById('skillFileInput')?.click();
+    });
+    document.getElementById('skillFileInput')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      await this._uploadSkill(file);
+      e.target.value = ''; // 重置以便重复上传同名文件
+    });
     document.getElementById('refreshMemoriesBtn')?.addEventListener('click', () => this.loadMemories());
     document.getElementById('clearAllMemoriesBtn')?.addEventListener('click', () => this.clearAllMemories());
     document.getElementById('addManualMemoryBtn')?.addEventListener('click', () => this.addManualMemory());
@@ -496,6 +574,9 @@ const App = {
     document.getElementById('aiModeLLM')?.addEventListener('click', () => {
       this._setGlobalAIMode('llm');
     });
+    document.getElementById('aiModeCC')?.addEventListener('click', () => {
+      this._setGlobalAIMode('cc');
+    });
 
     // 监听全局模式变更
     if (window.electronAPI?.onGlobalAIModeChanged) {
@@ -504,6 +585,81 @@ const App = {
         document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
       });
     }
+
+    // 全局复制按钮事件委托（覆盖所有模式的 .copy-btn，避免 DOM 重建后事件丢失）
+    document.getElementById('chatMessages')?.addEventListener('click', (e) => {
+      const copyBtn = e.target.closest('.copy-btn');
+      if (!copyBtn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const messageContent = copyBtn.closest('.message-content');
+      if (messageContent) {
+        console.log('[Copy] Button clicked via delegation');
+        this.copyAssistantMessage(copyBtn, messageContent);
+      }
+    });
+
+    // 全局 CC 代码块保存/打开/预览按钮事件委托
+    document.getElementById('chatMessages')?.addEventListener('click', async (e) => {
+      const saveBtn = e.target.closest('.cc-code-save-btn');
+      const openBtn = e.target.closest('.cc-code-open-btn');
+      const previewBtn = e.target.closest('.cc-code-preview-btn');
+      if (!saveBtn && !openBtn && !previewBtn) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const toolbar = (saveBtn || openBtn || previewBtn).closest('.cc-code-toolbar');
+      const pre = toolbar?.nextElementSibling;
+      const codeEl = pre?.querySelector('code');
+      if (!codeEl) return;
+      const codeContent = codeEl.textContent || '';
+      const lang = toolbar.querySelector('.cc-code-lang')?.textContent || 'txt';
+      const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
+      const ext = extMap[lang] || 'txt';
+      const fileName = `cc-output-${Date.now()}.${ext}`;
+
+      // 预览按钮：弹出 iframe 预览 HTML/SVG
+      if (previewBtn) {
+        this._showHTMLPreview(codeContent, ext);
+        return;
+      }
+
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳ 保存中...';
+      }
+      try {
+        const result = await window.electronAPI?.artifactsSave?.({ content: codeContent, fileName, source: 'cc' });
+        if (result?.success) {
+          if (saveBtn) {
+            saveBtn.textContent = '✅ 已保存';
+            saveBtn.disabled = false;
+          }
+          if (openBtn || saveBtn) {
+            this.showToast(`已保存到 Agent 产物: ${result.name}`);
+          }
+          if (openBtn) {
+            window.electronAPI?.openExternal?.('file://' + result.path);
+          }
+        } else {
+          if (saveBtn) { saveBtn.textContent = '💾 保存'; saveBtn.disabled = false; }
+          this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      } catch (err) {
+        if (saveBtn) { saveBtn.textContent = '💾 保存'; saveBtn.disabled = false; }
+        this.showToast('操作异常: ' + err.message, 'error');
+      }
+    });
+
+    // 全局 CC 执行过程展开/折叠事件委托
+    document.getElementById('chatMessages')?.addEventListener('click', (e) => {
+      const header = e.target.closest('.cc-process-header');
+      if (!header) return;
+      const wrapper = header.closest('.cc-process-wrapper');
+      if (wrapper) {
+        wrapper.classList.toggle('collapsed');
+      }
+    });
 
     // 通知铃铛
     document.getElementById('notificationBellBtn')?.addEventListener('click', () => this._toggleNotificationPanel());
@@ -849,6 +1005,7 @@ const App = {
       this._settingsTabLoaded[tabName] = true;
       if (tabName === 'llm') this._loadApiConfig();
       if (tabName === 'agent') this._loadAdpConfig();
+      if (tabName === 'cc') this._loadCCConfig();
       if (tabName === 'expert') this._loadExpertSettings();
       if (tabName === 'memory') this.loadMemories();
       if (tabName === 'profile') this.loadProfileEditor();
@@ -877,6 +1034,117 @@ const App = {
       // v2.0: 登录状态时 API 面板显示提示
       this._updateConfigServerHints(config.fromServer);
     });
+  },
+
+  _loadCCConfig() {
+    if (!window.electronAPI?.ccGetConfig) return;
+    window.electronAPI.ccGetConfig().then(config => {
+      document.getElementById('ccBaseUrl').value = config.baseUrl || '';
+      document.getElementById('ccModel').value = config.model || '';
+      document.getElementById('ccAllowedTools').value = config.allowedTools || '';
+      document.getElementById('ccPermissionMode').value = config.permissionMode || 'default';
+      document.getElementById('ccMaxTurns').value = config.maxTurns || 50;
+      document.getElementById('ccDefaultWorkdir').value = config.defaultWorkdir || '';
+      document.getElementById('ccAuthToken').value = ''; // 不回显 token
+
+      // 加载环境变量列表
+      this._renderCCEnvVars(config.envVars || []);
+
+      const statusEl = document.getElementById('ccConfigStatus');
+      if (statusEl) {
+        statusEl.textContent = `配置状态: ${config.authTokenConfigured ? '✅ 已配置 Token' : '⚠️ 未配置 Token'}`;
+      }
+
+      // 缓存默认工作目录，供对话区指示器使用
+      this._ccDefaultWorkdir = config.defaultWorkdir || '';
+      this._updateCCWorkdirBar();
+    });
+  },
+
+  /** 渲染 CC 环境变量列表 */
+  _renderCCEnvVars(envVars) {
+    const list = document.getElementById('ccEnvVarsList');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!envVars || envVars.length === 0) return;
+    for (const v of envVars) {
+      this._addCCEnvVarRow(v.key, v.value);
+    }
+  },
+
+  /** 添加一行环境变量 */
+  _addCCEnvVarRow(key = '', value = '') {
+    const list = document.getElementById('ccEnvVarsList');
+    if (!list) return;
+    const row = document.createElement('div');
+    row.className = 'cc-env-var-row';
+    row.innerHTML = `
+      <input type="text" class="cc-env-var-key" placeholder="变量名（如 FIRECRAWL_API_KEY）" value="${this.escapeHtml(key)}">
+      <input type="password" class="cc-env-var-value" placeholder="变量值" value="${this.escapeHtml(value)}">
+      <button class="cc-env-var-del" title="删除">✕</button>
+    `;
+    row.querySelector('.cc-env-var-del').addEventListener('click', () => row.remove());
+    list.appendChild(row);
+  },
+
+  /** 收集环境变量列表 */
+  _collectCCEnvVars() {
+    const list = document.getElementById('ccEnvVarsList');
+    if (!list) return [];
+    const rows = list.querySelectorAll('.cc-env-var-row');
+    const vars = [];
+    rows.forEach(row => {
+      const key = row.querySelector('.cc-env-var-key')?.value.trim();
+      const value = row.querySelector('.cc-env-var-value')?.value;
+      if (key) vars.push({ key, value: value || '' });
+    });
+    return vars;
+  },
+
+  async _testCCConnection() {
+    if (!window.electronAPI?.ccTestConnection) {
+      this.showToast('当前版本不支持测试连接');
+      return;
+    }
+
+    const resultEl = document.getElementById('testCCResult');
+    const btnEl = document.getElementById('testCCBtn');
+
+    let baseUrl = document.getElementById('ccBaseUrl').value;
+    let authToken = document.getElementById('ccAuthToken').value;
+    let model = document.getElementById('ccModel').value;
+
+    // DOM 中 token 密码框不回显已保存值，测试时主进程会自动使用已保存的 token
+    if (!authToken || !baseUrl || !model) {
+      try {
+        const savedConfig = await window.electronAPI.ccGetConfig();
+        if (!baseUrl && savedConfig.baseUrl) baseUrl = savedConfig.baseUrl;
+        if (!model && savedConfig.model) model = savedConfig.model;
+      } catch (e) { /* ignore */ }
+    }
+
+    if (!baseUrl || !model) {
+      resultEl.innerHTML = '<span style="color: var(--danger);">⚠️ 请先配置 Base URL 和模型名称</span>';
+      return;
+    }
+
+    btnEl.disabled = true;
+    btnEl.textContent = '⏳ 测试中...';
+    resultEl.innerHTML = '<span style="color: var(--text-secondary);">连接中...</span>';
+
+    try {
+      const result = await window.electronAPI.ccTestConnection({ baseUrl, authToken, model });
+      if (result.ok) {
+        resultEl.innerHTML = `<span style="color: var(--success);">✅ 连接成功 (${result.latency}ms) · 模型: ${result.model || model} · 回复: "${result.content}"</span>`;
+      } else {
+        resultEl.innerHTML = `<span style="color: var(--danger);">❌ 连接失败: ${this.escapeHtml(result.error)}</span>`;
+      }
+    } catch (err) {
+      resultEl.innerHTML = `<span style="color: var(--danger);">❌ 请求异常: ${this.escapeHtml(err.message)}</span>`;
+    } finally {
+      btnEl.disabled = false;
+      btnEl.textContent = '🔗 测试连接';
+    }
   },
 
   _loadExpertSettings() {
@@ -2074,6 +2342,94 @@ const App = {
     if (window.electronAPI?.setGlobalAIMode) {
       await window.electronAPI.setGlobalAIMode(mode);
     }
+    // CC 模式显示工作目录栏，其他模式隐藏
+    this._updateCCWorkdirBar();
+    // 按模式重新渲染专家卡片（切换模式后只显示该模式适用的专家）
+    if (window.ExpertSystem?._initialized) {
+      // 清除当前选中的专家（不同模式专家不同）
+      window.ExpertSystem._activeExpertId = null;
+      window.ExpertSystem._activeGroupId = null;
+      window.ExpertSystem.renderCards();
+    }
+  },
+
+  /** 设置当前对话的 CC 工作目录（null=用默认） */
+  _setCCWorkdir(workdir) {
+    if (this._activeSessionId) {
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (session) {
+        session.ccWorkdir = workdir || null; // null 表示用默认
+        this._saveChatSessions();
+      }
+    }
+    this._updateCCWorkdirBar();
+  },
+
+  /** 获取当前对话的 CC 工作目录（优先 session 级，回退默认） */
+  _getCCWorkdir() {
+    if (this._activeSessionId) {
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (session?.ccWorkdir) return session.ccWorkdir;
+    }
+    return null; // null 表示用默认
+  },
+
+  /** 更新对话区 CC 工作目录指示器 */
+  _updateCCWorkdirBar() {
+    const bar = document.getElementById('ccWorkdirBar');
+    if (!bar) return;
+    // 仅 CC 模式显示
+    if (this._aiAssistantMode !== 'cc') {
+      bar.classList.add('hidden');
+      return;
+    }
+    bar.classList.remove('hidden');
+
+    const pathEl = document.getElementById('ccWorkdirPath');
+    if (!pathEl) return;
+    const workdir = this._getCCWorkdir();
+    if (workdir) {
+      // 对话级自定义目录
+      const name = workdir.split('/').pop() || workdir;
+      pathEl.textContent = name;
+      pathEl.title = workdir;
+      pathEl.style.color = 'var(--primary-color)';
+    } else {
+      // 使用默认
+      pathEl.textContent = '默认';
+      pathEl.title = this._ccDefaultWorkdir || '';
+      pathEl.style.color = 'var(--text-secondary)';
+    }
+
+    // 同时刷新 Skill 选择器
+    this._refreshCCSkillSelect();
+  },
+
+  /** 刷新 CC Skill 选择下拉框（只显示已安装的 skill） */
+  async _refreshCCSkillSelect() {
+    const select = document.getElementById('ccSkillSelect');
+    if (!select) return;
+    // 记住当前选中
+    const prevValue = select.value;
+    // 加载带安装状态的 skill 列表
+    const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    const result = await window.electronAPI?.skillListWithStatus?.({ ccWorkdir: workdir });
+    const skills = result?.success ? result.skills : [];
+    this._ccSkills = skills;
+    // 重建选项：只显示已安装的
+    select.innerHTML = '<option value="">不使用 Skill</option>';
+    for (const skill of skills) {
+      if (skill.installed) {
+        const opt = document.createElement('option');
+        opt.value = skill.name;
+        opt.textContent = `🧩 ${skill.name}`;
+        // 鼠标悬停显示技能简介
+        opt.title = skill.description ? `${skill.name}：${skill.description}` : `技能：${skill.name}`;
+        select.appendChild(opt);
+      }
+    }
+    // 恢复选中（如果仍存在）
+    if (prevValue) select.value = prevValue;
   },
 
   /** 判断是否已登录组织 */
@@ -2356,8 +2712,9 @@ const App = {
       // 根据 AI 助手模式决定调用路径：
       // - agent 模式：使用 ADP 智能体（工具调用、多步推理等）
       // - llm 模式：使用已配置的大模型 API 直接对话（简单聊天）
+      // - cc 模式：使用 Claude Code Agent SDK（火山引擎 Coding Plan）
       // - forceMode: 'adp' 强制走 ADP，'agent' 强制走本地 Agent
-      const isAgentMode = this._aiAssistantMode !== 'llm';
+      const isAgentMode = this._aiAssistantMode === 'agent';
       
       if (forceMode === 'adp' || isAgentMode) {
         // ADP 模式：走 ADP 智能体流式
@@ -2532,6 +2889,90 @@ const App = {
           const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
           throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
         }
+      } else if (this._aiAssistantMode === 'cc' && window.electronAPI?.ccInvoke) {
+        // CC 模式：使用 Claude Code Agent SDK（火山引擎 Coding Plan）
+        const messageContent = assistantMessage.querySelector('.message-content');
+        messageContent.innerHTML = `
+          <div class="adp-progress" id="adpProgress">
+            <div class="adp-progress-header">
+              <div class="adp-progress-spinner"></div>
+              <span class="adp-progress-title">Claude Code 处理中</span>
+              <span class="adp-progress-timer" id="adpProgressTimer">0s</span>
+            </div>
+            <div class="adp-progress-steps" id="adpProgressSteps"></div>
+          </div>`;
+
+        // 获取当前会话的 ccSessionId（用于 resume）
+        const activeSession = this._activeSessionId
+          ? this._chatSessions.find(s => s.id === this._activeSessionId)
+          : null;
+        const ccSessionId = activeSession?.ccSessionId || null;
+        console.log('[CC] sendAIMessage | activeSessionId:', this._activeSessionId, '| ccSessionId:', ccSessionId, '| sessionFound:', !!activeSession);
+
+        this._ccTimerStart = Date.now();
+        this._ccTimerInterval = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - this._ccTimerStart) / 1000);
+          const el = messageContent.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+          if (el) el.textContent = elapsed + 's';
+        }, 1000);
+
+        // 🔧 关键修复：在 ccInvoke 之前注册流式监听器并缓冲事件
+        // 原因：main.js 的 cc:invoke 在返回 result 之前就开始推送 cc:stream 事件
+        // 如果在 ccResult 返回后才注册监听器，早期事件（session/init/thinking/tool_use）会丢失
+        this._ccStreamBuffer = [];
+        this._ccStreamListening = true;
+        this._ccCurrentText = '';
+        this._ccThinkingText = '';
+        this._ccRenderPending = false;
+        window.electronAPI.onCCStream((evt) => {
+          if (this._ccStreamListening) {
+            this._ccStreamBuffer.push(evt);
+            console.log('[CC] Buffered event:', evt.event);
+          }
+        });
+
+        const ccResult = await window.electronAPI.ccInvoke({
+          message,
+          attachments: attachmentData,
+          sessionId: ccSessionId,
+          systemRole: options.systemRole || '',
+          workdir: this._getCCWorkdir(),
+          skill: document.getElementById('ccSkillSelect')?.value || '',
+        });
+
+        if (ccResult.success && ccResult.streaming) {
+          this._ccStreaming = true;
+          this._updateStreamingUI(true);
+
+          // 处理缓冲的事件
+          this._ccStreamListening = false;
+          const bufferedEvents = this._ccStreamBuffer || [];
+          this._ccStreamBuffer = [];
+          console.log('[CC] Processing buffered events:', bufferedEvents.length);
+
+          for (const evt of bufferedEvents) {
+            this._handleCCStreamEvent(evt, assistantMessage);
+            if (evt.event === 'done' || evt.event === 'error') break;
+          }
+
+          // 如果还没完成，继续等待后续流式事件
+          if (!bufferedEvents.some(e => e.event === 'done' || e.event === 'error')) {
+            await new Promise((resolve) => {
+              this._ccStreamResolve = resolve;
+              // 移除旧监听器，注册新的直接处理模式
+              window.electronAPI.removeCCListeners();
+              window.electronAPI.onCCStream((evt) => {
+                this._handleCCStreamEvent(evt, assistantMessage);
+              });
+            });
+          }
+        } else {
+          // 清理监听器
+          this._ccStreamListening = false;
+          this._ccStreamBuffer = [];
+          window.electronAPI?.removeCCListeners?.();
+          throw new Error(ccResult.error || 'CC 调用失败');
+        }
       } else if (window.electronAPI?.agent?.invoke) {
         // Agent 或 LLM 模式：使用本地 AI 流式输出
         const agentType = this._aiAssistantMode === 'llm' ? 'chat' : undefined;
@@ -2676,6 +3117,11 @@ const App = {
       this._agentStreamListening = false;
       this._agentStreamBuffer = [];
       window.electronAPI?.removeAgentListeners?.();
+      // CC 模式错误清理
+      this._ccStreaming = false;
+      if (this._ccTimerInterval) { clearInterval(this._ccTimerInterval); this._ccTimerInterval = null; }
+      window.electronAPI?.removeCCListeners?.();
+      this._updateStreamingUI(false);
       const messageContent = assistantMessage.querySelector('.message-content');
       messageContent.innerHTML = `<p class="error-text">抱歉，发生了错误：${this.escapeHtml(error.message)}</p>
         <p class="error-hint">请检查 API 配置或网络连接</p>`;
@@ -2690,8 +3136,8 @@ const App = {
   async copyAssistantMessage(btn, messageContent) {
     // 获取纯文本内容，排除复制按钮、反馈按钮等非内容元素
     const clone = messageContent.cloneNode(true);
-    // 移除不需要复制的元素
-    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-open-artifact-btn, .agent-artifact-btns, .adp-file-save-btn, .adp-file-open-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions').forEach(el => el.remove());
+    // 移除不需要复制的元素（含 CC 代码块工具栏等）
+    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-open-artifact-btn, .agent-artifact-btns, .adp-file-save-btn, .adp-file-open-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions, .cc-code-toolbar, .agent-streaming-hint, .agent-reasoning-stream').forEach(el => el.remove());
     // 使用 textContent 获取纯文本（不含格式），再清理多余空白
     const text = (clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     console.log('[Copy] Text length:', text.length, 'Preview:', text.slice(0, 100));
@@ -2820,6 +3266,493 @@ const App = {
         btn.addEventListener('click', () => this.copyAssistantMessage(btn, btn.closest('.message-content')));
         btn.dataset._bound = 'true';
       }
+    });
+  },
+
+  // ===== Claude Code 流式渲染（火山引擎 Coding Plan） =====
+
+  _handleCCStreamEvent(evt, assistantMessage) {
+    const messageContent = assistantMessage.querySelector('.message-content');
+    if (!messageContent) return;
+
+    const { event, content, sessionId, usage, result, name, error, aborted, level } = evt;
+
+    // 会话 ID（用于 resume）
+    if (event === 'session' && sessionId) {
+      if (this._activeSessionId) {
+        const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+        if (session && session.ccSessionId !== sessionId) {
+          session.ccSessionId = sessionId;
+          this._saveChatSessions();
+          console.log('[CC] Saved ccSessionId for session', this._activeSessionId, ':', sessionId);
+        }
+      }
+      this._addCCProgressStep(messageContent, '🧠', 'Claude Code 已启动', 'done');
+      return;
+    }
+
+    // 信息提示（中间状态：skill 安装、通知、警告等）
+    if (event === 'info' && content) {
+      const icon = level === 'warning' ? '⚠️' : (level === 'suggestion' ? '💡' : 'ℹ️');
+      this._addCCProgressStep(messageContent, icon, content, 'active', 'info');
+      // 滚动到底部
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+
+    // 思考过程
+    if (event === 'thinking' && content) {
+      this._ccThinkingText = (this._ccThinkingText || '') + content;
+      if (!this._ccRenderPending) {
+        this._ccRenderPending = true;
+        requestAnimationFrame(() => {
+          this._renderCCStream(messageContent);
+          this._ccRenderPending = false;
+        });
+      }
+      return;
+    }
+
+    // 文本增量
+    if (event === 'delta' && content) {
+      this._ccCurrentText += content;
+
+      if (!this._ccRenderPending) {
+        this._ccRenderPending = true;
+        requestAnimationFrame(() => {
+          this._renderCCStream(messageContent);
+          this._ccRenderPending = false;
+        });
+      }
+      return;
+    }
+
+    // 工具调用开始
+    if (event === 'tool_use' && name) {
+      const toolIcon = this._getCCToolIcon(name);
+      const toolLabel = this._getCCToolLabel(name);
+      this._addCCProgressStep(messageContent, toolIcon, toolLabel, 'active', 'tool_call');
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+
+    // 工具执行进度（耗时更新）
+    if (event === 'tool_progress' && name) {
+      const steps = messageContent.querySelectorAll('.adp-progress-step.active[data-type="tool_call"]');
+      if (steps.length > 0) {
+        const lastStep = steps[steps.length - 1];
+        const labelEl = lastStep.querySelector('.adp-step-label');
+        if (labelEl && evt.elapsed != null) {
+          // 更新 label 显示耗时（避免重复追加）
+          const baseLabel = labelEl.dataset.baseLabel || labelEl.textContent.replace(/\s*\(\d+s\)$/, '');
+          labelEl.dataset.baseLabel = baseLabel;
+          labelEl.textContent = `${baseLabel} (${Math.round(evt.elapsed)}s)`;
+        }
+      }
+      return;
+    }
+
+    // 工具调用摘要
+    if (event === 'tool_summary' && content) {
+      this._addCCProgressStep(messageContent, '📝', content, 'done', 'summary');
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+
+    // 工具结果
+    if (event === 'tool_result') {
+      // 工具完成后更新步骤状态
+      const steps = messageContent.querySelectorAll('.adp-progress-step.active');
+      if (steps.length > 0) {
+        const lastStep = steps[steps.length - 1];
+        lastStep.classList.remove('active');
+        lastStep.classList.add('done');
+        const labelEl = lastStep.querySelector('.adp-step-label');
+        if (labelEl) {
+          const baseLabel = labelEl.dataset.baseLabel || labelEl.textContent;
+          labelEl.textContent = `${baseLabel} ✓`;
+        }
+      }
+      return;
+    }
+
+    // 流结束
+    if (event === 'done') {
+      this._finishCCMessage(messageContent, usage, result, aborted, null, evt.cost);
+      return;
+    }
+
+    // 错误
+    if (event === 'error') {
+      this._finishCCMessage(messageContent, null, null, false, error);
+      return;
+    }
+  },
+
+  _renderCCStream(messageContent) {
+    const text = this._ccCurrentText || '';
+    const thinking = this._ccThinkingText || '';
+    // 保留进度步骤区域，更新文本区域
+    let textEl = messageContent.querySelector('.cc-stream-text');
+    if (!textEl) {
+      textEl = document.createElement('div');
+      textEl.className = 'cc-stream-text chat-markdown-content';
+      messageContent.appendChild(textEl);
+    }
+    // 思考过程展示（折叠样式）
+    const thinkingHtml = thinking ? `<div class="agent-reasoning-stream"><div class="agent-reasoning-header"><span class="thinking-dots"><span></span><span></span><span></span></span><span class="reasoning-label">💭 思考中...</span></div><div class="agent-reasoning-content">${this._renderReasoningPreview(thinking)}</div></div>` : '';
+    const contentHtml = text ? this._renderADPMarkdown(text) : '';
+    const hint = (text || thinking) ? '<div class="agent-streaming-hint"><span class="agent-streaming-dots">●●●</span> 正在生成...</div>' : '';
+    textEl.innerHTML = `${hint}${thinkingHtml}${contentHtml}`;
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  _addCCProgressStep(messageContent, icon, label, status, type) {
+    const stepsEl = messageContent.querySelector('#adpProgressSteps');
+    if (!stepsEl) return;
+    const step = document.createElement('div');
+    step.className = `adp-progress-step ${status}`;
+    step.dataset.type = type || '';
+    step.innerHTML = `<span class="adp-step-icon">${icon}</span><span class="adp-step-label">${this.escapeHtml(label)}</span>`;
+    stepsEl.appendChild(step);
+  },
+
+  _getCCToolIcon(toolName) {
+    const iconMap = { Read: '📖', Glob: '🔍', Grep: '🔎', WebSearch: '🌐', Write: '✏️', Edit: '📝', Bash: '⚡' };
+    return iconMap[toolName] || '🔧';
+  },
+
+  _getCCToolLabel(toolName) {
+    const labelMap = { Read: '读取文件', Glob: '搜索文件', Grep: '搜索内容', WebSearch: '网络搜索', Write: '写入文件', Edit: '编辑文件', Bash: '执行命令' };
+    return labelMap[toolName] || toolName;
+  },
+
+  _finishCCMessage(messageContent, usage, result, aborted, error, cost) {
+    // 清理流式状态
+    this._ccStreaming = false;
+    this._ccThinkingText = '';
+    if (this._ccTimerInterval) {
+      clearInterval(this._ccTimerInterval);
+      this._ccTimerInterval = null;
+    }
+    window.electronAPI?.removeCCListeners?.();
+    if (this._ccStreamResolve) {
+      this._ccStreamResolve();
+      this._ccStreamResolve = null;
+    }
+    this._updateStreamingUI(false);
+
+    // 提取执行过程步骤（流式过程中积累的）
+    const progressSteps = messageContent.querySelector('#adpProgressSteps');
+    const stepsHtml = progressSteps ? progressSteps.innerHTML : '';
+
+    let html = '<div class="agent-badge agent-badge-cc">🧠 Claude Code</div>';
+
+    // 执行过程（可折叠）— 只在有步骤时显示
+    if (stepsHtml) {
+      html += `<div class="cc-process-wrapper collapsed">
+        <div class="cc-process-header">
+          <span class="cc-process-toggle">▶</span>
+          <span class="cc-process-title">⚡ 执行过程</span>
+        </div>
+        <div class="cc-process-body">
+          <div class="adp-progress-steps">${stepsHtml}</div>
+        </div>
+      </div>`;
+    }
+
+    if (error) {
+      html += `<div class="error-text">❌ ${this.escapeHtml(error)}</div>`;
+    } else {
+      // 优先用 result（最终结果），否则用流式累积文本
+      const finalText = result || this._ccCurrentText;
+      if (finalText) {
+        html += `<div class="chat-markdown-content">${this._renderADPMarkdown(finalText)}</div>`;
+      }
+      if (aborted) {
+        html += '<div class="error-text" style="color: var(--text-secondary);">⚠️ 已停止生成</div>';
+      }
+      // 成本与 usage 信息
+      if (usage || cost != null) {
+        const parts = [];
+        if (usage?.input_tokens) parts.push(`输入 ${usage.input_tokens}`);
+        if (usage?.output_tokens) parts.push(`输出 ${usage.output_tokens}`);
+        if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`);
+        if (parts.length > 0) {
+          html += `<div class="adp-config-source" style="color: var(--text-secondary);">📊 ${parts.join(' · ')}</div>`;
+        }
+      }
+    }
+
+    // 复制按钮（由全局事件委托处理点击）
+    html += '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
+
+    // 时间戳
+    const sendTime = messageContent.closest('.message.assistant')?.dataset.sendTime;
+    const timeLabel = sendTime
+      ? `${this._formatChatTime(new Date(sendTime))} → ${this._formatChatTime(new Date())}`
+      : this._formatChatTime(new Date());
+    html += `<span class="message-time assistant-time">${timeLabel}</span>`;
+
+    messageContent.innerHTML = html;
+
+    // CC 代码块：添加工具栏（事件由全局委托处理）
+    this._enhanceCCCodeBlocks(messageContent);
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  },
+
+  /** 给 CC 输出中的代码块添加工具栏（保存/打开/预览按钮由全局事件委托处理） */
+  _enhanceCCCodeBlocks(messageContent) {
+    const codeBlocks = messageContent.querySelectorAll('pre code');
+    codeBlocks.forEach((codeEl, idx) => {
+      const pre = codeEl.closest('pre');
+      if (!pre || pre.dataset.ccEnhanced) return;
+      pre.dataset.ccEnhanced = 'true';
+
+      // 推断语言
+      const langClass = codeEl.className || '';
+      const langMatch = langClass.match(/language-(\w+)/);
+      let lang = langMatch ? langMatch[1] : '';
+
+      // 无语言标记时，根据内容推断
+      const rawContent = codeEl.textContent || '';
+      if (!lang) {
+        if (rawContent.trim().startsWith('<!DOCTYPE') || rawContent.trim().startsWith('<html')) {
+          lang = 'html';
+        } else if (rawContent.trim().startsWith('<svg') || rawContent.includes('xmlns="http://www.w3.org/2000/svg"')) {
+          lang = 'svg';
+        } else if (rawContent.trim().startsWith('{') || rawContent.trim().startsWith('[')) {
+          lang = 'json';
+        } else if (rawContent.trim().startsWith('<')) {
+          lang = 'xml';
+        } else {
+          lang = 'txt';
+        }
+      }
+
+      const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
+      const ext = extMap[lang] || 'txt';
+
+      // 创建操作栏（事件由全局委托处理）
+      const toolbar = document.createElement('div');
+      toolbar.className = 'cc-code-toolbar';
+      // 可打开的类型（用系统默认程序）
+      const canOpen = ['html', 'svg', 'json', 'md', 'txt', 'csv', 'xml'].includes(ext);
+      // 可预览的类型（iframe 内嵌渲染）
+      const canPreview = ['html', 'svg'].includes(ext);
+      toolbar.innerHTML = `
+        <span class="cc-code-lang">${lang}</span>
+        <button class="cc-code-save-btn" title="保存到 Agent 产物">💾 保存</button>
+        <button class="cc-code-preview-btn" title="预览" style="${canPreview ? '' : 'display:none'}">👁 预览</button>
+        <button class="cc-code-open-btn" title="在浏览器中打开" style="${canOpen ? '' : 'display:none'}">↗ 打开</button>
+      `;
+      pre.parentNode.insertBefore(toolbar, pre);
+
+      // 移除 markdown 渲染注入的重复 Agent 产物按钮（CC 工具栏已提供保存/预览/打开）
+      const nextSibling = pre.nextElementSibling;
+      if (nextSibling?.classList?.contains('agent-artifact-btns')) {
+        nextSibling.remove();
+      }
+    });
+  },
+
+  /** 弹出 HTML/SVG 预览窗口（iframe 沙箱） */
+  _showHTMLPreview(content, ext = 'html') {
+    // 移除已有预览窗
+    document.getElementById('ccHtmlPreviewOverlay')?.remove();
+
+    const titleText = ext === 'svg' ? '👁 SVG 预览' : '👁 HTML 预览';
+    const overlay = document.createElement('div');
+    overlay.id = 'ccHtmlPreviewOverlay';
+    overlay.className = 'cc-preview-overlay';
+    overlay.innerHTML = `
+      <div class="cc-preview-modal">
+        <div class="cc-preview-header">
+          <span class="cc-preview-title">${titleText}</span>
+          <div class="cc-preview-actions">
+            <button class="cc-preview-save-btn" title="保存到 Agent 产物">💾 保存</button>
+            <button class="cc-preview-open-link" title="保存并在浏览器中打开">🔗 浏览器打开</button>
+            <button class="cc-preview-close-btn" title="关闭">✕</button>
+          </div>
+        </div>
+        <div class="cc-preview-body">
+          <iframe sandbox="allow-scripts allow-same-origin" class="cc-preview-iframe"></iframe>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // 写入内容到 iframe（SVG 包装为完整 HTML）
+    const iframe = overlay.querySelector('.cc-preview-iframe');
+    const renderContent = ext === 'svg'
+      ? `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f7} svg{max-width:100%;height:auto}</style></head><body>${content}</body></html>`
+      : content;
+
+    iframe.onload = () => {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (doc) {
+          doc.open();
+          doc.write(renderContent);
+          doc.close();
+        }
+      } catch (e) {
+        console.error('[CC] Preview write failed:', e);
+      }
+    };
+    iframe.src = 'about:blank';
+
+    // 关闭按钮
+    overlay.querySelector('.cc-preview-close-btn')?.addEventListener('click', () => overlay.remove());
+    // 点击遮罩关闭
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    // 保存按钮
+    overlay.querySelector('.cc-preview-save-btn')?.addEventListener('click', async () => {
+      const fileName = `cc-${ext}-${Date.now()}.${ext}`;
+      const result = await window.electronAPI?.artifactsSave?.({ content, fileName, source: 'cc' });
+      if (result?.success) {
+        this.showToast(`已保存到 Agent 产物: ${result.name}`);
+      } else {
+        this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
+      }
+    });
+    // 浏览器打开链接（保存后用系统默认浏览器打开）
+    overlay.querySelector('.cc-preview-open-link')?.addEventListener('click', async () => {
+      const fileName = `cc-${ext}-${Date.now()}.${ext}`;
+      const result = await window.electronAPI?.artifactsSave?.({ content, fileName, source: 'cc' });
+      if (result?.success) {
+        window.electronAPI?.openExternal?.('file://' + result.path);
+      } else {
+        this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
+      }
+    });
+  },
+
+  // ===== Skill 管理（v2.7 CC 模式） =====
+
+  async _uploadSkill(file) {
+    if (!file.name.endsWith('.zip')) {
+      this.showToast('请上传 .zip 格式的 Skill 包', 'error');
+      return;
+    }
+    this.showToast('正在上传 Skill...');
+    try {
+      // 直接传文件路径给主进程，避免 IPC 大小限制
+      const result = await window.electronAPI?.skillUpload?.({ filePath: file.path });
+      if (result?.success) {
+        this.showToast(`Skill "${result.name}" 上传成功，请点击"安装到CC"后即可在对话中使用`);
+        this._loadSkillList();
+      } else {
+        this.showToast('上传失败: ' + (result?.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      this.showToast('上传异常: ' + e.message, 'error');
+    }
+  },
+
+  async _loadSkillList() {
+    // 获取带安装状态的 skill 列表
+    const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    const result = await window.electronAPI?.skillListWithStatus?.({ ccWorkdir: workdir });
+    if (!result?.success) return;
+    this._ccSkills = result.skills || [];
+    this._renderSkillList();
+    // 同时刷新对话区的 skill 下拉框
+    this._refreshCCSkillSelect();
+  },
+
+  _renderSkillList() {
+    const grid = document.getElementById('skillGrid');
+    const empty = document.getElementById('skillEmpty');
+    if (!grid || !empty) return;
+
+    if (this._ccSkills.length === 0) {
+      grid.innerHTML = '';
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+
+    grid.innerHTML = this._ccSkills.map(skill => {
+      const installed = skill.installed;
+      const statusBadge = installed
+        ? '<span class="skill-status-badge installed">✅ 已安装</span>'
+        : '<span class="skill-status-badge not-installed">⬜ 未安装</span>';
+      const installBtn = installed
+        ? `<button class="skill-uninstall-btn" data-skill-name="${this.escapeHtml(skill.name)}">卸载</button>`
+        : `<button class="skill-install-btn" data-skill-name="${this.escapeHtml(skill.name)}">安装到CC</button>`;
+      return `
+        <div class="skill-card" data-skill-name="${this.escapeHtml(skill.name)}">
+          <div class="skill-card-header">
+            <span class="skill-card-icon">🧩</span>
+            <span class="skill-card-name">${this.escapeHtml(skill.name)}</span>
+            ${statusBadge}
+          </div>
+          <p class="skill-card-desc">${this.escapeHtml(skill.description || '无描述')}</p>
+          <div class="skill-card-actions">
+            ${installBtn}
+            <button class="skill-delete-btn" data-skill-name="${this.escapeHtml(skill.name)}">🗑 删除</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // 绑定安装按钮
+    grid.querySelectorAll('.skill-install-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.skillName;
+        const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        const result = await window.electronAPI?.skillInstallToCC?.({ skillName: name, ccWorkdir: workdir });
+        if (result?.success) {
+          this.showToast(`Skill "${name}" 已安装到 CC，重启 CC 后生效`);
+          this._loadSkillList();
+        } else {
+          this.showToast('安装失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      });
+    });
+
+    // 绑定卸载按钮
+    grid.querySelectorAll('.skill-uninstall-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.skillName;
+        const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        const result = await window.electronAPI?.skillUninstallFromCC?.({ skillName: name, ccWorkdir: workdir });
+        if (result?.success) {
+          this.showToast(`Skill "${name}" 已从 CC 卸载`);
+          this._loadSkillList();
+        } else {
+          this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      });
+    });
+
+    // 绑定删除按钮
+    grid.querySelectorAll('.skill-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.skillName;
+        if (!confirm(`确定删除 Skill "${name}"？将同时从 CC 卸载。`)) return;
+        // 先卸载
+        const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        await window.electronAPI?.skillUninstallFromCC?.({ skillName: name, ccWorkdir: workdir });
+        // 再删除
+        const result = await window.electronAPI?.skillDelete?.({ name });
+        if (result?.success) {
+          this.showToast(`Skill "${name}" 已删除`);
+          this._loadSkillList();
+        } else {
+          this.showToast('删除失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      });
     });
   },
 
@@ -4103,12 +5036,15 @@ const App = {
 
     // Markdown 基础格式
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-      const isHtml = lang.toLowerCase() === 'html' || lang.toLowerCase() === 'htm';
-      const isDocument = isHtml || ['json', 'xml', 'svg', 'css', 'md', 'markdown'].includes(lang.toLowerCase());
+      const langLower = lang.toLowerCase();
+      const isHtml = langLower === 'html' || langLower === 'htm';
+      const isDocument = isHtml || ['json', 'xml', 'svg', 'css', 'md', 'markdown'].includes(langLower);
       const artifactBtns = isDocument
         ? `<div class="agent-artifact-btns"><button class="agent-save-artifact-btn" data-action="save-artifact" data-lang="${this.escapeHtml(lang)}" data-filename="" title="保存到 Agent 产物">💾 保存</button><button class="agent-open-artifact-btn" data-action="open-artifact" data-lang="${this.escapeHtml(lang)}" title="在浏览器中打开" style="display:none;">↗ 打开</button></div>`
         : '';
-      return `<pre><code>${code.trim()}</code></pre>${artifactBtns}`;
+      // 输出 language-xxx 类名，便于代码高亮和 CC 代码块识别
+      const langClass = lang ? ` class="language-${langLower}"` : '';
+      return `<pre><code${langClass}>${code.trim()}</code></pre>${artifactBtns}`;
     });
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -4868,7 +5804,7 @@ const App = {
 
   createNewChatSession() {
     // 如果正在流式，先停止
-    if (this._adpStreaming) {
+    if (this._adpStreaming || this._ccStreaming) {
       this.stopADPGeneration();
     }
 
@@ -4877,6 +5813,8 @@ const App = {
 
     // 通知主进程重置 ConversationId
     window.electronAPI?.newADPChat?.();
+    // 重置 CC 会话
+    window.electronAPI?.ccNewSession?.();
 
     // 创建新会话
     const sessionId = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
@@ -4942,6 +5880,9 @@ const App = {
     }
     this._renderChatSessionList();
     localStorage.setItem('memora_active_session', sessionId);
+
+    // CC 模式：更新工作目录指示器（每个会话可有不同 workdir）
+    this._updateCCWorkdirBar();
 
     // 恢复目标会话的消息
     const session = this._chatSessions.find(s => s.id === sessionId);
@@ -5388,6 +6329,18 @@ const App = {
 
   // 停止 ADP 生成
   stopADPGeneration() {
+    // CC 模式停止
+    if (this._ccStreaming) {
+      this._ccStreaming = false;
+      if (this._ccTimerInterval) { clearInterval(this._ccTimerInterval); this._ccTimerInterval = null; }
+      window.electronAPI?.ccStop?.();
+      window.electronAPI?.removeCCListeners?.();
+      if (this._ccStreamResolve) { this._ccStreamResolve(); this._ccStreamResolve = null; }
+      this._updateStreamingUI(false);
+      document.getElementById('aiChatInput')?.focus();
+      return;
+    }
+
     if (!this._adpStreaming) return;
 
     this._adpStreaming = false;
@@ -5583,6 +6536,26 @@ ${JSON.stringify(reportData, null, 2)}`;
         url: adpUrl || null,
         agentName: adpAgentName || null
       });
+
+      // 保存 CC 配置
+      const ccAuthToken = document.getElementById('ccAuthToken')?.value.trim();
+      const ccBaseUrl = document.getElementById('ccBaseUrl')?.value.trim();
+      const ccModel = document.getElementById('ccModel')?.value.trim();
+      const ccAllowedTools = document.getElementById('ccAllowedTools')?.value.trim();
+      const ccPermissionMode = document.getElementById('ccPermissionMode')?.value;
+      const ccMaxTurns = parseInt(document.getElementById('ccMaxTurns')?.value) || 50;
+      if (window.electronAPI?.ccSetConfig) {
+        await window.electronAPI.ccSetConfig({
+          authToken: ccAuthToken || undefined,
+          baseUrl: ccBaseUrl || undefined,
+          model: ccModel || undefined,
+          allowedTools: ccAllowedTools || undefined,
+          permissionMode: ccPermissionMode || undefined,
+          maxTurns: ccMaxTurns || undefined,
+          defaultWorkdir: document.getElementById('ccDefaultWorkdir')?.value.trim() || undefined,
+          envVars: this._collectCCEnvVars(),
+        });
+      }
       
       // Phase 3: 保存用户画像
       await this.saveProfileFromEditor();

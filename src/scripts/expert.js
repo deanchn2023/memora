@@ -222,24 +222,38 @@ ID：${expert.id}`;
     const container = document.querySelector('.feature-cards');
     if (!container) return;
 
+    // 获取当前 AI 模式，按模式过滤专家
+    const currentMode = window.App?._aiAssistantMode || 'agent';
+
     const allItems = [
       ...this._experts.map(e => ({ ...e, _type: 'expert' })),
       ...this._groups.map(g => ({ ...g, _type: 'group' }))
     ].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
-    if (allItems.length === 0) {
+    // 按模式过滤：专家通过 modes 字段过滤，专家团暂全部显示（或可扩展）
+    const filteredItems = allItems.filter(item => {
+      if (item._type === 'expert') {
+        const modes = item.modes || ['agent']; // 兼容旧数据默认 agent
+        return modes.includes(currentMode);
+      }
+      // 专家团：如果所有成员都不支持当前模式则隐藏
+      return true;
+    });
+
+    if (filteredItems.length === 0) {
       container.classList.remove('has-experts', 'feature-cards-scroll-hint');
-      container.innerHTML = `
-        <div style="text-align:center;padding:20px;color:var(--text-tertiary);">
-          暂无专家，请在设置中添加
-        </div>`;
+      // 无匹配专家时隐藏卡片区域
+      container.style.display = 'none';
       return;
     }
+
+    // 显示专家卡片区域
+    container.style.display = '';
 
     // 添加专家卡片专属类，启用紧凑两行滚动布局
     container.classList.add('has-experts');
 
-    container.innerHTML = allItems.map(item => {
+    container.innerHTML = filteredItems.map(item => {
       if (item._type === 'expert') {
         return this._renderExpertCard(item);
       } else {
@@ -250,9 +264,7 @@ ID：${expert.id}`;
     // 检测内容是否超出两行，添加滚动提示
     this._setupScrollHint(container);
 
-    // 🔧 v2.7: 默认不选中任何专家，使用设置中的通用 ADP AppKey
-    // 只有用户主动点击专家卡片时才设置 _activeExpertId
-    // 如果之前有选中的专家/专家团，恢复其 active 状态
+    // 恢复选中状态
     if (this._activeExpertId || this._activeGroupId) {
       const activeId = this._activeExpertId || this._activeGroupId;
       const activeType = this._activeExpertId ? 'expert' : 'group';
@@ -260,12 +272,11 @@ ID：${expert.id}`;
       if (activeCard) {
         activeCard.classList.add('active');
       } else {
-        // 之前选中的专家已不存在，清除选择
         this._activeExpertId = null;
         this._activeGroupId = null;
       }
     }
-    // 渲染快捷访问（无专家时显示通用快捷访问）
+    // 渲染快捷访问
     if (this._activeExpertId) {
       this._renderQuickAccess(this.getExpertById(this._activeExpertId)?.quickAccesses || []);
     } else if (this._activeGroupId) {

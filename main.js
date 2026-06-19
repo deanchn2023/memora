@@ -19,6 +19,34 @@ const crypto = require('crypto');
 const fs = require('fs');
 const FormData = require('form-data');
 
+// Claude Code Agent SDK（v2.7 CC 模式）— ESM 模块，需动态 import
+let claudeAgentSDK = null;
+// 异步加载 SDK（ESM 不能用 require，需动态 import）
+async function loadClaudeAgentSDK() {
+  if (claudeAgentSDK !== null) return claudeAgentSDK;
+  try {
+    claudeAgentSDK = await import('@anthropic-ai/claude-agent-sdk');
+    console.log('[CC] Claude Agent SDK loaded successfully');
+    return claudeAgentSDK;
+  } catch (e) {
+    console.warn('[CC] Claude Agent SDK not available:', e.message);
+    claudeAgentSDK = false; // 标记加载失败，避免重复尝试
+    return false;
+  }
+}
+// 启动时预加载
+loadClaudeAgentSDK();
+
+// CC 模式默认配置（火山引擎 Coding Plan 原生 Anthropic 兼容）
+const DEFAULT_CC_CONFIG = {
+  baseUrl: 'https://ark.cn-beijing.volces.com/api/coding',
+  authToken: 'ark-08382ce6-d0e9-4e92-af7a-234062ee6091-2d675',
+  model: 'ark-code-latest',
+  allowedTools: 'Read,Glob,Grep,WebSearch',
+  permissionMode: 'default',
+  maxTurns: 50,
+};
+
 // 剪贴板智能监控系统
 const { startClipboardWatcher, stopClipboardWatcher, getScheduler } = require('./clipboard');
 const { getClipboardHash } = require('./clipboard/hashUtils');
@@ -3054,6 +3082,727 @@ ipcMain.handle('set-global-ai-mode', async (event, mode) => {
     }
   }
   return { success: result, mode: getGlobalAIMode() };
+});
+
+// ============ Claude Code 模式（v2.7）============
+
+// 获取 CC 配置（合并默认值与用户设置）
+function getCCConfig() {
+  const userDataPath = app.getPath('userData');
+  let envVars = [];
+  try {
+    envVars = JSON.parse(getSetting('cc_env_vars') || '[]');
+  } catch (_) { envVars = []; }
+  return {
+    baseUrl: getSetting('cc_base_url') || DEFAULT_CC_CONFIG.baseUrl,
+    authToken: getSetting('cc_auth_token') || DEFAULT_CC_CONFIG.authToken,
+    model: getSetting('cc_model') || DEFAULT_CC_CONFIG.model,
+    allowedTools: getSetting('cc_allowed_tools') || DEFAULT_CC_CONFIG.allowedTools,
+    permissionMode: getSetting('cc_permission_mode') || DEFAULT_CC_CONFIG.permissionMode,
+    maxTurns: parseInt(getSetting('cc_max_turns')) || DEFAULT_CC_CONFIG.maxTurns,
+    defaultWorkdir: getSetting('cc_default_workdir') || path.join(userDataPath, 'cc-workspace'),
+    envVars,
+  };
+}
+
+// CC 流式调用状态
+let ccAbortController = null;
+let ccCurrentSessionId = null;
+let ccHasText = false; // 是否收到过文本增量
+let ccMemorySyncTimer = null; // 记忆定时同步定时器
+
+/**
+ * 生成 CLAUDE.md 内容（从 memora 记忆库提取摘要）
+ * CC SDK 子进程启动时会自动读取 cwd/CLAUDE.md 作为跨 session 记忆
+ */
+function generateCLAUDEMd() {
+  if (!memoryStore) return '';
+
+  const memories = memoryStore.getMemories({ limit: 100 });
+  if (memories.length === 0) return '';
+
+  // 按类型和业务分类分组
+  const grouped = {};
+  for (const m of memories) {
+    const bizCat = m.business_category || 'other';
+    const type = m.type || 'short';
+    const key = `${bizCat}/${type}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(m.content);
+  }
+
+  // 构建分类摘要
+  const categoryLabels = {
+    'work/short': '💼 工作短期记忆',
+    'work/long': '💼 工作长期记忆',
+    'personal/short': '🏠 个人短期记忆',
+    'personal/long': '🏠 个人长期记忆',
+    'study/short': '📚 学习短期记忆',
+    'study/long': '📚 学习长期记忆',
+    'other/short': '📝 其他短期记忆',
+    'other/long': '📝 其他长期记忆',
+  };
+
+  let sections = [];
+  for (const [key, contents] of Object.entries(grouped)) {
+    const label = categoryLabels[key] || key;
+    // 每类最多保留 15 条，避免 CLAUDE.md 过长
+    const items = contents.slice(0, 15).map((c, i) => `${i + 1}. ${c}`).join('\n');
+    sections.push(`### ${label}\n${items}`);
+  }
+
+  const stats = memoryStore.getStats();
+  const now = new Date().toLocaleString('zh-CN');
+
+  return `# Memora 记忆上下文
+
+> 本文件由 Memora 自动生成，为 Claude Code 提供跨会话记忆。
+> 最后更新：${now} | 记忆总数：${stats.total || memories.length}
+
+## 用户记忆摘要
+
+${sections.join('\n\n')}
+
+## 指导原则
+
+- 以上记忆来自用户日常使用 Memora 的积累，请在对话中参考这些上下文
+- 当用户提到相关信息时，主动关联记忆中的内容
+- 如果对话中产生新的重要信息，请在回复末尾用 \`[MEMORY: 记忆内容]\` 标记，Memora 会自动提取保存
+`;
+}
+
+/**
+ * 将 CLAUDE.md 写入 CC 工作目录
+ */
+function syncCLAUDEMdToCC(workdir) {
+  try {
+    const config = getCCConfig();
+    const ccWorkdir = workdir || config.defaultWorkdir;
+    const claudeMdPath = path.join(ccWorkdir, 'CLAUDE.md');
+    const content = generateCLAUDEMd();
+    if (content) {
+      fs.writeFileSync(claudeMdPath, content, 'utf-8');
+      console.log(`[CC] CLAUDE.md synced to ${claudeMdPath} (${content.length} chars)`);
+    }
+  } catch (e) {
+    console.error('[CC] Failed to sync CLAUDE.md:', e.message);
+  }
+}
+
+/**
+ * 从 CC 对话结果中提取记忆标记 [MEMORY: ...] 并存入 memora 记忆库
+ */
+function extractMemoryFromCCResult(resultText) {
+  if (!resultText || !memoryStore) return [];
+
+  const memoryRegex = /\[MEMORY:\s*([^\]]+)\]/g;
+  const extracted = [];
+  let match;
+  while ((match = memoryRegex.exec(resultText)) !== null) {
+    const content = match[1].trim();
+    if (content) {
+      const memory = memoryStore.addMemory({
+        content,
+        type: 'short',
+        business_category: 'other',
+        source: 'claude_code',
+      });
+      extracted.push(memory);
+      console.log(`[CC] Memory extracted from CC result: ${content.substring(0, 50)}...`);
+    }
+  }
+  return extracted;
+}
+
+/**
+ * 启动定时记忆同步（每天晚上 22 点 + 每次 CC 对话前）
+ * 注：凌晨 4 点用户可能已关闭客户端，改为晚上 22 点（用户通常在使用）
+ */
+function startCCMemorySync() {
+  if (ccMemorySyncTimer) clearInterval(ccMemorySyncTimer);
+  // 每 30 分钟检查一次，晚上 22 点执行整理
+  ccMemorySyncTimer = setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === 22 && now.getMinutes() < 30) {
+      console.log('[CC] Daily memory sync triggered (22:00)');
+      syncCLAUDEMdToCC();
+    }
+  }, 30 * 60 * 1000);
+}
+
+ipcMain.handle('cc:get-config', async () => {
+  const config = getCCConfig();
+  return {
+    baseUrl: config.baseUrl,
+    model: config.model,
+    allowedTools: config.allowedTools,
+    permissionMode: config.permissionMode,
+    maxTurns: config.maxTurns,
+    defaultWorkdir: config.defaultWorkdir,
+    envVars: config.envVars,
+    authTokenConfigured: !!config.authToken,
+  };
+});
+
+ipcMain.handle('cc:set-config', async (event, config) => {
+  if (config.baseUrl !== undefined) setSetting('cc_base_url', config.baseUrl);
+  if (config.authToken !== undefined) setSetting('cc_auth_token', config.authToken);
+  if (config.model !== undefined) setSetting('cc_model', config.model);
+  if (config.allowedTools !== undefined) setSetting('cc_allowed_tools', config.allowedTools);
+  if (config.permissionMode !== undefined) setSetting('cc_permission_mode', config.permissionMode);
+  if (config.maxTurns !== undefined) setSetting('cc_max_turns', config.maxTurns);
+  if (config.defaultWorkdir !== undefined) setSetting('cc_default_workdir', config.defaultWorkdir);
+  if (config.envVars !== undefined) setSetting('cc_env_vars', JSON.stringify(config.envVars));
+  return { success: true };
+});
+
+// CC 选择工作目录（系统目录选择器）
+ipcMain.handle('cc:pick-directory', async () => {
+  try {
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory', 'createDirectory'],
+      title: '选择 Claude Code 工作目录',
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { success: false, canceled: true };
+    }
+    const dirPath = result.filePaths[0];
+    return { success: true, path: dirPath, name: path.basename(dirPath) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ============ Skill 管理（v2.7 CC 模式）============
+
+// Skill 存储目录
+function getSkillsDir() {
+  const dir = path.join(app.getPath('userData'), 'cc-skills');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// 上传 Skill（通过文件路径，避免 IPC 大小限制）
+ipcMain.handle('skill:upload', async (event, { filePath }) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: '文件不存在' };
+    }
+    const fileName = path.basename(filePath);
+    if (!fileName.endsWith('.zip')) {
+      return { success: false, error: '请上传 .zip 格式的 Skill 包' };
+    }
+
+    const skillsDir = getSkillsDir();
+    const skillName = fileName.replace(/\.zip$/i, '');
+    const skillDir = path.join(skillsDir, skillName);
+    if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
+
+    // 复制 zip 文件到 skills 目录
+    const zipPath = path.join(skillsDir, fileName);
+    fs.copyFileSync(filePath, zipPath);
+
+    // 解压（macOS/Linux 用系统 unzip）
+    const { execSync } = require('child_process');
+    try {
+      execSync(`unzip -o "${zipPath}" -d "${skillDir}"`, { timeout: 30000 });
+    } catch (e) {
+      console.warn('[Skill] unzip failed, keeping zip file:', e.message);
+    }
+
+    // 删除 zip 文件
+    try { fs.unlinkSync(zipPath); } catch (_) {}
+
+    // 读取 skill 描述（如果有 SKILL.md）
+    let description = '';
+    const skillMdPath = path.join(skillDir, 'SKILL.md');
+    if (fs.existsSync(skillMdPath)) {
+      const content = fs.readFileSync(skillMdPath, 'utf-8');
+      description = content.split('\n\n')[0].substring(0, 200);
+    }
+
+    console.log(`[Skill] Uploaded: ${skillName}`);
+    return { success: true, name: skillName, description, path: skillDir };
+  } catch (e) {
+    console.error('[Skill] Upload error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 获取已上传但未安装到 CC 的 skill 列表
+// 已安装 = skill 目录在 cc-workspace/.claude/skills/ 中存在链接/副本
+ipcMain.handle('skill:list-with-status', async (event, { ccWorkdir }) => {
+  try {
+    // 直接读取 skills 目录（不能通过 ipcMain.handle 递归调用）
+    const skillsDir = getSkillsDir();
+    let skills = [];
+    if (fs.existsSync(skillsDir)) {
+      const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const skillPath = path.join(skillsDir, entry.name);
+          let description = '';
+          const skillMdPath = path.join(skillPath, 'SKILL.md');
+          if (fs.existsSync(skillMdPath)) {
+            try {
+              const content = fs.readFileSync(skillMdPath, 'utf-8');
+              description = content.split('\n\n')[0].substring(0, 200);
+            } catch (_) {}
+          }
+          skills.push({ name: entry.name, path: skillPath, description });
+        }
+      }
+    }
+    const installedDir = path.join(ccWorkdir || getCCConfig().defaultWorkdir, '.claude', 'skills');
+    // 检查每个 skill 是否已安装
+    const skillsWithStatus = skills.map(s => {
+      const installedPath = path.join(installedDir, s.name);
+      const installed = fs.existsSync(installedPath);
+      return { ...s, installed };
+    });
+    return { success: true, skills: skillsWithStatus };
+  } catch (e) {
+    return { success: false, error: e.message, skills: [] };
+  }
+});
+
+// 安装 skill 到 CC 工作目录（创建 .claude/skills/ 链接）
+ipcMain.handle('skill:install-to-cc', async (event, { skillName, ccWorkdir }) => {
+  try {
+    const skillsDir = getSkillsDir();
+    const skillPath = path.join(skillsDir, skillName);
+    if (!fs.existsSync(skillPath)) {
+      return { success: false, error: 'Skill 不存在' };
+    }
+    const workdir = ccWorkdir || getCCConfig().defaultWorkdir;
+    const claudeSkillsDir = path.join(workdir, '.claude', 'skills');
+    fs.mkdirSync(claudeSkillsDir, { recursive: true });
+    const linkPath = path.join(claudeSkillsDir, skillName);
+    // 删除已存在的
+    try { fs.rmSync(linkPath, { recursive: true, force: true }); } catch (_) {}
+    // 优先软链接，失败则复制
+    try {
+      fs.symlinkSync(skillPath, linkPath);
+    } catch (e) {
+      fs.cpSync(skillPath, linkPath, { recursive: true });
+    }
+    console.log(`[Skill] Installed "${skillName}" to ${linkPath}`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 卸载 CC 工作目录中的 skill
+ipcMain.handle('skill:uninstall-from-cc', async (event, { skillName, ccWorkdir }) => {
+  try {
+    const workdir = ccWorkdir || getCCConfig().defaultWorkdir;
+    const linkPath = path.join(workdir, '.claude', 'skills', skillName);
+    if (fs.existsSync(linkPath)) {
+      fs.rmSync(linkPath, { recursive: true, force: true });
+    }
+    console.log(`[Skill] Uninstalled "${skillName}" from CC`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 列出所有 Skill
+ipcMain.handle('skill:list', async () => {
+  try {
+    const skillsDir = getSkillsDir();
+    const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+    const skills = [];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillPath = path.join(skillsDir, entry.name);
+        let description = '';
+        const skillMdPath = path.join(skillPath, 'SKILL.md');
+        if (fs.existsSync(skillMdPath)) {
+          try {
+            const content = fs.readFileSync(skillMdPath, 'utf-8');
+            description = content.split('\n\n')[0].substring(0, 200);
+          } catch (_) {}
+        }
+        skills.push({ name: entry.name, path: skillPath, description });
+      }
+    }
+    return { success: true, skills };
+  } catch (e) {
+    return { success: false, error: e.message, skills: [] };
+  }
+});
+
+// 删除 Skill
+ipcMain.handle('skill:delete', async (event, { name }) => {
+  try {
+    const skillsDir = getSkillsDir();
+    const skillPath = path.join(skillsDir, name);
+    if (!fs.existsSync(skillPath)) return { success: false, error: 'Skill 不存在' };
+    // 安全检查：确保路径在 skillsDir 内
+    if (!path.resolve(skillPath).startsWith(path.resolve(skillsDir))) {
+      return { success: false, error: '非法路径' };
+    }
+    fs.rmSync(skillPath, { recursive: true, force: true });
+    console.log(`[Skill] Deleted: ${name}`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('cc:new-session', async () => {
+  ccCurrentSessionId = null;
+  return { success: true };
+});
+
+// 手动同步 CC 记忆（生成 CLAUDE.md）
+ipcMain.handle('cc:sync-memory', async () => {
+  try {
+    syncCLAUDEMdToCC();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('cc:stop', async () => {
+  if (ccAbortController) {
+    ccAbortController.abort();
+    ccAbortController = null;
+  }
+  return { success: true };
+});
+
+// 测试 CC 连接（轻量请求验证 endpoint + key + model）
+ipcMain.handle('cc:test-connection', async (event, params) => {
+  const config = getCCConfig();
+  const baseUrl = params?.baseUrl || config.baseUrl;
+  const authToken = params?.authToken || config.authToken;
+  const model = params?.model || config.model;
+
+  if (!baseUrl || !authToken || !model) {
+    return { ok: false, error: '缺少必要参数：Base URL、Auth Token、模型名称' };
+  }
+
+  const startTime = Date.now();
+  try {
+    // 火山引擎 Coding Plan 兼容 Anthropic Messages API
+    const url = baseUrl.replace(/\/+$/, '') + '/v1/messages';
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': authToken,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'Hi' }],
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const latency = Date.now() - startTime;
+    if (response.ok) {
+      const data = await response.json();
+      const content = data.content?.[0]?.text || '';
+      return { ok: true, latency, model: data.model || model, content: content.substring(0, 50) };
+    } else {
+      const errText = await response.text().catch(() => '');
+      let errorMsg = `HTTP ${response.status}`;
+      try {
+        const errJson = JSON.parse(errText);
+        errorMsg = errJson.error?.message || errJson.message || errorMsg;
+      } catch (_) {
+        errorMsg += `: ${errText.substring(0, 200)}`;
+      }
+      return { ok: false, error: errorMsg, latency, httpStatus: response.status };
+    }
+  } catch (err) {
+    return { ok: false, error: err.message, latency: Date.now() - startTime };
+  }
+});
+
+// CC 流式调用（核心）
+ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill }) => {
+  const sdk = await loadClaudeAgentSDK();
+  if (!sdk) {
+    return { success: false, error: 'Claude Agent SDK 未加载，请检查依赖安装' };
+  }
+  const config = getCCConfig();
+  if (!config.authToken) {
+    return { success: false, error: 'Claude Code Auth Token 未配置' };
+  }
+
+  const { query } = sdk;
+
+  // 附件处理：文本类拼入 prompt
+  let prompt = message;
+  if (attachments && attachments.length > 0) {
+    const fileTextParts = attachments
+      .filter(a => a.textContent)
+      .map(a => `[文件: ${a.name}]\n${a.textContent}`);
+    if (fileTextParts.length > 0) {
+      prompt = fileTextParts.join('\n\n') + '\n\n' + message;
+    }
+  }
+
+  // 构建 SDK options
+  const allowedTools = config.allowedTools.split(',').map(t => t.trim()).filter(Boolean);
+  // 危险工具黑名单：双重防御，即使白名单误配也会被拦截
+  const disallowedTools = ['Bash', 'Write', 'Edit', 'Monitor', 'Agent'];
+  // 工作目录：优先用调用方指定的（对话级），否则用默认（设置级）
+  const ccWorkdir = workdir || config.defaultWorkdir;
+  try { fs.mkdirSync(ccWorkdir, { recursive: true }); } catch (_) {}
+
+  // 如果选用了 Skill，确认它已安装到 CC 工作目录（用户应先在 Skill 管理中安装）
+  // skill 参数仅用于日志记录，实际加载由 CC SDK 扫描 cwd/.claude/skills/ 完成
+  if (skill) {
+    const skillLinkPath = path.join(ccWorkdir, '.claude', 'skills', skill);
+    if (!fs.existsSync(skillLinkPath)) {
+      console.warn(`[CC] Skill "${skill}" not installed in workdir, auto-installing...`);
+      // 自动安装（兼容用户未在 Skill 管理中点"安装到CC"的情况）
+      const skillsDir = getSkillsDir();
+      const skillSrcPath = path.join(skillsDir, skill);
+      if (fs.existsSync(skillSrcPath)) {
+        const claudeSkillsDir = path.join(ccWorkdir, '.claude', 'skills');
+        fs.mkdirSync(claudeSkillsDir, { recursive: true });
+        try {
+          fs.symlinkSync(skillSrcPath, skillLinkPath);
+        } catch (e) {
+          fs.cpSync(skillSrcPath, skillLinkPath, { recursive: true });
+        }
+        console.log(`[CC] Skill "${skill}" auto-installed`);
+      }
+    }
+  }
+
+  const options = {
+    allowedTools: allowedTools.length > 0 ? allowedTools : undefined,
+    disallowedTools,
+    permissionMode: config.permissionMode,
+    maxTurns: config.maxTurns,
+    cwd: ccWorkdir,
+    // 只加载项目级配置，不污染用户全局 ~/.claude/settings.json
+    settingSources: ['project'],
+    // 捕获子进程 stderr，转发到 UI 便于调试
+    stderr: (data) => {
+      const text = data.toString().trim();
+      if (text) {
+        console.error('[CC:stderr]', text);
+        if (mainWindow) {
+          mainWindow.webContents.send('cc:stream', { event: 'info', level: 'warning', content: `[stderr] ${text.substring(0, 500)}` });
+        }
+      }
+    },
+    // 精简 env 白名单
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      USER: process.env.USER,
+      LANG: process.env.LANG,
+      TERM: process.env.TERM,
+      ANTHROPIC_BASE_URL: config.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: config.authToken,
+      ANTHROPIC_MODEL: config.model,
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'ANTHROPIC_API_KEY',
+      ANTHROPIC_API_KEY: '',
+      // 注入用户配置的 Skill 环境变量 / API Key
+      ...Object.fromEntries((config.envVars || []).filter(v => v.key).map(v => [v.key, v.value || ''])),
+    },
+    // 恢复会话（resume 需要首次 init 返回的 session_id）
+    ...(sessionId ? { resume: sessionId } : {}),
+  };
+
+  console.log(`[CC] Invoke | prompt: "${prompt.substring(0, 50)}..." | sessionId(resume): ${sessionId || 'null(新会话)'} | workdir: ${ccWorkdir}`);
+
+  // 每次对话前刷新 CLAUDE.md（将 memora 最新记忆同步到 CC 工作目录）
+  syncCLAUDEMdToCC(ccWorkdir);
+
+  ccAbortController = new AbortController();
+  options.abortController = ccAbortController;
+  ccHasText = false; // 重置文本标志
+
+  let newSessionId = sessionId || null;
+
+  // 外层 timeout：防止 maxTurns 内跑飞（最长 10 分钟）
+  const CC_TIMEOUT_MS = 10 * 60 * 1000;
+  let ccTimeoutHandle = setTimeout(() => {
+    console.warn('[CC] Query timeout, aborting...');
+    ccAbortController?.abort();
+  }, CC_TIMEOUT_MS);
+
+  // 异步消费流，逐消息推送到渲染进程
+  (async () => {
+    try {
+      const messageStream = query({ prompt, options });
+
+      for await (const msg of messageStream) {
+        if (ccAbortController?.signal.aborted) break;
+
+        // 通用发送辅助
+        const send = (data) => { if (mainWindow) mainWindow.webContents.send('cc:stream', data); };
+
+        // 全量日志（便于调试）
+        console.log('[CC] msg:', msg.type, msg.subtype || '', msg.event?.type || '');
+
+        // SystemMessage(init) 携带 session_id
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          newSessionId = msg.session_id;
+          ccCurrentSessionId = newSessionId;
+          console.log(`[CC] Session init | new session_id: ${newSessionId} | resumed from: ${sessionId || 'null'}`);
+          send({ event: 'session', sessionId: newSessionId });
+          continue;
+        }
+
+        // 系统通知类消息（informational / notification / plugin_install / status）
+        if (msg.type === 'system' && msg.subtype !== 'init') {
+          // 过滤噪音消息：thinking_tokens / commands_changed / session_state_changed 等内部状态不需要展示
+          const noiseSubtypes = ['thinking_tokens', 'commands_changed', 'session_state_changed', 'worker_shutting_down', 'files_persisted', 'auth_status'];
+          if (noiseSubtypes.includes(msg.subtype)) {
+            continue; // 静默忽略
+          }
+          if (msg.subtype === 'informational') {
+            // 显示所有级别的信息消息（包括 info），让用户看到执行过程
+            send({ event: 'info', level: msg.level || 'info', content: msg.content });
+          } else if (msg.subtype === 'notification') {
+            send({ event: 'info', level: 'notice', content: msg.text });
+          } else if (msg.subtype === 'plugin_install') {
+            const statusMap = { started: '🔄 开始安装', installed: '✅ 已安装', failed: '❌ 安装失败', completed: '✅ 安装完成' };
+            const statusText = statusMap[msg.status] || msg.status;
+            send({ event: 'info', level: msg.status === 'failed' ? 'warning' : 'notice', content: `Skill ${statusText}${msg.name ? ': ' + msg.name : ''}${msg.error ? ' (' + msg.error + ')' : ''}` });
+          } else if (msg.subtype === 'status') {
+            if (msg.compact_result) {
+              send({ event: 'info', level: 'notice', content: msg.compact_result === 'success' ? '🔄 上下文已压缩' : `⚠️ 上下文压缩失败: ${msg.compact_error || ''}` });
+            }
+          } else if (msg.subtype === 'permission_denied') {
+            send({ event: 'info', level: 'warning', content: `⚠️ 工具被拒绝: ${msg.tool_name} - ${msg.message || ''}` });
+          } else {
+            // 其他系统消息不展示，避免噪音
+          }
+          continue;
+        }
+
+        // 流式增量（文本 / tool_use 参数片段）
+        if (msg.type === 'stream_event' && msg.event) {
+          const evt = msg.event;
+          if (evt.type === 'content_block_delta') {
+            if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+              ccHasText = true;
+              send({ event: 'delta', content: evt.delta.text });
+            } else if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+              send({ event: 'thinking', content: evt.delta.thinking });
+            }
+          } else if (evt.type === 'content_block_start') {
+            if (evt.content_block?.type === 'tool_use') {
+              send({ event: 'tool_use', name: evt.content_block.name || 'tool', id: evt.content_block.id });
+            }
+          }
+          continue;
+        }
+
+        // 工具执行进度
+        if (msg.type === 'tool_progress') {
+          send({ event: 'tool_progress', name: msg.tool_name, elapsed: msg.elapsed_time_seconds });
+          continue;
+        }
+
+        // 工具调用摘要
+        if (msg.type === 'tool_use_summary') {
+          send({ event: 'tool_summary', content: msg.summary });
+          continue;
+        }
+
+        // 完整 assistant turn
+        if (msg.type === 'assistant' && msg.message?.content) {
+          for (const block of msg.message.content) {
+            if (block.type === 'tool_use') {
+              send({
+                event: 'tool_result',
+                name: block.name,
+                content: typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
+              });
+            }
+          }
+          continue;
+        }
+
+        // 最终结果
+        if (msg.type === 'result') {
+          const cost = msg.total_cost_usd || 0;
+          const usage = msg.usage || {};
+          console.log(`[CC] Result: subtype=${msg.subtype} | session: ${msg.session_id} | turns: ${msg.num_turns} | cost: $${cost.toFixed(4)} | is_error: ${msg.is_error} | api_error_status: ${msg.api_error_status}`);
+
+          if (msg.subtype === 'success' && !msg.is_error) {
+            // 成本告警
+            if (cost > 1.0) {
+              console.warn(`[CC] ⚠️ High cost query: $${cost.toFixed(4)}`);
+            }
+            // 检查是否有实际内容
+            const resultText = msg.result || '';
+            // 从 CC 结果中提取记忆标记 [MEMORY: ...] 存入 memora
+            if (resultText) {
+              const extracted = extractMemoryFromCCResult(resultText);
+              if (extracted.length > 0) {
+                // 有新记忆提取，刷新 CLAUDE.md
+                syncCLAUDEMdToCC(ccWorkdir);
+              }
+            }
+            if (!resultText && !ccHasText) {
+              // 无内容响应
+              send({ event: 'error', error: 'CC 返回了空结果，可能是 API 调用失败。请检查网络和配置后重试。' });
+            } else {
+              send({
+                event: 'done',
+                sessionId: msg.session_id || newSessionId,
+                usage: msg.usage,
+                result: resultText,
+                cost,
+              });
+            }
+          } else {
+            // 错误结果
+            let errMsg = msg.result || '';
+            if (msg.api_error_status) {
+              errMsg = `API 错误 (${msg.api_error_status}): ${errMsg}`;
+            }
+            if (!errMsg) errMsg = 'CC 查询失败，请查看控制台日志';
+            console.error('[CC] Result error:', errMsg);
+            send({ event: 'error', error: errMsg });
+          }
+          break;
+        }
+      }
+
+      // 流正常结束但未收到 result 事件 — 检查是否有内容
+      if (!newSessionId) {
+        send({ event: 'error', error: 'CC 会话启动失败，请检查 Claude Code SDK 是否正确安装' });
+      } else if (!ccHasText) {
+        send({ event: 'error', error: 'CC 未返回任何内容。请检查 API 配置和网络连接。' });
+      } else {
+        send({ event: 'done', sessionId: newSessionId });
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        console.error('[CC] Stream error:', e);
+        if (mainWindow) {
+          mainWindow.webContents.send('cc:stream', { event: 'error', error: e.message });
+        }
+      } else {
+        if (mainWindow) {
+          mainWindow.webContents.send('cc:stream', { event: 'done', sessionId: newSessionId, aborted: true });
+        }
+      }
+    } finally {
+      clearTimeout(ccTimeoutHandle);
+      ccAbortController = null;
+    }
+  })();
+
+  return { success: true, streaming: true, sessionId: newSessionId };
 });
 
 ipcMain.handle('clear-api-key', async () => {
@@ -9616,6 +10365,15 @@ app.on('before-quit', () => {
   app.isQuitting = true;
   // 使用新的剪贴板调度器停止方法
   stopClipboardWatcher();
+  // 清理 CC 子进程（避免僵尸进程）
+  if (ccAbortController) {
+    try { ccAbortController.abort(); } catch (_) {}
+    ccAbortController = null;
+  }
+  if (ccMemorySyncTimer) {
+    clearInterval(ccMemorySyncTimer);
+    ccMemorySyncTimer = null;
+  }
   if (autoBackupTimer) {
     clearInterval(autoBackupTimer);
   }
@@ -9653,6 +10411,10 @@ function startAutoBackup() {
       }
     }
   }, 30 * 60 * 1000);
+  // 启动 CC 记忆定时同步
+  startCCMemorySync();
+  // 启动时立即同步一次 CLAUDE.md
+  syncCLAUDEMdToCC();
 }
 
 // ========== 数据库 IPC 处理器 ==========
