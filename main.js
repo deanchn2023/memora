@@ -3335,7 +3335,10 @@ ipcMain.handle('skill:upload', async (event, { filePath }) => {
 // 已安装 = skill 目录在 cc-workspace/.claude/skills/ 中存在链接/副本
 ipcMain.handle('skill:list-with-status', async (event, { ccWorkdir }) => {
   try {
-    // 直接读取 skills 目录（不能通过 ipcMain.handle 递归调用）
+    const workdir = ccWorkdir || getCCConfig().defaultWorkdir || '';
+    const installedDir = path.join(workdir, '.claude', 'skills');
+
+    // 1. 读取上传的 skills（来自 userData/cc-skills/）
     const skillsDir = getSkillsDir();
     let skills = [];
     if (fs.existsSync(skillsDir)) {
@@ -3351,17 +3354,60 @@ ipcMain.handle('skill:list-with-status', async (event, { ccWorkdir }) => {
               description = content.split('\n\n')[0].substring(0, 200);
             } catch (_) {}
           }
-          skills.push({ name: entry.name, path: skillPath, description });
+          skills.push({ name: entry.name, path: skillPath, description, source: 'upload' });
         }
       }
     }
-    const installedDir = path.join(ccWorkdir || getCCConfig().defaultWorkdir, '.claude', 'skills');
+
     // 检查每个 skill 是否已安装
     const skillsWithStatus = skills.map(s => {
       const installedPath = path.join(installedDir, s.name);
       const installed = fs.existsSync(installedPath);
       return { ...s, installed };
     });
+
+    // 2. 读取 SkillHub 安装的 skills（来自 ccWorkdir/.claude/skills/ 中非上传来源的）
+    const uploadedNames = new Set(skills.map(s => s.name));
+    if (fs.existsSync(installedDir)) {
+      const installedEntries = fs.readdirSync(installedDir, { withFileTypes: true });
+      for (const entry of installedEntries) {
+        if (!entry.isDirectory()) continue;
+        // 跳过已在上传列表中的（避免重复）
+        if (uploadedNames.has(entry.name)) continue;
+
+        const skillPath = path.join(installedDir, entry.name);
+        let description = '';
+        // 尝试读取 SKILL.md
+        const skillMdPath = path.join(skillPath, 'SKILL.md');
+        if (fs.existsSync(skillMdPath)) {
+          try {
+            const content = fs.readFileSync(skillMdPath, 'utf-8');
+            description = content.split('\n\n')[0].substring(0, 200);
+          } catch (_) {}
+        }
+        // 如果没有 SKILL.md，尝试读取 CLAUDE.md 或 README.md
+        if (!description) {
+          for (const readme of ['CLAUDE.md', 'README.md', 'readme.md']) {
+            const readmePath = path.join(skillPath, readme);
+            if (fs.existsSync(readmePath)) {
+              try {
+                const content = fs.readFileSync(readmePath, 'utf-8');
+                description = content.split('\n\n')[0].substring(0, 200);
+              } catch (_) {}
+              break;
+            }
+          }
+        }
+        skillsWithStatus.push({
+          name: entry.name,
+          path: skillPath,
+          description: description || 'SkillHub 安装',
+          source: 'skillhub',
+          installed: true
+        });
+      }
+    }
+
     return { success: true, skills: skillsWithStatus };
   } catch (e) {
     return { success: false, error: e.message, skills: [] };

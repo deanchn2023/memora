@@ -3766,23 +3766,30 @@ const App = {
 
     grid.innerHTML = this._ccSkills.map(skill => {
       const installed = skill.installed;
+      const isSkillhub = skill.source === 'skillhub';
+      const sourceLabel = isSkillhub
+        ? '<span class="skill-source-badge skillhub">SkillHub</span>'
+        : '<span class="skill-source-badge upload">上传</span>';
       const statusBadge = installed
         ? '<span class="skill-status-badge installed">✅ 已安装</span>'
         : '<span class="skill-status-badge not-installed">⬜ 未安装</span>';
       const installBtn = installed
         ? `<button class="skill-uninstall-btn" data-skill-name="${this.escapeHtml(skill.name)}">卸载</button>`
         : `<button class="skill-install-btn" data-skill-name="${this.escapeHtml(skill.name)}">安装到CC</button>`;
+      // SkillHub 来源的技能没有上传文件，不显示"删除"按钮
+      const deleteBtn = isSkillhub ? '' : `<button class="skill-delete-btn" data-skill-name="${this.escapeHtml(skill.name)}">🗑 删除</button>`;
       return `
         <div class="skill-card" data-skill-name="${this.escapeHtml(skill.name)}">
           <div class="skill-card-header">
-            <span class="skill-card-icon">🧩</span>
+            <span class="skill-card-icon">${isSkillhub ? '🌐' : '🧩'}</span>
             <span class="skill-card-name">${this.escapeHtml(skill.name)}</span>
+            ${sourceLabel}
             ${statusBadge}
           </div>
           <p class="skill-card-desc">${this.escapeHtml(skill.description || '无描述')}</p>
           <div class="skill-card-actions">
             ${installBtn}
-            <button class="skill-delete-btn" data-skill-name="${this.escapeHtml(skill.name)}">🗑 删除</button>
+            ${deleteBtn}
           </div>
         </div>
       `;
@@ -3807,11 +3814,18 @@ const App = {
     grid.querySelectorAll('.skill-uninstall-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const name = btn.dataset.skillName;
+        const card = btn.closest('.skill-card');
+        const isSkillhub = card?.querySelector('.skill-source-badge.skillhub');
+        if (!confirm(`确定从 CC 卸载 Skill "${name}"？`)) return;
         const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
         const result = await window.electronAPI?.skillUninstallFromCC?.({ skillName: name, ccWorkdir: workdir });
         if (result?.success) {
           this.showToast(`Skill "${name}" 已从 CC 卸载`);
           this._loadSkillList();
+          // 如果是 SkillHub 技能，同步刷新市场页的安装状态
+          if (isSkillhub) {
+            this._skillhubInstalledSlugs.delete(name);
+          }
         } else {
           this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
         }
@@ -4057,6 +4071,8 @@ const App = {
       }
       // 刷新 CC 对话区 skill 下拉框
       this._refreshCCSkillSelect();
+      // 刷新"我的技能"列表（SkillHub 安装的技能也需要同步显示）
+      this._loadSkillList();
     } else {
       this.showToast('安装失败: ' + (result?.error || '未知错误'), 'error');
       if (btn) { btn.disabled = false; btn.textContent = '📥 安装到CC'; }
@@ -4084,6 +4100,8 @@ const App = {
         btn.disabled = false;
       }
       this._refreshCCSkillSelect();
+      // 刷新"我的技能"列表
+      this._loadSkillList();
     } else {
       this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
       if (btn) { btn.disabled = false; btn.textContent = '✅ 已安装 | 卸载'; }

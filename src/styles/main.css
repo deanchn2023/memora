@@ -4148,6 +4148,25 @@ body {
   color: #8E8E93;
 }
 
+/* Skill 来源标签 */
+.skill-source-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.skill-source-badge.skillhub {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007AFF;
+}
+
+.skill-source-badge.upload {
+  background: rgba(255, 149, 0, 0.1);
+  color: #FF9500;
+}
+
 /* Skill 安装/卸载按钮 */
 .skill-install-btn {
   background: none;
