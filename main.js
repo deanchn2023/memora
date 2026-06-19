@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, powerMonitor } = require('electron');
+const os = require('os');
 
 // 加载 .env 环境变量（开发时使用，打包后 .env 不存在则忽略）
 try { require('dotenv').config(); } catch (_) {}
@@ -3447,6 +3448,88 @@ ipcMain.handle('skill:delete', async (event, { name }) => {
     }
     fs.rmSync(skillPath, { recursive: true, force: true });
     console.log(`[Skill] Deleted: ${name}`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ===== SkillHub 市场集成 =====
+const SKILLHUB_CLI = path.join(os.homedir(), '.local', 'bin', 'skillhub');
+const EXEC_ENV = { ...process.env, PATH: `/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:${process.env.PATH || ''}` };
+
+// 检查 SkillHub CLI 是否已安装
+ipcMain.handle('skillhub:check', async () => {
+  const installed = fs.existsSync(SKILLHUB_CLI);
+  return { installed, path: installed ? SKILLHUB_CLI : null };
+});
+
+// 安装 SkillHub CLI
+ipcMain.handle('skillhub:install-cli', async () => {
+  try {
+    const { execSync } = require('child_process');
+    const cmd = `curl -fsSL https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/install/install.sh | bash -s -- --cli-only`;
+    execSync(cmd, { encoding: 'utf-8', timeout: 60000, env: EXEC_ENV });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 搜索 SkillHub 市场技能
+ipcMain.handle('skillhub:search', async (event, { query, limit = 20 }) => {
+  try {
+    const { execSync } = require('child_process');
+    const escapedQuery = query ? query.replace(/"/g, '\\"') : '';
+    const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade search --json --search-limit ${limit} ${escapedQuery ? `"${escapedQuery}"` : ''}`;
+    const output = execSync(cmd, { encoding: 'utf-8', timeout: 15000, env: EXEC_ENV });
+    const data = JSON.parse(output);
+    return { success: true, results: data.results || [], count: data.count || 0, query: data.query || query };
+  } catch (e) {
+    return { success: false, error: e.message, results: [] };
+  }
+});
+
+// 安装技能到指定目录
+ipcMain.handle('skillhub:install', async (event, { slug, targetDir }) => {
+  try {
+    const { execSync } = require('child_process');
+    fs.mkdirSync(targetDir, { recursive: true });
+    const escapedSlug = slug.replace(/"/g, '\\"');
+    const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade install --json --dir "${targetDir}" "${escapedSlug}"`;
+    const output = execSync(cmd, { encoding: 'utf-8', timeout: 60000, env: EXEC_ENV });
+    const data = JSON.parse(output);
+    return { success: data.success !== false, targetDir: data.targetDir, slug: data.slug, name: data.name, version: data.version };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 列出指定目录中已安装的 SkillHub 技能
+ipcMain.handle('skillhub:list', async (event, { dir }) => {
+  try {
+    const { execSync } = require('child_process');
+    const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade list --dir "${dir}"`;
+    const output = execSync(cmd, { encoding: 'utf-8', timeout: 10000, env: EXEC_ENV });
+    const skills = output.trim().split('\n').filter(Boolean).map(line => {
+      const parts = line.trim().split(/\s+/);
+      const version = parts.length > 1 ? parts[parts.length - 1] : '';
+      const slug = parts.slice(0, parts.length > 1 ? -1 : undefined).join(' ');
+      return { slug, version };
+    });
+    return { success: true, skills };
+  } catch (e) {
+    return { success: false, error: e.message, skills: [] };
+  }
+});
+
+// 卸载 SkillHub 技能（删除目录）
+ipcMain.handle('skillhub:uninstall', async (event, { slug, targetDir }) => {
+  try {
+    const skillDir = path.join(targetDir, slug);
+    if (fs.existsSync(skillDir)) {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };

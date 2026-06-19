@@ -3756,6 +3756,258 @@ const App = {
     });
   },
 
+  // ===== SkillHub 市场集成（v2.8） =====
+
+  _skillhubInitialized: false,
+  _skillhubInstalledSlugs: new Set(),
+
+  /** 初始化 SkillHub 子标签和事件 */
+  _initSkillHub() {
+    if (this._skillhubInitialized) {
+      this._checkSkillHubCli();
+      return;
+    }
+    this._skillhubInitialized = true;
+
+    // 子标签切换
+    document.querySelectorAll('.skill-sub-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.skill-sub-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const subtab = tab.dataset.subtab;
+        document.querySelectorAll('.skill-sub-panel').forEach(panel => {
+          panel.classList.toggle('active', panel.dataset.subpanel === subtab);
+        });
+        if (subtab === 'market') {
+          this._checkSkillHubCli();
+        }
+      });
+    });
+
+    // 搜索按钮
+    document.getElementById('skillhubSearchBtn')?.addEventListener('click', () => {
+      this._skillhubSearch();
+    });
+    document.getElementById('skillhubSearchInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._skillhubSearch();
+    });
+
+    // 每页数量切换
+    document.getElementById('skillhubLimitSelect')?.addEventListener('change', () => {
+      this._skillhubSearch();
+    });
+
+    // CLI 安装按钮
+    document.getElementById('skillhubInstallCliBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('skillhubInstallCliBtn');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ 安装中...'; }
+      const result = await window.electronAPI?.skillhubInstallCli?.();
+      if (btn) { btn.disabled = false; btn.textContent = '🔧 一键安装 CLI'; }
+      if (result?.success) {
+        this.showToast('SkillHub CLI 安装成功', 'success');
+        this._checkSkillHubCli();
+      } else {
+        this.showToast('CLI 安装失败: ' + (result?.error || '未知错误'), 'error');
+      }
+    });
+
+    // 首次检查 CLI
+    this._checkSkillHubCli();
+  },
+
+  /** 检查 SkillHub CLI 是否已安装 */
+  async _checkSkillHubCli() {
+    const guide = document.getElementById('skillhubGuide');
+    const searchBar = document.getElementById('skillhubSearchBar');
+    if (!guide || !searchBar) return;
+
+    const result = await window.electronAPI?.skillhubCheck?.();
+    if (result?.installed) {
+      guide.style.display = 'none';
+      searchBar.style.display = 'flex';
+      // 刷新已安装列表
+      await this._refreshSkillHubInstalled();
+      // 如果搜索框为空，执行一次空搜索获取热门技能
+      const input = document.getElementById('skillhubSearchInput');
+      if (input && !input.value) {
+        this._skillhubSearch();
+      }
+    } else {
+      guide.style.display = '';
+      searchBar.style.display = 'none';
+    }
+  },
+
+  /** 刷新已安装的 SkillHub 技能列表 */
+  async _refreshSkillHubInstalled() {
+    this._skillhubInstalledSlugs.clear();
+    const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    if (!workdir) return;
+    const targetDir = `${workdir}/.claude/skills`;
+    const result = await window.electronAPI?.skillhubList?.({ dir: targetDir });
+    if (result?.success && result.skills) {
+      result.skills.forEach(s => this._skillhubInstalledSlugs.add(s.slug));
+    }
+  },
+
+  /** 搜索 SkillHub 市场技能 */
+  async _skillhubSearch() {
+    const input = document.getElementById('skillhubSearchInput');
+    const limitSelect = document.getElementById('skillhubLimitSelect');
+    const resultsEl = document.getElementById('skillhubResults');
+    if (!resultsEl) return;
+
+    const query = input?.value?.trim() || '';
+    const limit = parseInt(limitSelect?.value || '20');
+
+    // 显示加载中
+    resultsEl.innerHTML = `
+      <div class="skillhub-loading">
+        <div class="spinner"></div>
+        <span>搜索中...</span>
+      </div>`;
+
+    try {
+      const result = await window.electronAPI?.skillhubSearch?.({ query, limit });
+      if (!result?.success) {
+        resultsEl.innerHTML = `
+          <div class="skillhub-empty">
+            <div class="empty-icon">⚠️</div>
+            <p>搜索失败</p>
+            <span class="empty-hint">${this.escapeHtml(result?.error || '未知错误')}</span>
+          </div>`;
+        return;
+      }
+
+      const skills = result.results || [];
+      if (skills.length === 0) {
+        resultsEl.innerHTML = `
+          <div class="skillhub-empty">
+            <div class="empty-icon">🔍</div>
+            <p>未找到匹配的技能</p>
+            <span class="empty-hint">试试其他关键词</span>
+          </div>`;
+        return;
+      }
+
+      // 刷新已安装列表（确保安装状态准确）
+      await this._refreshSkillHubInstalled();
+
+      resultsEl.innerHTML = `
+        <div class="skillhub-info">找到 ${result.count || skills.length} 个技能${query ? `，关键词: "${this.escapeHtml(query)}"` : ''}</div>
+        <div class="skillhub-grid">
+          ${skills.map(s => this._renderSkillHubCard(s)).join('')}
+        </div>`;
+
+      // 绑定安装/卸载按钮
+      resultsEl.querySelectorAll('.skillhub-install-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await this._skillhubInstallSkill(btn.dataset.slug, btn);
+        });
+      });
+      resultsEl.querySelectorAll('.skillhub-uninstall-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await this._skillhubUninstallSkill(btn.dataset.slug, btn);
+        });
+      });
+    } catch (e) {
+      resultsEl.innerHTML = `
+        <div class="skillhub-empty">
+          <div class="empty-icon">⚠️</div>
+          <p>搜索异常</p>
+          <span class="empty-hint">${this.escapeHtml(e.message)}</span>
+        </div>`;
+    }
+  },
+
+  /** 渲染 SkillHub 技能卡片 */
+  _renderSkillHubCard(skill) {
+    const slug = this.escapeHtml(skill.slug || '');
+    const name = this.escapeHtml(skill.name || skill.slug || '');
+    const description = this.escapeHtml(skill.description || '暂无描述');
+    const version = skill.version ? `v${this.escapeHtml(skill.version)}` : '';
+    const source = this.escapeHtml(skill.source || 'community');
+    const isInstalled = this._skillhubInstalledSlugs.has(skill.slug);
+    const detailUrl = `https://skillhub.cn/skills/${encodeURIComponent(skill.slug || '')}`;
+
+    const installBtn = isInstalled
+      ? `<button class="skillhub-uninstall-btn" data-slug="${slug}">✅ 已安装 | 卸载</button>`
+      : `<button class="skillhub-install-btn" data-slug="${slug}">📥 安装到CC</button>`;
+
+    return `
+      <div class="skillhub-card">
+        <div class="skillhub-card-header">
+          <span class="skillhub-card-icon">🌐</span>
+          <span class="skillhub-card-name" title="${name}">${name}</span>
+          ${version ? `<span class="skillhub-card-version">${version}</span>` : ''}
+        </div>
+        <p class="skillhub-card-desc" title="${description}">${description}</p>
+        <div class="skillhub-card-meta">
+          <span class="skillhub-card-source">来源: ${source}</span>
+          <a href="${detailUrl}" class="skillhub-card-link" onclick="event.stopPropagation(); window.electronAPI?.openExternal?.('${detailUrl}'); return false;">ℹ️ 详情</a>
+        </div>
+        <div class="skillhub-card-actions">
+          ${installBtn}
+        </div>
+      </div>`;
+  },
+
+  /** 安装 SkillHub 技能到 CC 工作目录 */
+  async _skillhubInstallSkill(slug, btn) {
+    const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    if (!workdir) {
+      this.showToast('请先设置 CC 工作目录', 'error');
+      return;
+    }
+    const targetDir = `${workdir}/.claude/skills`;
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 安装中...'; }
+
+    const result = await window.electronAPI?.skillhubInstall?.({ slug, targetDir });
+    if (result?.success) {
+      this._skillhubInstalledSlugs.add(slug);
+      this.showToast(`技能 "${slug}" 安装成功`, 'success');
+      // 更新按钮状态
+      if (btn) {
+        btn.className = 'skillhub-uninstall-btn';
+        btn.textContent = '✅ 已安装 | 卸载';
+        btn.disabled = false;
+      }
+      // 刷新 CC 对话区 skill 下拉框
+      this._refreshCCSkillSelect();
+    } else {
+      this.showToast('安装失败: ' + (result?.error || '未知错误'), 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '📥 安装到CC'; }
+    }
+  },
+
+  /** 卸载 SkillHub 技能 */
+  async _skillhubUninstallSkill(slug, btn) {
+    const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    if (!workdir) {
+      this.showToast('请先设置 CC 工作目录', 'error');
+      return;
+    }
+    const targetDir = `${workdir}/.claude/skills`;
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 卸载中...'; }
+
+    const result = await window.electronAPI?.skillhubUninstall?.({ slug, targetDir });
+    if (result?.success) {
+      this._skillhubInstalledSlugs.delete(slug);
+      this.showToast(`技能 "${slug}" 已卸载`, 'success');
+      if (btn) {
+        btn.className = 'skillhub-install-btn';
+        btn.textContent = '📥 安装到CC';
+        btn.disabled = false;
+      }
+      this._refreshCCSkillSelect();
+    } else {
+      this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '✅ 已安装 | 卸载'; }
+    }
+  },
+
   // ===== Agent 流式渲染（本地 LLM 流式输出） =====
 
   _handleAgentStreamEvent(evt, messageContent) {

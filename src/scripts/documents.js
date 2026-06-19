@@ -87,7 +87,10 @@ const Documents = {
           AgentArtifacts.onShow();
         } else if (this.currentType === 'skill') {
           if (skillContainer) skillContainer.classList.remove('hidden');
-          if (window.App) App._loadSkillList();
+          if (window.App) {
+            App._loadSkillList();
+            App._initSkillHub();
+          }
         } else {
           // cloud
           normalElements.forEach(el => el.classList.remove('hidden'));

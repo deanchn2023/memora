@@ -45,6 +45,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillDelete: (data) => ipcRenderer.invoke('skill:delete', data),
   skillInstallToCC: (data) => ipcRenderer.invoke('skill:install-to-cc', data),
   skillUninstallFromCC: (data) => ipcRenderer.invoke('skill:uninstall-from-cc', data),
+  // SkillHub 市场（v2.8）
+  skillhubCheck: () => ipcRenderer.invoke('skillhub:check'),
+  skillhubInstallCli: () => ipcRenderer.invoke('skillhub:install-cli'),
+  skillhubSearch: (data) => ipcRenderer.invoke('skillhub:search', data),
+  skillhubInstall: (data) => ipcRenderer.invoke('skillhub:install', data),
+  skillhubList: (data) => ipcRenderer.invoke('skillhub:list', data),
+  skillhubUninstall: (data) => ipcRenderer.invoke('skillhub:uninstall', data),
   // CC 记忆同步
   ccSyncMemory: () => ipcRenderer.invoke('cc:sync-memory'),
   onCCStream: (callback) => {

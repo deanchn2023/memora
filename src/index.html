@@ -675,19 +675,60 @@
 
               <!-- Skill 管理区域 -->
               <div class="skill-container hidden" id="skillContainer">
-                <div class="skill-toolbar">
-                  <button class="btn primary" id="skillUploadBtn">📤 上传 Skill（zip）</button>
-                  <input type="file" id="skillFileInput" accept=".zip" style="display:none">
-                  <span class="skill-hint" style="color: var(--text-secondary); font-size: 12px; margin-left: 8px;">
-                    上传 .zip 格式的 Skill 包，在 CC 模式对话中可选择启用
-                  </span>
+                <!-- 子标签：我的技能 / SkillHub 市场 -->
+                <div class="skill-sub-tabs">
+                  <button class="skill-sub-tab active" data-subtab="mine">📦 我的技能</button>
+                  <button class="skill-sub-tab" data-subtab="market">🌐 SkillHub 市场</button>
                 </div>
-                <div class="skill-body" id="skillBody">
-                  <div class="skill-grid" id="skillGrid"></div>
-                  <div class="skill-empty" id="skillEmpty">
-                    <div class="empty-icon">🧩</div>
-                    <p>暂无 Skill</p>
-                    <span class="empty-hint">上传 .zip 格式的 Skill 包，在 CC 模式中使用</span>
+
+                <!-- 我的技能面板 -->
+                <div class="skill-sub-panel active" data-subpanel="mine">
+                  <div class="skill-toolbar">
+                    <button class="btn primary" id="skillUploadBtn">📤 上传 Skill（zip）</button>
+                    <input type="file" id="skillFileInput" accept=".zip" style="display:none">
+                    <span class="skill-hint" style="color: var(--text-secondary); font-size: 12px; margin-left: 8px;">
+                      上传 .zip 格式的 Skill 包，在 CC 模式对话中可选择启用
+                    </span>
+                  </div>
+                  <div class="skill-body" id="skillBody">
+                    <div class="skill-grid" id="skillGrid"></div>
+                    <div class="skill-empty" id="skillEmpty">
+                      <div class="empty-icon">🧩</div>
+                      <p>暂无 Skill</p>
+                      <span class="empty-hint">上传 .zip 格式的 Skill 包，在 CC 模式中使用</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- SkillHub 市场面板 -->
+                <div class="skill-sub-panel" data-subpanel="market">
+                  <!-- CLI 未安装时显示引导 -->
+                  <div class="skillhub-guide" id="skillhubGuide" style="display:none;">
+                    <div class="skillhub-guide-icon">📦</div>
+                    <h3>SkillHub CLI 未安装</h3>
+                    <p>SkillHub 是专为中国用户优化的 AI Skills 社区，提供约 2.2 万个技能。</p>
+                    <p>需要先安装 CLI 工具才能搜索和安装市场技能。</p>
+                    <button class="btn primary" id="skillhubInstallCliBtn">🔧 一键安装 CLI</button>
+                    <span class="skillhub-guide-hint">安装路径：~/.local/bin/skillhub</span>
+                  </div>
+
+                  <!-- 搜索区 -->
+                  <div class="skillhub-search-bar" id="skillhubSearchBar" style="display:none;">
+                    <input type="text" id="skillhubSearchInput" placeholder="搜索技能名称或关键词..." class="skillhub-search-input">
+                    <button class="btn primary" id="skillhubSearchBtn">🔍 搜索</button>
+                    <select id="skillhubLimitSelect" class="skillhub-limit-select">
+                      <option value="20">每页 20</option>
+                      <option value="40">每页 40</option>
+                      <option value="60">每页 60</option>
+                    </select>
+                  </div>
+
+                  <!-- 市场技能列表 -->
+                  <div class="skillhub-results" id="skillhubResults">
+                    <div class="skillhub-empty">
+                      <div class="empty-icon">🌐</div>
+                      <p>输入关键词搜索 SkillHub 市场技能</p>
+                    </div>
                   </div>
                 </div>
               </div>
