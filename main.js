@@ -9534,23 +9534,62 @@ let ffmpegPcmBuffer = Buffer.alloc(0);
 function _startFfmpegPipe() {
   if (ffmpegProc) return;
   const { spawn } = require('child_process');
+  const path = require('path');
+  const fs = require('fs');
   // 优先使用打包的 ffmpeg，回退到系统安装
   let ffmpegPath = process.env.FFMPEG_PATH;
   if (!ffmpegPath) {
-    const path = require('path');
     const arch = process.arch; // 'arm64' or 'x64'
     const bundledName = arch === 'arm64' ? 'ffmpeg-arm64' : 'ffmpeg-x64';
-    const bundledPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'bin', bundledName)
-      : path.join(__dirname, 'resources', 'bin', bundledName);
-    try {
-      require('fs').accessSync(bundledPath, require('fs').constants.X_OK);
-      ffmpegPath = bundledPath;
-      console.log('[FFmpeg] Using bundled:', ffmpegPath);
-    } catch {
-      // 回退到 PATH 中的 ffmpeg
-      ffmpegPath = 'ffmpeg';
-      console.log('[FFmpeg] Using system PATH');
+
+    // 尝试多个可能的路径
+    const candidates = [];
+    if (app.isPackaged) {
+      // asarUnpack 模式：resources/** 解包到 app.asar.unpacked/resources/
+      candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'bin', bundledName));
+      // extraResources 模式（如果配置了 extraResources）
+      candidates.push(path.join(process.resourcesPath, 'bin', bundledName));
+      // 直接在 resourcesPath 下
+      candidates.push(path.join(process.resourcesPath, 'resources', 'bin', bundledName));
+    }
+    // 开发模式
+    candidates.push(path.join(__dirname, 'resources', 'bin', bundledName));
+    // 回退：PATH 中的 ffmpeg
+    candidates.push('ffmpeg');
+
+    ffmpegPath = null;
+    for (const candidate of candidates) {
+      try {
+        if (candidate === 'ffmpeg') {
+          // 检查系统 PATH 中是否有 ffmpeg
+          const { execSync } = require('child_process');
+          execSync('which ffmpeg', { stdio: 'pipe' });
+          ffmpegPath = 'ffmpeg';
+          console.log('[FFmpeg] Using system PATH');
+          break;
+        }
+        // 检查文件存在
+        fs.accessSync(candidate, fs.constants.F_OK);
+        // 确保有执行权限（打包后可能丢失）
+        try {
+          fs.chmodSync(candidate, 0o755);
+        } catch (e) {
+          console.warn('[FFmpeg] chmod failed:', candidate, e.message);
+        }
+        // 再次验证可执行
+        fs.accessSync(candidate, fs.constants.X_OK);
+        ffmpegPath = candidate;
+        console.log('[FFmpeg] Using bundled:', ffmpegPath);
+        break;
+      } catch (e) {
+        console.log('[FFmpeg] Candidate not usable:', candidate, e.message);
+      }
+    }
+
+    if (!ffmpegPath) {
+      console.error('[FFmpeg] No ffmpeg found in any candidate path');
+      // 最后回退，即使可能失败
+      ffmpegPath = candidates[candidates.length - 2] || candidates[0];
     }
   }
   ffmpegProc = spawn(ffmpegPath, [
@@ -9586,7 +9625,7 @@ function _startFfmpegPipe() {
   });
 
   ffmpegProc.on('error', (err) => {
-    console.error('[FFmpeg] spawn error:', err.message);
+    console.error('[FFmpeg] spawn error:', err.message, 'path was:', ffmpegPath);
     ffmpegProc = null;
   });
 }
