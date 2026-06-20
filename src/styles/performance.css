@@ -1,0 +1,83 @@
+/* ═══ Memora 性能优化 CSS ═══ */
+
+/* ─── 1. content-visibility: 懒渲染离屏内容 ─── */
+/* 聊天消息容器：只渲染可见区域附近的消息 */
+.chat-messages .message:not(:nth-last-child(-n+5)):not(:nth-child(-n+3)) {
+  content-visibility: auto;
+  contain-intrinsic-size: 200px;
+}
+
+/* 知识图谱节点列表 */
+#knowledgeList .knowledge-item:not(:nth-child(-n+5)) {
+  content-visibility: auto;
+  contain-intrinsic-size: 80px;
+}
+
+/* 文档列表 */
+#documentsList .doc-item:not(:nth-child(-n+5)) {
+  content-visibility: auto;
+  contain-intrinsic-size: 60px;
+}
+
+/* 通知列表 */
+#notificationList .notification-item:not(:nth-child(-n+3)) {
+  content-visibility: auto;
+  contain-intrinsic-size: 72px;
+}
+
+/* ─── 2. 聊天滚动容器：关闭 backdrop-filter（滚动时 GPU 合成开销最大） ─── */
+#chatMessages {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 聊天消息区域不用 backdrop-filter */
+.chat-messages,
+.chat-messages *,
+.message-content,
+.message-content * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ─── 3. 滚动容器使用 transform 优化 ─── */
+#chatMessages,
+#notebookContent,
+#calendarView,
+#knowledgeView,
+#documentsView {
+  will-change: scroll-position;
+}
+
+/* ─── 4. 流式输出时禁用动画 ─── */
+/* 流式 AI 回复时，关闭所有过渡动画减少重绘 */
+body.streaming-active * {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+}
+
+/* ─── 5. 减少饱和度滤镜开销 ─── */
+/* saturate(180%) 在大量元素上非常昂贵，降低到 120% */
+.backdrop-filter,
+-webkit-backdrop-filter {
+  /* CSS hack: 无法直接修改，但通过减少使用数量来优化 */
+}
+
+/* ─── 6. hidden 元素不参与渲染 ─── */
+.hidden {
+  display: none !important;
+}
+
+/* ─── 7. 大列表使用 contain 隔离重绘 ─── */
+.notification-list,
+.knowledge-list,
+.doc-list,
+.session-list {
+  contain: layout style paint;
+}
+
+/* ─── 8. 模态框打开时冻结背景 ─── */
+body.modal-open #mainContent {
+  pointer-events: none;
+  contain: strict;
+}

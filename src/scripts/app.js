@@ -477,10 +477,32 @@ const App = {
     // 滚动快捷按钮
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) {
-      chatMessages.addEventListener('scroll', () => this._updateScrollButtons());
-      // MutationObserver：内容变化时也检查
-      const observer = new MutationObserver(() => this._updateScrollButtons());
+      // 缓存 DOM 引用，避免每次滚动都查询
+      this._chatScrollEls = {
+        container: chatMessages,
+        topBtn: document.getElementById('chatScrollTopBtn'),
+        bottomBtn: document.getElementById('chatScrollBottomBtn')
+      };
+      // 节流：requestAnimationFrame 合并高频滚动
+      let scrollRafId = null;
+      chatMessages.addEventListener('scroll', () => {
+        if (scrollRafId) return;
+        scrollRafId = requestAnimationFrame(() => {
+          scrollRafId = null;
+          this._updateScrollButtons();
+        });
+      });
+      // MutationObserver：内容变化时节流检查（流式输出时高频触发）
+      let mutRafId = null;
+      const observer = new MutationObserver(() => {
+        if (mutRafId) return;
+        mutRafId = requestAnimationFrame(() => {
+          mutRafId = null;
+          this._updateScrollButtons();
+        });
+      });
       observer.observe(chatMessages, { childList: true, subtree: true });
+      this._chatMutationObserver = observer;
     }
     document.getElementById('chatScrollTopBtn')?.addEventListener('click', () => {
       const cm = document.getElementById('chatMessages');
@@ -2929,14 +2951,14 @@ const App = {
 
   /** 更新滚动快捷按钮显示状态 */
   _updateScrollButtons() {
-    const chatMessages = document.getElementById('chatMessages');
-    if (!chatMessages) return;
-    const topBtn = document.getElementById('chatScrollTopBtn');
-    const bottomBtn = document.getElementById('chatScrollBottomBtn');
+    // 使用缓存的 DOM 引用，避免重复查询
+    const els = this._chatScrollEls;
+    if (!els || !els.container) return;
+    const { container: chatMessages, topBtn, bottomBtn } = els;
     if (!topBtn || !bottomBtn) return;
 
     const { scrollTop, scrollHeight, clientHeight } = chatMessages;
-    const scrollThreshold = 100; // 100px 阈值
+    const scrollThreshold = 100;
 
     // 顶部按钮：当不在顶部时显示
     topBtn.style.display = scrollTop > scrollThreshold ? 'flex' : 'none';
@@ -3353,6 +3375,7 @@ const App = {
         if (result.success && result.streaming) {
           // 流式模式：监听 SSE 事件
           this._adpStreaming = true;
+          document.body.classList.add('streaming-active');
           this._adpCurrentText = '';
           this._adpThinkingText = '';
           this._adpStepMap = {};
@@ -3374,10 +3397,16 @@ const App = {
             }
           }
           this._adpTimerStart = Date.now();
+          this._adpTimerEl = null; // 重置缓存
           const _timerMsgEl = messageContent;
+          // 缓存 timer 元素引用，避免每秒 DOM 查询
           this._adpTimerInterval = setInterval(() => {
             const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
-            const el = _timerMsgEl?.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+            let el = this._adpTimerEl;
+            if (!el) {
+              el = _timerMsgEl?.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+              this._adpTimerEl = el;
+            }
             if (el) el.textContent = elapsed + 's';
           }, 1000);
 
@@ -3426,7 +3455,11 @@ const App = {
         this._ccLastEventTime = Date.now();
         this._ccTimerInterval = setInterval(() => {
           const elapsed = Math.floor((Date.now() - this._ccTimerStart) / 1000);
-          const el = messageContent.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+          let el = this._ccTimerEl;
+          if (!el) {
+            el = messageContent.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+            this._ccTimerEl = el;
+          }
           if (el) el.textContent = elapsed + 's';
           // 心跳检测：超过 4 秒无事件，显示"思考中"状态
           const idleSecs = Math.floor((Date.now() - this._ccLastEventTime) / 1000);
@@ -3445,6 +3478,7 @@ const App = {
         // 如果在 ccResult 返回后才注册监听器，早期事件（session/init/thinking/tool_use）会丢失
         this._ccStreamBuffer = [];
         this._ccStreamListening = true;
+        document.body.classList.add('streaming-active');
         this._ccCurrentText = '';
         this._ccThinkingText = '';
         this._ccRenderPending = false;
@@ -3483,6 +3517,7 @@ const App = {
 
           // 处理缓冲的事件
           this._ccStreamListening = false;
+          document.body.classList.remove('streaming-active');
           const bufferedEvents = this._ccStreamBuffer || [];
           this._ccStreamBuffer = [];
           console.log('[CC] Processing buffered events:', bufferedEvents.length);
@@ -3518,6 +3553,7 @@ const App = {
         // 先注册流式监听器（防止竞态：invoke 返回前主进程可能已开始推送事件）
         this._agentStreamBuffer = [];
         this._agentStreamListening = true;
+        document.body.classList.add('streaming-active');
         window.electronAPI.onAgentStream((evt) => {
           if (this._agentStreamListening) {
             this._agentStreamBuffer.push(evt);
@@ -3548,6 +3584,7 @@ const App = {
 
           // 切换到直接监听模式，处理缓冲的事件
           this._agentStreamListening = false;
+          document.body.classList.remove('streaming-active');
           const bufferedEvents = this._agentStreamBuffer || [];
           this._agentStreamBuffer = [];
 
@@ -3573,6 +3610,7 @@ const App = {
           this._agentStreamListening = false;
           this._agentStreamBuffer = [];
           window.electronAPI?.removeAgentListeners?.();
+          document.body.classList.remove('streaming-active');
 
           const messageContent = assistantMessage.querySelector('.message-content');
           const agentLabels = { priority: '🎯 优先级规划', knowledge: '📚 知识梳理', memory: '🧠 记忆整理', report: '📊 日报生成', chat: '🤖 LLM 对话' };
@@ -3658,8 +3696,10 @@ const App = {
       // CC 模式错误清理
       this._ccStreaming = false;
       if (this._ccTimerInterval) { clearInterval(this._ccTimerInterval); this._ccTimerInterval = null; }
+      this._ccTimerEl = null;
       window.electronAPI?.removeCCListeners?.();
       this._updateStreamingUI(false);
+      document.body.classList.remove('streaming-active');
       const messageContent = assistantMessage.querySelector('.message-content');
       messageContent.innerHTML = `<p class="error-text">抱歉，发生了错误：${this.escapeHtml(error.message)}</p>
         <p class="error-hint">请检查 API 配置或网络连接</p>`;
@@ -4916,6 +4956,7 @@ const App = {
     if (this._ccTimerInterval) {
       clearInterval(this._ccTimerInterval);
       this._ccTimerInterval = null;
+      this._ccTimerEl = null;
     }
     window.electronAPI?.removeCCListeners?.();
     if (this._ccStreamResolve) {
@@ -6743,6 +6784,7 @@ const App = {
 
     // 清理状态
     this._adpStreaming = false;
+    document.body.classList.remove('streaming-active');
     this._adpCurrentBubble = null;
     this._adpCurrentMessageEl = null;
     this._updateStreamingUI(false);
@@ -8498,6 +8540,17 @@ const App = {
   _saveCurrentSessionMessages() {
     if (!this._activeSessionId) return;
 
+    // 防抖：合并短时间内的多次调用（流式完成+视图切换可能连续触发）
+    if (this._saveSessionTimer) clearTimeout(this._saveSessionTimer);
+    this._saveSessionTimer = setTimeout(() => {
+      this._doSaveCurrentSessionMessages();
+      this._saveSessionTimer = null;
+    }, 500);
+  },
+
+  _doSaveCurrentSessionMessages() {
+    if (!this._activeSessionId) return;
+
     const chatMessages = document.getElementById('chatMessages');
     if (!chatMessages) return;
 
@@ -8603,7 +8656,9 @@ const App = {
     // CC 模式停止
     if (this._ccStreaming) {
       this._ccStreaming = false;
+      document.body.classList.remove('streaming-active');
       if (this._ccTimerInterval) { clearInterval(this._ccTimerInterval); this._ccTimerInterval = null; }
+      this._ccTimerEl = null;
       window.electronAPI?.ccStop?.();
       window.electronAPI?.removeCCListeners?.();
       if (this._ccStreamResolve) { this._ccStreamResolve(); this._ccStreamResolve = null; }
@@ -8615,7 +8670,9 @@ const App = {
     if (!this._adpStreaming) return;
 
     this._adpStreaming = false;
+    document.body.classList.remove('streaming-active');
     if (this._adpTimerInterval) { clearInterval(this._adpTimerInterval); this._adpTimerInterval = null; }
+    this._adpTimerEl = null;
     window.electronAPI?.stopADPMessage?.();
     window.electronAPI?.removeADPListeners?.();
     if (this._adpStreamResolve) { this._adpStreamResolve(); this._adpStreamResolve = null; }
@@ -15603,7 +15660,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('beforeunload', () => {
     if (App._activeSessionId) {
-      App._saveCurrentSessionMessages();
+      // beforeunload 必须同步保存，跳过防抖
+      if (App._saveSessionTimer) {
+        clearTimeout(App._saveSessionTimer);
+        App._saveSessionTimer = null;
+      }
+      App._doSaveCurrentSessionMessages();
     }
   });
 });

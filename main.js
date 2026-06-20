@@ -11885,6 +11885,9 @@ app.on('before-quit', () => {
   if (widgetSyncTimer) {
     clearInterval(widgetSyncTimer);
   }
+  // 清理配置轮询和通知轮询定时器
+  stopConfigPolling();
+  stopNotificationPolling();
   // 保存数据库
   if (db) {
     try { db.save(); } catch (e) { console.error('[Database] Save on quit failed:', e); }
