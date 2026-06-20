@@ -9,6 +9,35 @@
 - **本地 workspace 的 `config-server/` 与服务器部署代码可能不同步**：排查服务器问题必须检查实际部署代码（`/root/memora-modular/`），不能只看本地代码
 - **Electron 修改 main.js 后必须重启应用**才能生效，否则运行的是旧代码
 
+## M-Agent 多供应商架构（2026-06-19 实现）
+
+### 供应商清单（全部 Anthropic 兼容直连）
+| 供应商 | Base URL | 认证 | 类型 |
+|--------|----------|------|------|
+| 火山引擎 Coding Plan | `https://ark.cn-beijing.volces.com/api/coding` | Auth Token (ark-xxx) | direct |
+| DeepSeek | `https://api.deepseek.com/anthropic` | API Key (sk-xxx) | direct |
+| 腾讯云 Coding Plan | `https://api.lkeap.cloud.tencent.com/coding/anthropic` | API Key (sk-sp-xxx) | direct |
+| OpenRouter | `https://openrouter.ai/api/v1` | API Key (sk-or-v1-xxx) | proxy（需 anthropic-proxy.js 翻译） |
+
+### 关键发现
+- **腾讯云 Coding Plan 提供 Anthropic 兼容端点**（不是 OpenAI 格式），不需要代理翻译！原始设计文档误将其归为 proxy 模式
+- 腾讯云 API Key 格式 `sk-sp-xxx` 与普通 Key `sk-xxx` 不互通
+- 三家国内供应商均直连，ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + ANTHROPIC_MODEL 直接设置即可
+
+### 子任务轮询框架
+- CC SDK `query()` 是同步迭代器，agent 启动异步后台任务后返回 task_id 就结束了
+- SubTaskPoller 在 `result` 事件后自动检测 task_id 并轮询
+- **独立 IPC 通道 `cc:subtask`**（不与 `cc:stream` 生命周期冲突，CC done 后继续接收）
+- 轮询支持火山引擎/腾讯云/通用三种 API 查询端点
+- 自适应退避：10s→20s→30s，超时 10 分钟，not-found 重试 3 次后放弃
+
+### 代码位置
+- `PROVIDER_REGISTRY` → `main.js` 紧跟 `DEFAULT_CC_CONFIG` 之后
+- `SubTaskPoller` → `src/proxy/subtask-poller.js`
+- Provider 选择器 → `#ccProviderSelect` in index.html
+- Provider 设置面板 → 国内供应商可折叠卡片区域
+- 配置迁移 → `migrateOldCCConfig()` 旧 `cc_auth_token` → 新 `cc_provider_volcano_authToken`
+
 ## ADP 文件上传 COS AccessDenied 根因（2026-06-12 关键）
 对照官方 Python SDK（docs/pythonsdk/chat_with_file_or_img_python/main.py）得出的铁律：
 - **docParse 的 `cos_url` 用 `UploadPath`（仅路径，如 `/xxx.md`），不是完整 URL！** 官方 SDK main.py:307 `"cos_url": credentials['UploadPath']`。之前误传完整 URL 导致 docParse 报 Invalid-URL / COS AccessDenied

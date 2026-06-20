@@ -57,6 +57,7 @@ const Documents = {
         const artifactsContainer = document.getElementById('agentArtifactsContainer');
         const kbContainer = document.getElementById('knowledgeBaseContainer');
         const skillContainer = document.getElementById('skillContainer');
+        const connectorContainer = document.getElementById('connectorContainer');
         const normalElements = document.querySelectorAll('#documentsGrid, #documentsPagination, #documentsLoading');
         const cloudSubTabs = document.getElementById('cloudSubTabs');
         const sortTabs = document.getElementById('documentsSortTabs');
@@ -66,6 +67,7 @@ const Documents = {
         if (artifactsContainer) artifactsContainer.classList.add('hidden');
         if (kbContainer) kbContainer.classList.add('hidden');
         if (skillContainer) skillContainer.classList.add('hidden');
+        if (connectorContainer) connectorContainer.classList.add('hidden');
         normalElements.forEach(el => el.classList.add('hidden'));
         if (cloudSubTabs) cloudSubTabs.classList.add('hidden');
 
@@ -91,6 +93,9 @@ const Documents = {
             App._loadSkillList();
             App._initSkillHub();
           }
+        } else if (this.currentType === 'connector') {
+          if (connectorContainer) connectorContainer.classList.remove('hidden');
+          if (window.App) App._loadConnectorList();
         } else {
           // cloud
           normalElements.forEach(el => el.classList.remove('hidden'));
@@ -179,6 +184,8 @@ const Documents = {
     const localContainer = document.getElementById('localFilesContainer');
     const artifactsContainer = document.getElementById('agentArtifactsContainer');
     const kbContainer = document.getElementById('knowledgeBaseContainer');
+    const skillContainer = document.getElementById('skillContainer');
+    const connectorContainer = document.getElementById('connectorContainer');
     const normalElements = document.querySelectorAll('#documentsGrid, #documentsPagination, #documentsLoading');
     const cloudSubTabs = document.getElementById('cloudSubTabs');
     const sortTabs = document.getElementById('documentsSortTabs');
@@ -187,6 +194,8 @@ const Documents = {
     if (localContainer) localContainer.classList.add('hidden');
     if (artifactsContainer) artifactsContainer.classList.add('hidden');
     if (kbContainer) kbContainer.classList.add('hidden');
+    if (skillContainer) skillContainer.classList.add('hidden');
+    if (connectorContainer) connectorContainer.classList.add('hidden');
     normalElements.forEach(el => el.classList.add('hidden'));
     if (cloudSubTabs) cloudSubTabs.classList.add('hidden');
 
@@ -206,6 +215,15 @@ const Documents = {
     } else if (this.currentType === 'artifacts') {
       if (artifactsContainer) artifactsContainer.classList.remove('hidden');
       AgentArtifacts.onShow();
+    } else if (this.currentType === 'skill') {
+      if (skillContainer) skillContainer.classList.remove('hidden');
+      if (window.App) {
+        App._loadSkillList();
+        App._initSkillHub();
+      }
+    } else if (this.currentType === 'connector') {
+      if (connectorContainer) connectorContainer.classList.remove('hidden');
+      if (window.App) App._loadConnectorList();
     } else {
       // cloud
       normalElements.forEach(el => el.classList.remove('hidden'));
@@ -1124,18 +1142,18 @@ const AgentArtifacts = {
         return;
       }
 
-      // 按日期分组
+      // 后端已按 created_at 倒序排序，按实际创建日期分组（不用文件夹名）
       const grouped = {};
       artifacts.forEach(a => {
-        const dateKey = a.dateFolder || '未知日期';
+        const dateKey = (a.created_at || '').split('T')[0] || a.dateFolder || '未知日期';
         if (!grouped[dateKey]) grouped[dateKey] = [];
         grouped[dateKey].push(a);
       });
 
-      // 按日期倒序渲染
+      // 日期倒序（后端已按时间排序，组内顺序保持不变）
       const sortedDates = Object.keys(grouped).sort().reverse();
       grid.innerHTML = sortedDates.map(date => {
-        const items = grouped[date].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        const items = grouped[date];
         return `
           <div class="artifact-date-group">
             <div class="artifact-date-header">📅 ${this._escapeHtml(date)}</div>

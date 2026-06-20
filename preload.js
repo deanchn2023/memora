@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ccGetConfig: () => ipcRenderer.invoke('cc:get-config'),
   ccSetConfig: (config) => ipcRenderer.invoke('cc:set-config', config),
   ccPickDirectory: () => ipcRenderer.invoke('cc:pick-directory'),
+  // 供应商管理（v3.0 多供应商）
+  ccGetProviders: () => ipcRenderer.invoke('cc:get-providers'),
+  ccTestProvider: (params) => ipcRenderer.invoke('cc:test-provider', params),
+  ccParseModels: (params) => ipcRenderer.invoke('cc:parse-models', params),
   // Skill 管理（v2.7 CC 模式）
   skillUpload: (data) => ipcRenderer.invoke('skill:upload', data),
   skillList: () => ipcRenderer.invoke('skill:list'),
@@ -55,11 +59,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillhubUninstall: (data) => ipcRenderer.invoke('skillhub:uninstall', data),
   // CC 记忆同步
   ccSyncMemory: () => ipcRenderer.invoke('cc:sync-memory'),
+  // OpenRouter 集成
+  ccOpenRouterGetModels: () => ipcRenderer.invoke('cc:openrouter-get-models'),
+  ccOpenRouterTest: (params) => ipcRenderer.invoke('cc:openrouter-test', params),
+  ccOpenRouterStopProxy: () => ipcRenderer.invoke('cc:openrouter-stop-proxy'),
+  // MCP 连接器管理
+  connectorList: (params) => ipcRenderer.invoke('connector:list', params),
+  connectorSave: (data) => ipcRenderer.invoke('connector:save', data),
+  connectorDelete: (data) => ipcRenderer.invoke('connector:delete', data),
+  connectorToggle: (data) => ipcRenderer.invoke('connector:toggle', data),
   onCCStream: (callback) => {
     ipcRenderer.on('cc:stream', (event, data) => callback(data));
   },
   removeCCListeners: () => {
     ipcRenderer.removeAllListeners('cc:stream');
+  },
+  // 子任务事件（独立通道，不受 cc:stream 生命周期影响）
+  onCCSubTask: (callback) => {
+    ipcRenderer.on('cc:subtask', (event, data) => callback(data));
+  },
+  removeCCSubTaskListeners: () => {
+    ipcRenderer.removeAllListeners('cc:subtask');
   },
   
   // ADP配置
@@ -252,6 +272,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   artifactsShowInFolder: (filePath) => ipcRenderer.invoke('artifacts:show-in-folder', { filePath }),
   artifactsSave: (data) => ipcRenderer.invoke('artifacts:save', data),
   artifactsDownloadAndSave: (data) => ipcRenderer.invoke('artifacts:download-and-save', data),
+  ccExecuteCommand: (data) => ipcRenderer.invoke('cc:execute-command', data),
   
   // 读取 src/data/ 目录下的数据文件
   readDataFile: (fileName) => ipcRenderer.invoke('read-data-file', fileName),
@@ -530,5 +551,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 主进程触发的即时推送（如剪贴板图片保存后）
   onSyncTriggerPush: (callback) => {
     ipcRenderer.on('sync:trigger-push', (event, data) => callback(data));
+  },
+
+  // 渲染进程同步日志（用于崩溃前定位）
+  syncLog: (msg) => ipcRenderer.send('sync-log', msg),
+
+  // v3.1 语音 ASR 实时识别
+  asrGetConfig: () => ipcRenderer.invoke('asr:get-config'),
+  asrSetConfig: (config) => ipcRenderer.invoke('asr:set-config', config),
+  asrCheckMicPermission: () => ipcRenderer.invoke('asr:check-mic-permission'),
+  asrStart: (params) => ipcRenderer.invoke('asr:start', params),
+  asrStop: () => ipcRenderer.invoke('asr:stop'),
+  asrAudioChunk: (data) => ipcRenderer.invoke('asr:audio-chunk', data),
+  onASRResult: (callback) => {
+    ipcRenderer.on('asr:result', (event, data) => callback(data));
+  },
+  onASRError: (callback) => {
+    ipcRenderer.on('asr:error', (event, data) => callback(data));
+  },
+  onASRStart: (callback) => {
+    ipcRenderer.on('asr:started', (event, data) => callback(data));
+  },
+  removeASRListeners: () => {
+    ipcRenderer.removeAllListeners('asr:result');
+    ipcRenderer.removeAllListeners('asr:error');
+    ipcRenderer.removeAllListeners('asr:started');
   },
 });

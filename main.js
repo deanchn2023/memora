@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, powerMonitor, session, systemPreferences } = require('electron');
 const os = require('os');
 
 // 加载 .env 环境变量（开发时使用，打包后 .env 不存在则忽略）
@@ -7,6 +7,15 @@ try { require('dotenv').config(); } catch (_) {}
 // 防止 EPIPE 崩溃：stdout/stderr 管道关闭时（如终端关闭），console.log 写入会抛出 EPIPE
 process.stdout.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
 process.stderr.on('error', (err) => { if (err.code === 'EPIPE') process.exit(0); });
+
+// Electron 28 + macOS: getUserMedia + AudioContext 可能导致渲染进程 SIGSEGV(crashed 11)
+// 禁用音频服务沙箱化可修复此问题（Chromium 已知 bug）
+app.commandLine.appendSwitch('disable-features', 'AudioServiceSandbox,AudioServiceOutOfProcess');
+// 禁用 GPU 沙箱（可能干扰音频权限）
+app.commandLine.appendSwitch('no-sandbox');
+// 禁用音频服务独立进程，改为在渲染进程内处理
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 // 单实例锁：防止多个 Electron 实例同时运行（避免疯狂开窗口）
 const gotTheLock = app.requestSingleInstanceLock();
@@ -19,6 +28,159 @@ const { exec } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const FormData = require('form-data');
+
+// Anthropic-to-OpenAI Proxy（OpenRouter 集成）
+const { createAnthropicProxy } = require('./src/proxy/anthropic-proxy');
+let anthropicProxy = null;
+let anthropicProxyPort = null;
+
+// SubTask Poller（异步子任务轮询）
+const { subTaskPoller, extractTaskIds } = require('./src/proxy/subtask-poller');
+
+// ─── Provider Registry（供应商注册表）───
+const PROVIDER_REGISTRY = {
+  volcano: {
+    id: 'volcano',
+    name: '火山引擎 Coding Plan',
+    shortName: '火山引擎',
+    region: 'cn',
+    type: 'direct',           // Anthropic 兼容直连
+    icon: '🌋',
+    fields: [
+      { key: 'baseUrl', label: 'Base URL', type: 'text', default: 'https://ark.cn-beijing.volces.com/api/coding' },
+      { key: 'authToken', label: 'Auth Token', type: 'password', placeholder: 'ark-xxxxxxxx' },
+      { key: 'modelList', label: '模型列表', type: 'textarea', default: '' },
+      { key: 'model', label: '模型', type: 'select', default: 'auto', options: [
+        { value: 'auto', label: 'Auto（智能调度）' },
+      ]},
+    ],
+    envMap: (config) => ({
+      ANTHROPIC_BASE_URL: config.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: config.authToken,
+      ANTHROPIC_MODEL: config.model,
+    }),
+  },
+
+  deepseek: {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    shortName: 'DeepSeek',
+    region: 'cn',
+    type: 'direct',           // Anthropic 兼容直连
+    icon: '🔵',
+    fields: [
+      { key: 'baseUrl', label: 'Base URL', type: 'text', default: 'https://api.deepseek.com/anthropic' },
+      { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sk-xxxxxxxx' },
+      { key: 'modelList', label: '模型列表', type: 'textarea', default: '' },
+      { key: 'model', label: '模型', type: 'select', options: [
+        { value: 'deepseek-chat', label: 'DeepSeek Chat (快速)' },
+        { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner (推理)' },
+      ]},
+    ],
+    envMap: (config) => ({
+      ANTHROPIC_BASE_URL: config.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: config.apiKey,
+      ANTHROPIC_MODEL: config.model,
+    }),
+  },
+
+  tencent: {
+    id: 'tencent',
+    name: '腾讯云 Coding Plan',
+    shortName: '腾讯云',
+    region: 'cn',
+    type: 'direct',           // Anthropic 兼容直连
+    icon: '🐧',
+    fields: [
+      { key: 'baseUrl', label: 'Base URL', type: 'text', default: 'https://api.lkeap.cloud.tencent.com/coding/anthropic' },
+      { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sk-sp-xxxxxxxx' },
+      { key: 'modelList', label: '模型列表', type: 'textarea', default: '' },
+      { key: 'model', label: '模型', type: 'select', options: [
+        { value: 'tc-code-latest', label: 'Auto (自动匹配)' },
+        { value: 'minimax-m2.5', label: 'MiniMax-M2.5' },
+        { value: 'kimi-k2.5', label: 'Kimi-K2.5' },
+        { value: 'glm-5', label: 'GLM-5' },
+        { value: 'hunyuan-t1', label: 'Hunyuan-T1' },
+        { value: 'hunyuan-turbos', label: 'Hunyuan-TurboS' },
+      ]},
+    ],
+    envMap: (config) => ({
+      ANTHROPIC_BASE_URL: config.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: config.apiKey,
+      ANTHROPIC_MODEL: config.model,
+    }),
+  },
+
+  openrouter: {
+    id: 'openrouter',
+    name: 'OpenRouter（海外多模型）',
+    shortName: 'OpenRouter',
+    region: 'global',
+    type: 'proxy',            // OpenAI 格式，需代理翻译
+    icon: '🌐',
+    fields: [
+      { key: 'baseUrl', label: 'Base URL', type: 'text', default: 'https://openrouter.ai/api/v1' },
+      { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'sk-or-v1-xxxxxxxx' },
+      { key: 'defaultModel', label: '默认模型', type: 'text', placeholder: 'anthropic/claude-sonnet-4' },
+    ],
+    proxyConfig: (config) => ({
+      upstreamBaseUrl: config.baseUrl,
+      upstreamApiKey: config.apiKey,
+      upstreamAuthType: 'bearer',
+    }),
+  },
+};
+
+// 读取供应商配置
+function getProviderConfig(providerId) {
+  const provider = PROVIDER_REGISTRY[providerId];
+  if (!provider) return {};
+  const config = {};
+  for (const field of provider.fields) {
+    config[field.key] = getSetting(`cc_provider_${providerId}_${field.key}`) || field.default || '';
+  }
+  config.enabled = getSetting(`cc_provider_${providerId}_enabled`) === 'true';
+  return config;
+}
+
+// 判断供应商是否已配置
+function isProviderConfigured(providerId) {
+  const provider = PROVIDER_REGISTRY[providerId];
+  if (!provider) return false;
+  const config = getProviderConfig(providerId);
+  return provider.fields
+    .filter(f => f.type === 'password')
+    .every(f => config[f.key] && config[f.key].trim() !== '');
+}
+
+// 获取可用供应商列表
+function getAvailableProviders() {
+  return Object.values(PROVIDER_REGISTRY)
+    .filter(p => isProviderConfigured(p.id) || p.id === 'volcano')
+    .sort((a, b) => {
+      if (a.region === 'cn' && b.region !== 'cn') return -1;
+      if (a.region !== 'cn' && b.region === 'cn') return 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+// 旧配置迁移
+function migrateOldCCConfig() {
+  // 火山引擎：旧 cc_auth_token → 新 cc_provider_volcano_authToken
+  if (getSetting('cc_auth_token') && !getSetting('cc_provider_volcano_authToken')) {
+    setSetting('cc_provider_volcano_authToken', getSetting('cc_auth_token'));
+    setSetting('cc_provider_volcano_baseUrl', getSetting('cc_base_url') || DEFAULT_CC_CONFIG.baseUrl);
+    setSetting('cc_provider_volcano_model', getSetting('cc_model') || DEFAULT_CC_CONFIG.model);
+    setSetting('cc_provider_volcano_enabled', 'true');
+  }
+  // OpenRouter：旧 cc_openrouter_api_key → 新 cc_provider_openrouter_apiKey
+  if (getSetting('cc_openrouter_api_key') && !getSetting('cc_provider_openrouter_apiKey')) {
+    setSetting('cc_provider_openrouter_apiKey', getSetting('cc_openrouter_api_key'));
+    setSetting('cc_provider_openrouter_baseUrl', getSetting('cc_openrouter_base_url') || 'https://openrouter.ai/api/v1');
+    setSetting('cc_provider_openrouter_defaultModel', getSetting('cc_openrouter_default_model') || '');
+    setSetting('cc_provider_openrouter_enabled', 'true');
+  }
+}
 
 // Claude Code Agent SDK（v2.7 CC 模式）— ESM 模块，需动态 import
 let claudeAgentSDK = null;
@@ -38,11 +200,11 @@ async function loadClaudeAgentSDK() {
 // 启动时预加载
 loadClaudeAgentSDK();
 
-// CC 模式默认配置（火山引擎 Coding Plan 原生 Anthropic 兼容）
+// M-Agent 模式默认配置（Anthropic 兼容 API）
 const DEFAULT_CC_CONFIG = {
   baseUrl: 'https://ark.cn-beijing.volces.com/api/coding',
   authToken: 'ark-08382ce6-d0e9-4e92-af7a-234062ee6091-2d675',
-  model: 'ark-code-latest',
+  model: 'auto',
   allowedTools: 'Read,Glob,Grep,WebSearch',
   permissionMode: 'default',
   maxTurns: 50,
@@ -216,11 +378,18 @@ const DEFAULT_DAILY_LIMIT_FOR_BUILTIN_KEY = 10;
 // 'agent' = 所有 AI 调用走 ADP 智能体（已有 ADP 用原逻辑，原 LLM 调用改走通用 ADP AppKey）
 // 'llm'   = 所有 AI 调用走本地 LLM（已有 LLM 用原逻辑，原 ADP 调用改走大用量/小用量 LLM）
 function getGlobalAIMode() {
-  return getSetting('global_ai_mode') || 'agent'; // 默认 agent 模式
+  const stored = getSetting('global_ai_mode');
+  if (!stored) return 'cc'; // 默认 CC 模式
+  // 迁移：旧存储值为 agent 的，升级为 cc（用户已切换默认模式）
+  if (stored === 'agent') {
+    setSetting('global_ai_mode', 'cc');
+    return 'cc';
+  }
+  return stored;
 }
 
 function setGlobalAIMode(mode) {
-  if (mode === 'agent' || mode === 'llm') {
+  if (mode === 'agent' || mode === 'llm' || mode === 'cc') {
     setSetting('global_ai_mode', mode);
     return true;
   }
@@ -3132,6 +3301,10 @@ function getCCConfig() {
     maxTurns: parseInt(getSetting('cc_max_turns')) || DEFAULT_CC_CONFIG.maxTurns,
     defaultWorkdir: getSetting('cc_default_workdir') || path.join(userDataPath, 'cc-workspace'),
     envVars,
+    // OpenRouter 配置
+    openRouterApiKey: getSetting('cc_openrouter_api_key') || '',
+    openRouterBaseUrl: getSetting('cc_openrouter_base_url') || 'https://openrouter.ai/api/v1',
+    openRouterDefaultModel: getSetting('cc_openrouter_default_model') || '',
   };
 }
 
@@ -3262,6 +3435,8 @@ function startCCMemorySync() {
 
 ipcMain.handle('cc:get-config', async () => {
   const config = getCCConfig();
+  // 确保迁移已执行
+  migrateOldCCConfig();
   return {
     baseUrl: config.baseUrl,
     model: config.model,
@@ -3271,6 +3446,46 @@ ipcMain.handle('cc:get-config', async () => {
     defaultWorkdir: config.defaultWorkdir,
     envVars: config.envVars,
     authTokenConfigured: !!config.authToken,
+    // OpenRouter
+    openRouterApiKey: config.openRouterApiKey ? '***configured***' : '',
+    openRouterBaseUrl: config.openRouterBaseUrl,
+    openRouterDefaultModel: config.openRouterDefaultModel,
+    openRouterProxyPort: anthropicProxyPort,
+    // 供应商列表 — 返回所有供应商（含未配置），设置面板需要显示全部
+    providers: Object.values(PROVIDER_REGISTRY).map(p => {
+      const providerConfig = getProviderConfig(p.id);
+      const fields = p.fields.map(f => {
+        const fieldData = {
+          ...f,
+          value: providerConfig[f.key] || f.default || '',
+        };
+        // 模型字段：如果有 AI 解析保存的模型列表，用它覆盖默认 options
+        if (f.key === 'model') {
+          const savedModels = getSetting(`cc_provider_${p.id}_models`);
+          if (savedModels) {
+            try {
+              const parsed = JSON.parse(savedModels);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                fieldData.options = parsed;
+              }
+            } catch (_) {}
+          }
+        }
+        return fieldData;
+      });
+      return {
+        id: p.id,
+        name: p.name,
+        shortName: p.shortName,
+        region: p.region,
+        type: p.type,
+        icon: p.icon,
+        configured: isProviderConfigured(p.id),
+        config: providerConfig,
+        fields,
+      };
+    }),
+    activeProvider: getSetting('cc_active_provider') || 'volcano',
   };
 });
 
@@ -3283,7 +3498,203 @@ ipcMain.handle('cc:set-config', async (event, config) => {
   if (config.maxTurns !== undefined) setSetting('cc_max_turns', config.maxTurns);
   if (config.defaultWorkdir !== undefined) setSetting('cc_default_workdir', config.defaultWorkdir);
   if (config.envVars !== undefined) setSetting('cc_env_vars', JSON.stringify(config.envVars));
+  // OpenRouter 配置
+  if (config.openRouterApiKey !== undefined) setSetting('cc_openrouter_api_key', config.openRouterApiKey);
+  if (config.openRouterBaseUrl !== undefined) setSetting('cc_openrouter_base_url', config.openRouterBaseUrl);
+  if (config.openRouterDefaultModel !== undefined) setSetting('cc_openrouter_default_model', config.openRouterDefaultModel);
+  // 供应商配置
+  if (config.providers) {
+    for (const [providerId, providerConfig] of Object.entries(config.providers)) {
+      const provider = PROVIDER_REGISTRY[providerId];
+      if (!provider) continue;
+      for (const field of provider.fields) {
+        if (providerConfig[field.key] !== undefined) {
+          setSetting(`cc_provider_${providerId}_${field.key}`, providerConfig[field.key]);
+        }
+      }
+      if (providerConfig.enabled !== undefined) {
+        setSetting(`cc_provider_${providerId}_enabled`, providerConfig.enabled ? 'true' : 'false');
+      }
+    }
+  }
+  if (config.activeProvider !== undefined) {
+    setSetting('cc_active_provider', config.activeProvider);
+  }
   return { success: true };
+});
+
+// ─── 供应商管理 IPC ───
+
+ipcMain.handle('cc:get-providers', async () => {
+  migrateOldCCConfig();
+  return {
+    providers: getAvailableProviders().map(p => ({
+      id: p.id,
+      name: p.name,
+      shortName: p.shortName,
+      region: p.region,
+      type: p.type,
+      icon: p.icon,
+      fields: p.fields.map(f => {
+        const fieldData = {
+          ...f,
+          value: getSetting(`cc_provider_${p.id}_${f.key}`) || f.default || '',
+        };
+        // 模型字段：如果有 AI 解析保存的模型列表，用它覆盖默认 options
+        if (f.key === 'model') {
+          const savedModels = getSetting(`cc_provider_${p.id}_models`);
+          if (savedModels) {
+            try {
+              const parsed = JSON.parse(savedModels);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                fieldData.options = parsed;
+              }
+            } catch (_) {}
+          }
+        }
+        return fieldData;
+      }),
+      configured: isProviderConfigured(p.id),
+      enabled: getSetting(`cc_provider_${p.id}_enabled`) === 'true',
+    })),
+    activeProvider: getSetting('cc_active_provider') || 'volcano',
+  };
+});
+
+// AI 解析模型列表 — 用户粘贴模型说明文本，AI 提取为 [{value, label}]
+ipcMain.handle('cc:parse-models', async (event, { providerId, text }) => {
+  if (!text || !text.trim()) {
+    return { success: false, error: '请先粘贴模型列表文本' };
+  }
+
+  const parsePrompt = `你是一个模型列表解析助手。用户会粘贴大模型平台提供的模型说明文本（可能包含模型名称、描述、注意事项等）。
+请从中提取每个模型的信息，生成 JSON 数组，每个元素格式为：
+{"value": "模型ID", "label": "模型名称（简短描述）"}
+
+规则：
+1. value 使用小写+连字符格式（如 doubao-seed-2.0-code）
+2. label 包含模型名称和简短特征描述（如 "Doubao-Seed-2.0-Code（代码+多模态）"）
+3. 如果文本中提到"即将下线"或类似表述，在 label 中标注
+4. 如果文本中提到"额度消耗快"或类似注意事项，在 label 中标注
+5. 忽略纯说明性文字（如"说明"、"注意"开头的段落），只提取模型条目
+6. 只输出纯 JSON 数组，不要解释、不要 markdown 代码块
+
+示例输入：
+Auto
+默认选择。智能调度模型。
+Doubao-Seed-2.0-Code
+支持多模态视觉理解。代码能力强化。
+
+示例输出：
+[{"value":"auto","label":"Auto（智能调度）"},{"value":"doubao-seed-2.0-code","label":"Doubao-Seed-2.0-Code（代码+多模态）"}]`;
+
+  try {
+    const { response } = await callAI({
+      module: 'parse_models',
+      category: 'lowvol',
+      messages: [
+        { role: 'system', content: parsePrompt },
+        { role: 'user', content: text },
+      ],
+      fetchOptions: { temperature: 0.1 },
+    });
+
+    if (!response || !response.ok) {
+      return { success: false, error: 'AI 解析失败，请检查 LLM 配置' };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+
+    // 提取 JSON 数组（容错：可能被 markdown 包裹）
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      return { success: false, error: 'AI 未返回有效的模型列表' };
+    }
+
+    let models;
+    try {
+      models = JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      return { success: false, error: 'AI 返回的 JSON 格式无效' };
+    }
+
+    if (!Array.isArray(models) || models.length === 0) {
+      return { success: false, error: '未解析到任何模型' };
+    }
+
+    // 校验格式
+    for (const m of models) {
+      if (!m.value || !m.label) {
+        return { success: false, error: '模型格式不正确，缺少 value 或 label' };
+      }
+    }
+
+    // 保存解析结果
+    setSetting(`cc_provider_${providerId}_models`, JSON.stringify(models));
+    console.log(`[CC] Parsed ${models.length} models for provider ${providerId}`);
+
+    return { success: true, models };
+  } catch (e) {
+    console.error('[CC] Parse models error:', e);
+    return { success: false, error: `解析失败: ${e.message}` };
+  }
+});
+
+ipcMain.handle('cc:test-provider', async (event, { providerId }) => {
+  const provider = PROVIDER_REGISTRY[providerId];
+  if (!provider) return { success: false, error: '未知的供应商' };
+
+  const config = getProviderConfig(providerId);
+  if (!isProviderConfigured(providerId)) {
+    return { success: false, error: `${provider.name} 尚未配置完成` };
+  }
+
+  try {
+    if (provider.type === 'direct') {
+      // 直连模式：发一个简单的 Anthropic Messages API 请求测试
+      const baseUrl = config.baseUrl.replace(/\/+$/, '');
+      const authToken = config.authToken || config.apiKey;
+      const model = config.model;
+
+      const resp = await fetch(`${baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': authToken,
+          'anthropic-version': '2023-06-01',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+
+      if (resp.ok) {
+        return { success: true, message: `${provider.name} 连接成功 ✓` };
+      } else {
+        const errText = await resp.text();
+        return { success: false, error: `HTTP ${resp.status}: ${errText.substring(0, 200)}` };
+      }
+    } else if (provider.type === 'proxy') {
+      // 代理模式：测试 OpenAI 兼容端点
+      const baseUrl = config.baseUrl.replace(/\/+$/, '');
+      const apiKey = config.apiKey;
+      const resp = await fetch(`${baseUrl}/models`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+      if (resp.ok) {
+        return { success: true, message: `${provider.name} 连接成功 ✓` };
+      } else {
+        return { success: false, error: `HTTP ${resp.status}` };
+      }
+    }
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+  return { success: false, error: '未知错误' };
 });
 
 // CC 选择工作目录（系统目录选择器）
@@ -3302,6 +3713,85 @@ ipcMain.handle('cc:pick-directory', async () => {
   } catch (e) {
     return { success: false, error: e.message };
   }
+});
+
+// ============ MCP 连接器管理 ============
+
+// 危险命令黑名单（stdio 类型连接器）
+const DANGEROUS_COMMANDS = ['rm', 'mv', 'dd', 'mkfs', 'fdisk', 'shred', 'chmod', 'chown', 'kill', 'killall'];
+
+function getConnectors() {
+  try {
+    return JSON.parse(getSetting('mcp_connectors') || '[]');
+  } catch (_) { return []; }
+}
+
+function saveConnectors(connectors) {
+  setSetting('mcp_connectors', JSON.stringify(connectors));
+}
+
+function validateConnector(conn) {
+  if (!conn.name || !conn.name.trim()) return '连接器名称不能为空';
+  if (!['stdio', 'sse', 'http'].includes(conn.type)) return '类型必须是 stdio / sse / http';
+  if (conn.type === 'stdio') {
+    if (!conn.config?.command?.trim()) return 'stdio 类型必须填写 command';
+    const cmd = conn.config.command.trim();
+    const baseCmd = cmd.split(/\s+/)[0];
+    if (DANGEROUS_COMMANDS.includes(baseCmd)) return `禁止的危险命令: ${baseCmd}`;
+  } else {
+    if (!conn.config?.url?.trim()) return `${conn.type} 类型必须填写 URL`;
+    try { new URL(conn.config.url); } catch { return 'URL 格式无效'; }
+  }
+  return null;
+}
+
+// 连接器列表
+ipcMain.handle('connector:list', async (event, params) => {
+  const connectors = getConnectors();
+  if (params?.enabledOnly) return connectors.filter(c => c.enabled);
+  return connectors;
+});
+
+// 添加或更新连接器
+ipcMain.handle('connector:save', async (event, connector) => {
+  const err = validateConnector(connector);
+  if (err) return { success: false, error: err };
+
+  const connectors = getConnectors();
+  if (connector.id) {
+    // 更新
+    const idx = connectors.findIndex(c => c.id === connector.id);
+    if (idx === -1) return { success: false, error: '连接器不存在' };
+    connectors[idx] = { ...connectors[idx], ...connector, updated_at: new Date().toISOString() };
+  } else {
+    // 新增
+    connector.id = `conn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    connector.created_at = new Date().toISOString();
+    connector.updated_at = connector.created_at;
+    connectors.push(connector);
+  }
+  saveConnectors(connectors);
+  return { success: true, connector: connector.id ? connectors.find(c => c.id === connector.id) : connector };
+});
+
+// 删除连接器
+ipcMain.handle('connector:delete', async (event, { id }) => {
+  const connectors = getConnectors();
+  const filtered = connectors.filter(c => c.id !== id);
+  if (filtered.length === connectors.length) return { success: false, error: '连接器不存在' };
+  saveConnectors(filtered);
+  return { success: true };
+});
+
+// 启用/禁用连接器
+ipcMain.handle('connector:toggle', async (event, { id, enabled }) => {
+  const connectors = getConnectors();
+  const conn = connectors.find(c => c.id === id);
+  if (!conn) return { success: false, error: '连接器不存在' };
+  conn.enabled = enabled;
+  conn.updated_at = new Date().toISOString();
+  saveConnectors(connectors);
+  return { success: true };
 });
 
 // ============ Skill 管理（v2.7 CC 模式）============
@@ -3688,7 +4178,7 @@ ipcMain.handle('cc:test-connection', async (event, params) => {
 
   const startTime = Date.now();
   try {
-    // 火山引擎 Coding Plan 兼容 Anthropic Messages API
+    // Coding Plan 兼容 Anthropic Messages API
     const url = baseUrl.replace(/\/+$/, '') + '/v1/messages';
     const response = await fetch(url, {
       method: 'POST',
@@ -3726,14 +4216,142 @@ ipcMain.handle('cc:test-connection', async (event, params) => {
 });
 
 // CC 流式调用（核心）
-ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill }) => {
+// OpenRouter: 获取模型列表
+ipcMain.handle('cc:openrouter-get-models', async () => {
+  const apiKey = getSetting('cc_openrouter_api_key');
+  const baseUrl = getSetting('cc_openrouter_base_url') || 'https://openrouter.ai/api/v1';
+  if (!apiKey) {
+    return { success: false, error: 'OpenRouter API Key 未配置' };
+  }
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      return { success: false, error: `HTTP ${response.status}: ${errText.substring(0, 200)}` };
+    }
+    const data = await response.json();
+    const models = (data.data || []).map(m => ({
+      id: m.id,
+      name: m.name || m.id,
+      pricing: m.pricing || null,
+      context_length: m.context_length || null,
+    }));
+    return { success: true, models };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// OpenRouter: 测试连接
+ipcMain.handle('cc:openrouter-test', async (event, params) => {
+  const apiKey = params?.apiKey || getSetting('cc_openrouter_api_key');
+  const baseUrl = params?.baseUrl || getSetting('cc_openrouter_base_url') || 'https://openrouter.ai/api/v1';
+  if (!apiKey) {
+    return { ok: false, error: 'OpenRouter API Key 未配置' };
+  }
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    const latency = Date.now() - startTime;
+    if (response.ok) {
+      const data = await response.json();
+      const count = data.data?.length || 0;
+      return { ok: true, latency, modelCount: count };
+    } else {
+      const errText = await response.text().catch(() => '');
+      return { ok: false, error: `HTTP ${response.status}: ${errText.substring(0, 100)}`, latency };
+    }
+  } catch (err) {
+    return { ok: false, error: err.message, latency: Date.now() - startTime };
+  }
+});
+
+// OpenRouter: 停止代理
+ipcMain.handle('cc:openrouter-stop-proxy', async () => {
+  if (anthropicProxy) {
+    anthropicProxy.stop();
+    anthropicProxy = null;
+    anthropicProxyPort = null;
+  }
+  return { success: true };
+});
+
+ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill, connectorIds, openRouterModel, providerId }) => {
   const sdk = await loadClaudeAgentSDK();
   if (!sdk) {
     return { success: false, error: 'Claude Agent SDK 未加载，请检查依赖安装' };
   }
   const config = getCCConfig();
-  if (!config.authToken) {
-    return { success: false, error: 'Claude Code Auth Token 未配置' };
+
+  // ─── 供应商路由 ───
+  // 优先级：providerId > openRouterModel (旧兼容) > 默认 Coding Plan
+  let activeProviderId = providerId || getSetting('cc_active_provider') || 'volcano';
+  let providerEnv = null; // { ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL }
+  let useOpenRouter = false;
+
+  // 兼容旧 OpenRouter 路由
+  if (!providerId && openRouterModel && config.openRouterApiKey) {
+    activeProviderId = 'openrouter';
+    useOpenRouter = true;
+  }
+
+  const activeProvider = PROVIDER_REGISTRY[activeProviderId];
+
+  if (activeProvider && activeProvider.type === 'direct') {
+    // 直连模式（火山引擎/DeepSeek/腾讯云）
+    const providerConfig = getProviderConfig(activeProviderId);
+    const authToken = providerConfig.authToken || providerConfig.apiKey;
+    if (!authToken) {
+      return { success: false, error: `${activeProvider.name} 尚未配置认证信息` };
+    }
+    // 对话栏下拉框选择的模型优先于设置面板保存的配置
+    if (openRouterModel) {
+      providerConfig.model = openRouterModel;
+    }
+    providerEnv = activeProvider.envMap(providerConfig);
+    console.log(`[CC] Provider: ${activeProvider.name} | baseUrl: ${providerEnv.ANTHROPIC_BASE_URL} | model: ${providerEnv.ANTHROPIC_MODEL}`);
+  } else if ((activeProvider && activeProvider.type === 'proxy') || useOpenRouter) {
+    // 代理模式（OpenRouter 或其他 OpenAI 兼容服务）
+    useOpenRouter = true;
+    if (!anthropicProxy) {
+      // 确定代理上游
+      let proxyApiKey, proxyBaseUrl;
+      if (activeProviderId === 'openrouter' || !providerId) {
+        proxyApiKey = getSetting('cc_openrouter_api_key') || getProviderConfig('openrouter').apiKey;
+        proxyBaseUrl = getSetting('cc_openrouter_base_url') || getProviderConfig('openrouter').baseUrl;
+      } else {
+        const pc = getProviderConfig(activeProviderId);
+        proxyApiKey = pc.apiKey;
+        proxyBaseUrl = pc.baseUrl;
+      }
+
+      if (!proxyApiKey) {
+        return { success: false, error: '代理供应商 API Key 未配置' };
+      }
+
+      anthropicProxy = createAnthropicProxy({
+        getApiKey: () => proxyApiKey,
+        getBaseUrl: () => proxyBaseUrl,
+        getPort: () => 3999,
+      });
+      try {
+        anthropicProxyPort = await anthropicProxy.start();
+        console.log(`[Proxy] Started for ${activeProvider?.name || 'OpenRouter'} on port ${anthropicProxyPort}`);
+      } catch (e) {
+        return { success: false, error: `代理启动失败: ${e.message}` };
+      }
+    }
+  } else {
+    // 默认 Coding Plan
+    if (!config.authToken) {
+      return { success: false, error: 'Claude Code Auth Token 未配置' };
+    }
   }
 
   const { query } = sdk;
@@ -3751,8 +4369,18 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 
   // 构建 SDK options
   const allowedTools = config.allowedTools.split(',').map(t => t.trim()).filter(Boolean);
-  // 危险工具黑名单：双重防御，即使白名单误配也会被拦截
-  const disallowedTools = ['Bash', 'Write', 'Edit', 'Monitor', 'Agent'];
+  // 危险工具黑名单：根据权限模式动态调整
+  // - bypassPermissions：仅拦截 Agent（防止递归派生），允许 Bash/Write/Edit
+  // - acceptEdits：拦截 Bash + Agent，允许 Write/Edit
+  // - default/plan：拦截全部危险工具
+  let disallowedTools;
+  if (config.permissionMode === 'bypassPermissions') {
+    disallowedTools = ['Agent'];
+  } else if (config.permissionMode === 'acceptEdits') {
+    disallowedTools = ['Bash', 'Monitor', 'Agent'];
+  } else {
+    disallowedTools = ['Bash', 'Write', 'Edit', 'Monitor', 'Agent'];
+  }
   // 工作目录：优先用调用方指定的（对话级），否则用默认（设置级）
   const ccWorkdir = workdir || config.defaultWorkdir;
   try { fs.mkdirSync(ccWorkdir, { recursive: true }); } catch (_) {}
@@ -3804,9 +4432,10 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
       USER: process.env.USER,
       LANG: process.env.LANG,
       TERM: process.env.TERM,
-      ANTHROPIC_BASE_URL: config.baseUrl,
-      ANTHROPIC_AUTH_TOKEN: config.authToken,
-      ANTHROPIC_MODEL: config.model,
+      // 供应商路由：直连用 provider env，代理用 localhost，默认用 Coding Plan
+      ANTHROPIC_BASE_URL: providerEnv?.ANTHROPIC_BASE_URL || (useOpenRouter ? `http://127.0.0.1:${anthropicProxyPort}` : config.baseUrl),
+      ANTHROPIC_AUTH_TOKEN: providerEnv?.ANTHROPIC_AUTH_TOKEN || (useOpenRouter ? 'dummy-proxy-not-used' : config.authToken),
+      ANTHROPIC_MODEL: providerEnv?.ANTHROPIC_MODEL || (useOpenRouter ? (openRouterModel || getProviderConfig('openrouter').defaultModel) : config.model),
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'ANTHROPIC_API_KEY',
       ANTHROPIC_API_KEY: '',
       // 注入用户配置的 Skill 环境变量 / API Key
@@ -3816,7 +4445,35 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
     ...(sessionId ? { resume: sessionId } : {}),
   };
 
-  console.log(`[CC] Invoke | prompt: "${prompt.substring(0, 50)}..." | sessionId(resume): ${sessionId || 'null(新会话)'} | workdir: ${ccWorkdir}`);
+  // 构建 MCP Servers（连接器）
+  const allConnectors = getConnectors();
+  const selectedConnectors = allConnectors.filter(c => {
+    if (connectorIds && Array.isArray(connectorIds)) {
+      // 用户在对话栏明确选择了连接器
+      return connectorIds.includes(c.id);
+    }
+    // 没有传入 connectorIds 时，使用默认启用的
+    return c.enabled;
+  });
+
+  if (selectedConnectors.length > 0) {
+    const mcpServers = selectedConnectors.map(c => {
+      const serverConfig = { type: c.type };
+      if (c.type === 'stdio') {
+        serverConfig.command = c.config.command;
+        if (c.config.args && c.config.args.length > 0) serverConfig.args = c.config.args;
+        if (c.config.env && Object.keys(c.config.env).length > 0) serverConfig.env = c.config.env;
+      } else {
+        serverConfig.url = c.config.url;
+        if (c.config.headers && Object.keys(c.config.headers).length > 0) serverConfig.headers = c.config.headers;
+      }
+      return { [c.name]: serverConfig };
+    });
+    options.mcpServers = mcpServers;
+    console.log(`[CC] MCP servers: ${selectedConnectors.map(c => c.name).join(', ')}`);
+  }
+
+  console.log(`[CC] Invoke | prompt: "${prompt.substring(0, 50)}..." | sessionId(resume): ${sessionId || 'null(新会话)'} | workdir: ${ccWorkdir} | provider: ${activeProvider?.name || activeProviderId} | route: ${useOpenRouter ? 'proxy' : (providerEnv ? 'direct' : 'default')}`);
 
   // 每次对话前刷新 CLAUDE.md（将 memora 最新记忆同步到 CC 工作目录）
   syncCLAUDEMdToCC(ccWorkdir);
@@ -3836,14 +4493,13 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 
   // 异步消费流，逐消息推送到渲染进程
   (async () => {
+    // 通用发送辅助（定义在循环外部，确保循环结束后仍可调用）
+    const send = (data) => { if (mainWindow) mainWindow.webContents.send('cc:stream', data); };
     try {
       const messageStream = query({ prompt, options });
 
       for await (const msg of messageStream) {
         if (ccAbortController?.signal.aborted) break;
-
-        // 通用发送辅助
-        const send = (data) => { if (mainWindow) mainWindow.webContents.send('cc:stream', data); };
 
         // 全量日志（便于调试）
         console.log('[CC] msg:', msg.type, msg.subtype || '', msg.event?.type || '');
@@ -3915,15 +4571,40 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
           continue;
         }
 
-        // 完整 assistant turn
+        // 完整 assistant turn — 提取 thinking / text / tool_use 并推送
         if (msg.type === 'assistant' && msg.message?.content) {
           for (const block of msg.message.content) {
-            if (block.type === 'tool_use') {
-              send({
-                event: 'tool_result',
-                name: block.name,
-                content: typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
-              });
+            if (block.type === 'thinking' && block.thinking) {
+              ccHasText = true;
+              send({ event: 'thinking', content: block.thinking });
+            } else if (block.type === 'text' && block.text) {
+              ccHasText = true;
+              send({ event: 'delta', content: block.text });
+            } else if (block.type === 'tool_use') {
+              // 先推送 tool_use（添加进度步骤），再推送 tool_result（标记完成）
+              const toolName = block.name || 'tool';
+              const toolInput = typeof block.input === 'string' ? block.input : JSON.stringify(block.input);
+              send({ event: 'tool_use', name: toolName, id: block.id });
+              send({ event: 'tool_result', name: toolName, content: toolInput });
+            }
+          }
+          continue;
+        }
+
+        // user turn — 工具执行结果返回（展示完成状态）
+        if (msg.type === 'user' && msg.message?.content) {
+          for (const block of msg.message.content) {
+            if (block.type === 'tool_result') {
+              const resultContent = typeof block.content === 'string'
+                ? block.content
+                : (Array.isArray(block.content)
+                    ? block.content.map(c => c.text || '').join('')
+                    : JSON.stringify(block.content || ''));
+              // 截取摘要
+              const summary = resultContent.length > 300
+                ? resultContent.substring(0, 300) + '...'
+                : resultContent;
+              send({ event: 'info', level: 'info', content: `📋 工具结果: ${summary}` });
             }
           }
           continue;
@@ -3961,6 +4642,46 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
                 result: resultText,
                 cost,
               });
+
+              // ─── 子任务检测 ───
+              // CC query 完成后，检查结果中是否包含异步任务 ID
+              // 如果有，启动 SubTaskPoller 轮询后台任务状态
+              if (resultText) {
+                const taskIds = extractTaskIds(resultText);
+                if (taskIds.length > 0) {
+                  console.log(`[CC] Detected sub-task IDs (${taskIds.length}): ${taskIds.map(t => `${t.id}(${t.confidence.toFixed(2)},${t.source})`).join(', ')}`);
+
+                  // 构建供应商配置用于轮询 API 调用
+                  const pollProviderConfig = activeProvider?.type === 'direct'
+                    ? {
+                        type: activeProviderId === 'volcano' ? 'volcano' : (activeProviderId === 'tencent' ? 'tencent' : 'custom'),
+                        baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl,
+                        apiKey: providerEnv?.ANTHROPIC_AUTH_TOKEN || config.authToken,
+                      }
+                    : {
+                        type: activeProviderId === 'tencent' ? 'tencent' : 'volcano',
+                        baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl,
+                        apiKey: providerEnv?.ANTHROPIC_AUTH_TOKEN || config.authToken,
+                      };
+
+                  // 启动子任务轮询 — 轮询所有候选 ID（最多5个）
+                  // 先命中的会推送结果，其余的发现 notFound 后自动停止
+                  const sessionId = msg.session_id || newSessionId;
+                  const maxPoll = Math.min(taskIds.length, 5);
+                  for (let i = 0; i < maxPoll; i++) {
+                    const task = taskIds[i];
+                    const startMsg = i === 0
+                      ? `检测到 ${taskIds.length} 个候选任务ID，开始并行监控`
+                      : `候选 ${i + 1}: ${task.id}`;
+                    console.log(`[CC] Starting poll ${i + 1}/${maxPoll}: ${task.id} (confidence: ${task.confidence.toFixed(2)})`);
+                    subTaskPoller.start(
+                      task.id,
+                      sessionId,
+                      pollProviderConfig
+                    );
+                  }
+                }
+              }
             }
           } else {
             // 错误结果
@@ -4002,6 +4723,48 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   })();
 
   return { success: true, streaming: true, sessionId: newSessionId };
+});
+
+// CC 模式：在对话中直接执行命令
+ipcMain.handle('cc:execute-command', async (event, { command, workdir }) => {
+  // 安全检查：阻止危险命令
+  const dangerousPatterns = [
+    /rm\s+-rf\s+\/(?!\w)/,  // rm -rf /（但不阻止 rm -rf /home/user/project 这种）
+    /mkfs/,
+    /dd\s+if=.*of=\/dev\//,
+    /:\(\)\s*\{\s*:\|:&\s*\}\s*;/,  // fork bomb
+    /shutdown/,
+    /reboot/,
+    /halt\b/,
+  ];
+  const cmdLower = command.toLowerCase().trim();
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(cmdLower)) {
+      return { success: false, error: '命令被安全策略拦截：包含危险操作', exitCode: -1 };
+    }
+  }
+
+  try {
+    const { exec } = require('child_process');
+    const result = await new Promise((resolve) => {
+      const child = exec(command, {
+        cwd: workdir || undefined,
+        timeout: 30000,
+        maxBuffer: 1024 * 1024 * 2, // 2MB
+        env: { ...process.env },
+      }, (err, stdout, stderr) => {
+        resolve({
+          success: !err || err.code !== null,
+          stdout: stdout || '',
+          stderr: stderr || '',
+          exitCode: err ? (err.code || 1) : 0,
+        });
+      });
+    });
+    return result;
+  } catch (err) {
+    return { success: false, error: err.message, exitCode: -1, stdout: '', stderr: '' };
+  }
 });
 
 ipcMain.handle('clear-api-key', async () => {
@@ -8632,6 +9395,251 @@ ipcMain.handle('audit:cleanup', async () => {
   return { success: true };
 });
 
+// 渲染进程同步日志（用于在崩溃前精确定位位置）
+ipcMain.on('sync-log', (event, msg) => {
+  console.log('[Renderer]', msg);
+});
+
+// ========== 语音 ASR 实时识别 IPC 处理器 ==========
+
+const { ASREngine } = require('./src/scripts/asr-engine');
+
+let asrEngine = null;
+let asrWebContents = null;
+
+// macOS 麦克风权限检查
+ipcMain.handle('asr:check-mic-permission', async () => {
+  try {
+    if (process.platform === 'darwin') {
+      const status = systemPreferences.getMediaAccessStatus('microphone');
+      console.log('[ASR] macOS microphone permission status:', status);
+      if (status === 'not-determined') {
+        // 请求权限
+        const result = await systemPreferences.askForMediaAccess('microphone');
+        console.log('[ASR] askForMediaAccess result:', result);
+        return { granted: result, status: result ? 'granted' : 'denied' };
+      }
+      return { granted: status === 'granted', status };
+    }
+    // 非 macOS 默认有权限
+    return { granted: true, status: 'granted' };
+  } catch (e) {
+    console.error('[ASR] check-mic-permission error:', e);
+    return { granted: false, status: 'error', error: e.message };
+  }
+});
+
+// ASR 配置读写
+ipcMain.handle('asr:get-config', async () => {
+  return {
+    provider: getSetting('asr_provider') || 'volcano',
+    volcano: {
+      appId: getSetting('asr_volcano_appId') || '',
+      token: getSetting('asr_volcano_token') || '',
+      cluster: getSetting('asr_volcano_cluster') || 'volcengine_streaming_common',
+    },
+    tencent: {
+      appId: getSetting('asr_tencent_appId') || '',
+      secretId: getSetting('asr_tencent_secretId') || '',
+      secretKey: getSetting('asr_tencent_secretKey') || '',
+      engineModelType: getSetting('asr_tencent_engineModelType') || '16k_zh_en',
+    },
+  };
+});
+
+ipcMain.handle('asr:set-config', async (event, config) => {
+  if (config.provider !== undefined) setSetting('asr_provider', config.provider);
+  if (config.volcano) {
+    if (config.volcano.appId !== undefined) setSetting('asr_volcano_appId', config.volcano.appId);
+    if (config.volcano.token !== undefined) setSetting('asr_volcano_token', config.volcano.token);
+    if (config.volcano.cluster !== undefined) setSetting('asr_volcano_cluster', config.volcano.cluster);
+  }
+  if (config.tencent) {
+    if (config.tencent.appId !== undefined) setSetting('asr_tencent_appId', config.tencent.appId);
+    if (config.tencent.secretId !== undefined) setSetting('asr_tencent_secretId', config.tencent.secretId);
+    if (config.tencent.secretKey !== undefined) setSetting('asr_tencent_secretKey', config.tencent.secretKey);
+    if (config.tencent.engineModelType !== undefined) setSetting('asr_tencent_engineModelType', config.tencent.engineModelType);
+  }
+  return { success: true };
+});
+
+// 启动 ASR 识别
+ipcMain.handle('asr:start', async (event, params) => {
+  // 清理上次的资源
+  _stopFfmpegPipe();
+  if (asrEngine) {
+    await asrEngine.stop();
+    asrEngine = null;
+  }
+
+  asrWebContents = event.sender;
+  const provider = params.provider || getSetting('asr_provider') || 'volcano';
+  let providerConfig;
+
+  if (provider === 'volcano') {
+    providerConfig = {
+      appId: getSetting('asr_volcano_appId') || '',
+      token: getSetting('asr_volcano_token') || '',
+      cluster: getSetting('asr_volcano_cluster') || 'volcengine_streaming_common',
+    };
+    if (!providerConfig.appId || !providerConfig.token) {
+      return { success: false, error: '火山引擎 ASR 未配置，请在设置中填写 AppID 和 Token' };
+    }
+  } else if (provider === 'tencent') {
+    providerConfig = {
+      appId: (getSetting('asr_tencent_appId') || '').trim(),
+      secretId: (getSetting('asr_tencent_secretId') || '').trim(),
+      secretKey: (getSetting('asr_tencent_secretKey') || '').trim(),
+      engineModelType: getSetting('asr_tencent_engineModelType') || '16k_zh_en',
+    };
+    if (!providerConfig.appId || !providerConfig.secretId || !providerConfig.secretKey) {
+      return { success: false, error: '腾讯云 ASR 未配置，请在设置中填写 AppID、SecretID 和 SecretKey' };
+    }
+  } else {
+    return { success: false, error: `不支持的 ASR 供应商: ${provider}` };
+  }
+
+  try {
+    asrEngine = new ASREngine(provider, providerConfig);
+
+    asrEngine.onResult = (text, isFinal, accumulatedText) => {
+      if (asrWebContents && !asrWebContents.isDestroyed()) {
+        asrWebContents.send('asr:result', { text, isFinal, accumulatedText });
+      }
+    };
+    asrEngine.onError = (err) => {
+      console.error('[ASR] Error:', err.message);
+      if (asrWebContents && !asrWebContents.isDestroyed()) {
+        asrWebContents.send('asr:error', { message: err.message });
+      }
+    };
+    asrEngine.onStart = () => {
+      if (asrWebContents && !asrWebContents.isDestroyed()) {
+        asrWebContents.send('asr:started', { provider });
+      }
+    };
+
+    await asrEngine.connect();
+    return { success: true, provider };
+  } catch (e) {
+    asrEngine = null;
+    return { success: false, error: e.message };
+  }
+});
+
+// ── WebM→PCM 转换管道（使用 ffmpeg）
+let ffmpegProc = null;
+let ffmpegPcmBuffer = Buffer.alloc(0);
+
+function _startFfmpegPipe() {
+  if (ffmpegProc) return;
+  const { spawn } = require('child_process');
+  // 优先使用打包的 ffmpeg，回退到系统安装
+  let ffmpegPath = process.env.FFMPEG_PATH;
+  if (!ffmpegPath) {
+    const path = require('path');
+    const arch = process.arch; // 'arm64' or 'x64'
+    const bundledName = arch === 'arm64' ? 'ffmpeg-arm64' : 'ffmpeg-x64';
+    const bundledPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'bin', bundledName)
+      : path.join(__dirname, 'resources', 'bin', bundledName);
+    try {
+      require('fs').accessSync(bundledPath, require('fs').constants.X_OK);
+      ffmpegPath = bundledPath;
+      console.log('[FFmpeg] Using bundled:', ffmpegPath);
+    } catch {
+      // 回退到 PATH 中的 ffmpeg
+      ffmpegPath = 'ffmpeg';
+      console.log('[FFmpeg] Using system PATH');
+    }
+  }
+  ffmpegProc = spawn(ffmpegPath, [
+    '-hide_banner', '-loglevel', 'error',
+    '-f', 'webm',         // 输入格式
+    '-i', 'pipe:0',       // 从 stdin 读
+    '-f', 's16le',        // 输出原始 PCM (signed 16-bit little-endian)
+    '-ar', '16000',       // 采样率 16kHz
+    '-ac', '1',           // 单声道
+    'pipe:1'              // 输出到 stdout
+  ]);
+
+  ffmpegProc.stdout.on('data', (pcmChunk) => {
+    if (!asrEngine) return;
+    // 分成 6400 字节的小包（16kHz * 16bit * 200ms = 6400 bytes）发送
+    ffmpegPcmBuffer = Buffer.concat([ffmpegPcmBuffer, pcmChunk]);
+    const chunkSize = 6400;
+    while (ffmpegPcmBuffer.length >= chunkSize) {
+      asrEngine.sendAudioChunk(ffmpegPcmBuffer.slice(0, chunkSize));
+      ffmpegPcmBuffer = ffmpegPcmBuffer.slice(chunkSize);
+    }
+  });
+
+  ffmpegProc.stderr.on('data', (d) => {
+    const msg = d.toString().trim();
+    if (msg) console.error('[FFmpeg]', msg);
+  });
+
+  ffmpegProc.on('close', (code) => {
+    console.log('[FFmpeg] process closed, code:', code);
+    ffmpegProc = null;
+    ffmpegPcmBuffer = Buffer.alloc(0);
+  });
+
+  ffmpegProc.on('error', (err) => {
+    console.error('[FFmpeg] spawn error:', err.message);
+    ffmpegProc = null;
+  });
+}
+
+function _stopFfmpegPipe() {
+  if (ffmpegProc) {
+    try { ffmpegProc.stdin.end(); } catch (_) {}
+    ffmpegProc = null;
+  }
+  ffmpegPcmBuffer = Buffer.alloc(0);
+}
+
+// 发送音频片段（WebM/Opus → ffmpeg → PCM → ASR）
+ipcMain.handle('asr:audio-chunk', async (event, data) => {
+  if (!asrEngine) return { success: false };
+  try {
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+    // 启动 ffmpeg 管道（首次调用时）
+    if (!ffmpegProc) {
+      _startFfmpegPipe();
+    }
+
+    // 把 WebM 数据写入 ffmpeg stdin
+    if (ffmpegProc && ffmpegProc.stdin.writable) {
+      ffmpegProc.stdin.write(buffer);
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 停止 ASR 识别
+ipcMain.handle('asr:stop', async () => {
+  // 先停止 ffmpeg 管道（flush 剩余数据）
+  _stopFfmpegPipe();
+
+  if (!asrEngine) return { success: true, text: '' };
+  try {
+    // 等待 ffmpeg 输出完成（给点时间让剩余 PCM 发出去）
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const text = await asrEngine.stop();
+    const result = { success: true, text: text || asrEngine.getAccumulatedText() };
+    asrEngine = null;
+    return result;
+  } catch (e) {
+    asrEngine = null;
+    return { success: false, error: e.message };
+  }
+});
+
 // ========== 记事本相关IPC处理器 ==========
 
 ipcMain.handle('notebook-add-note', async (event, note) => {
@@ -8896,6 +9904,8 @@ ipcMain.handle('artifacts:list', async () => {
         try {
           const files = fs.readdirSync(fullPath);
           for (const file of files) {
+            // 过滤隐藏文件（以 . 开头）
+            if (file.startsWith('.')) continue;
             const filePath = path.join(fullPath, file);
             try {
               const stat = fs.statSync(filePath);
@@ -8914,6 +9924,8 @@ ipcMain.handle('artifacts:list', async () => {
           }
         } catch {}
       } else if (entry.isFile()) {
+        // 过滤隐藏文件
+        if (entry.name.startsWith('.')) continue;
         // 根目录下的文件（兼容旧数据）
         const ext = entry.name.split('.').pop()?.toLowerCase() || '';
         try {
@@ -8932,6 +9944,9 @@ ipcMain.handle('artifacts:list', async () => {
   } catch (err) {
     console.error('[Artifacts] List error:', err);
   }
+
+  // 按 created_at 倒序排序，同一任务的文件（时间相近）自然临近
+  artifacts.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
   return { artifacts };
 });
@@ -10680,6 +11695,16 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   console.log('[App] Starting 忆境 Memora...');
 
+  // 设置麦克风/摄像头权限处理器（getUserMedia 需要）
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media') {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
+  session.defaultSession.setPermissionCheckHandler(() => true);
+
   // 设置应用名（影响 macOS 系统通知显示的标题归属）
   app.setName('忆境 Memora');
   // Windows 通知需要 AppUserModelId
@@ -10747,6 +11772,10 @@ app.whenReady().then(() => {
   
   createWindow();
   console.log('[App] Window created');
+  // Set mainWindow for SubTaskPoller
+  subTaskPoller.setMainWindow(mainWindow);
+  // Run config migration
+  migrateOldCCConfig();
   createTray();
   console.log('[App] Tray created');
   initClipboardWatcher();
@@ -10797,6 +11826,13 @@ app.on('before-quit', () => {
     try { ccAbortController.abort(); } catch (_) {}
     ccAbortController = null;
   }
+  // 清理 OpenRouter 代理
+  if (anthropicProxy) {
+    anthropicProxy.stop();
+    anthropicProxy = null;
+  }
+  // 清理子任务轮询器
+  subTaskPoller.stopAll();
   if (ccMemorySyncTimer) {
     clearInterval(ccMemorySyncTimer);
     ccMemorySyncTimer = null;

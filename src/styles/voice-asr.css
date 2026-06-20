@@ -1,0 +1,439 @@
+/* ============================================
+   语音 ASR 实时识别 UI 样式
+   ============================================ */
+
+/* ─── 语音按钮（与新建按钮风格一致） ─── */
+.voice-input-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  flex-shrink: 0;
+  border: 2px dashed var(--border-color, rgba(0,0,0,0.1));
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--primary-color, #007AFF);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.voice-input-btn:hover {
+  background: var(--primary-light, rgba(0,122,255,0.06));
+  border-color: var(--primary-color, #007AFF);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  transform: translateY(-1px);
+}
+
+.voice-input-btn.recording {
+  background: rgba(255,59,48,0.08);
+  border-color: rgba(255,59,48,0.4);
+  border-style: solid;
+  color: #FF3B30;
+  animation: voice-btn-pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── 模态框内语音按钮 ─── */
+
+/* ─── AI 聊天输入框语音按钮 ─── */
+.chat-voice-btn {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary, #f5f5f7);
+  border: 1.5px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 14px;
+  color: var(--text-secondary, #86868b);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.chat-voice-btn:hover {
+  background: var(--primary-light, rgba(0,122,255,0.06));
+  border-color: var(--primary-color, #007AFF);
+  color: var(--primary-color, #007AFF);
+  transform: scale(1.05);
+}
+
+.chat-voice-btn.recording {
+  background: rgba(255,59,48,0.08);
+  border-color: rgba(255,59,48,0.4);
+  color: #FF3B30;
+  animation: voice-btn-pulse 1.5s ease-in-out infinite;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-voice-btn {
+    background: transparent;
+    color: var(--primary-color, #0A84FF);
+    border-color: rgba(255,255,255,0.15);
+  }
+
+  .chat-voice-btn:hover {
+    background: rgba(10,132,255,0.08);
+    border-color: var(--primary-color, #0A84FF);
+  }
+}
+
+.modal-voice-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  background: var(--bg-secondary, rgba(255,255,255,0.6));
+  color: var(--text-primary, #1d1d1f);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.modal-voice-btn:hover {
+  background: var(--bg-tertiary, rgba(0,0,0,0.04));
+  transform: translateY(-1px);
+}
+
+.modal-voice-btn.recording {
+  background: rgba(255,59,48,0.08);
+  border-color: rgba(255,59,48,0.3);
+  color: #FF3B30;
+  animation: voice-btn-pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── 模态框内录音指示器 ─── */
+.voice-recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(255,59,48,0.06);
+  border: 0.5px solid rgba(255,59,48,0.15);
+  font-size: 13px;
+  color: #FF3B30;
+  animation: voice-btn-pulse 1.5s ease-in-out infinite;
+}
+
+.voice-recording-indicator.hidden {
+  display: none;
+}
+
+.voice-recording-indicator .rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #FF3B30;
+  flex-shrink: 0;
+}
+
+.voice-recording-indicator .rec-text {
+  flex: 1;
+  font-weight: 500;
+}
+
+.voice-recording-indicator .rec-timer {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", monospace;
+}
+
+.voice-recording-indicator .rec-stop-btn {
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 0.5px solid rgba(255,59,48,0.3);
+  background: rgba(255,59,48,0.08);
+  color: #FF3B30;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.voice-recording-indicator .rec-stop-btn:hover {
+  background: rgba(255,59,48,0.15);
+}
+
+@keyframes voice-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(255,59,48,0); }
+}
+
+/* ─── 语音输入浮层 ─── */
+.voice-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.3);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: voice-overlay-fade 0.2s ease;
+}
+
+.voice-overlay.hidden {
+  display: none;
+}
+
+@keyframes voice-overlay-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.voice-overlay-content {
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(40px) saturate(1.8);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8);
+  border-radius: 20px;
+  border: 0.5px solid rgba(255,255,255,0.5);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.05);
+  padding: 32px;
+  width: 90%;
+  max-width: 560px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  animation: voice-overlay-scale 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes voice-overlay-scale {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ─── 浮层头部 ─── */
+.voice-overlay-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.voice-pulse-animation {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255,59,48,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FF3B30;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.voice-pulse-animation::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255,59,48,0.3);
+  animation: voice-pulse-ring 1.5s ease-out infinite;
+}
+
+@keyframes voice-pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+.voice-pulse-animation.connected {
+  background: rgba(48,209,88,0.08);
+  color: #30D158;
+}
+
+.voice-pulse-animation.connected::before {
+  border-color: rgba(48,209,88,0.3);
+}
+
+.voice-overlay-status {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.voice-overlay-timer {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #86868b);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", monospace;
+}
+
+/* ─── 转录文本区域 ─── */
+.voice-transcript-area {
+  background: rgba(0,0,0,0.03);
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 120px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-primary, #1d1d1f);
+  word-break: break-word;
+  position: relative;
+}
+
+.voice-transcript-area:empty::before {
+  content: '请开始说话，识别结果将实时显示...';
+  color: var(--text-tertiary, #aeaeb2);
+}
+
+.voice-transcript-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.voice-transcript-text .partial {
+  color: var(--text-secondary, #86868b);
+}
+
+.voice-transcript-text .final {
+  color: var(--text-primary, #1d1d1f);
+}
+
+.voice-transcript-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 18px;
+  background: #007AFF;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 1s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ─── 浮层操作按钮 ─── */
+.voice-overlay-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+/* ─── 设置面板：ASR 供应商切换 ─── */
+.asr-provider-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.1));
+  background: rgba(255,255,255,0.6);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.asr-provider-btn:hover {
+  background: rgba(255,255,255,0.9);
+}
+
+.asr-provider-btn.active {
+  background: var(--accent-primary, #007AFF);
+  color: white;
+  border-color: transparent;
+}
+
+.asr-provider-config.hidden {
+  display: none;
+}
+
+/* ─── 测试麦克风状态 ─── */
+.voice-test-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.03);
+  font-size: 13px;
+}
+
+.voice-test-bar .mic-level {
+  flex: 1;
+  height: 4px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.voice-test-bar .mic-level-fill {
+  height: 100%;
+  width: 0%;
+  background: #30D158;
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+/* ─── 深色模式 ─── */
+@media (prefers-color-scheme: dark) {
+  .voice-input-btn {
+    background: transparent;
+    color: var(--primary-color, #0A84FF);
+    border-color: rgba(255,255,255,0.15);
+  }
+
+  .voice-input-btn:hover {
+    background: rgba(10,132,255,0.08);
+    border-color: var(--primary-color, #0A84FF);
+  }
+
+  .voice-overlay-content {
+    background: rgba(30,30,30,0.85);
+    border-color: rgba(255,255,255,0.1);
+  }
+
+  .voice-transcript-area {
+    background: rgba(255,255,255,0.05);
+  }
+
+  .voice-transcript-area:empty::before {
+    color: rgba(255,255,255,0.3);
+  }
+
+  .asr-provider-btn {
+    background: rgba(30,30,30,0.6);
+    border-color: rgba(255,255,255,0.1);
+    color: #f5f5f7;
+  }
+
+  .asr-provider-btn:hover {
+    background: rgba(60,60,60,0.8);
+  }
+
+  .voice-test-bar {
+    background: rgba(255,255,255,0.05);
+  }
+
+  .voice-test-bar .mic-level {
+    background: rgba(255,255,255,0.1);
+  }
+
+  .modal-voice-btn {
+    background: var(--bg-secondary, rgba(30,30,30,0.6));
+    border-color: var(--border-color, rgba(255,255,255,0.1));
+    color: var(--text-primary, #f5f5f7);
+  }
+
+  .modal-voice-btn:hover {
+    background: var(--bg-tertiary, rgba(60,60,60,0.8));
+  }
+
+  .voice-recording-indicator .rec-stop-btn {
+    background: rgba(255,59,48,0.12);
+    border-color: rgba(255,59,48,0.25);
+  }
+}

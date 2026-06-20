@@ -1,6 +1,6 @@
 {
   "name": "memora",
-  "version": "2.6.0",
+  "version": "3.0.0",
   "description": "忆境 Memora - AI驱动的个人记忆与事项管理助手",
   "main": "main.js",
   "author": "Dean Zhu",
@@ -14,7 +14,7 @@
     "build:win:dir": "electron-builder --win --dir"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.181",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.183",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "dotenv": "^17.4.2",
     "form-data": "^4.0.5",
@@ -41,7 +41,15 @@
         }
       ],
       "icon": "build/icon.png",
-      "artifactName": "Memora-${version}-mac.${ext}"
+      "artifactName": "Memora-${version}-mac.${ext}",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "extendedInfo": {
+        "NSMicrophoneUsageDescription": "Memora 需要访问麦克风以进行语音输入和实时语音识别。",
+        "NSCameraUsageDescription": "Memora 需要访问摄像头以进行专注度检测。"
+      }
     },
     "win": {
       "target": [

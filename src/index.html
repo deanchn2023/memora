@@ -18,11 +18,13 @@
   <link rel="stylesheet" href="styles/richEditor.css">
   <link rel="stylesheet" href="styles/relationship.css">
   <link rel="stylesheet" href="styles/expert.css">
+  <link rel="stylesheet" href="styles/voice-asr.css">
   <script src="scripts/i18n.js"></script>
   <script src="scripts/richEditor.js"></script>
   <script src="scripts/relationshipSchema.js"></script>
   <script src="scripts/relationshipStore.js"></script>
   <script src="scripts/relationship.js"></script>
+  <script src="scripts/voice-recorder.js"></script>
 </head>
 <body>
   <div id="app">
@@ -55,8 +57,8 @@
         <div class="view-tabs">
           <button class="view-tab active" data-view="calendar" data-i18n="nav.calendar">日历</button>
           <button class="view-tab" data-view="notebook" data-i18n="nav.notebook">记事本<span class="tab-badge" id="notebookBadge" style="display: none;">0</span></button>
-          <button class="view-tab" data-view="documents" data-i18n="nav.documents">文档</button>
           <button class="view-tab" data-view="knowledge" data-i18n="nav.knowledge">知识</button>
+          <button class="view-tab" data-view="documents" data-i18n="nav.documents">资产</button>
           <button class="view-tab" data-view="insight" data-i18n="nav.insight">洞察</button>
         </div>
         <div class="date-navigator">
@@ -68,11 +70,11 @@
         <div class="header-actions">
           <!-- AI 模式全局切换（始终显示） -->
           <div class="ai-mode-toggle" id="aiModeToggle">
-            <button class="ai-mode-btn active" data-mode="agent" id="aiModeAgent">🤖 Agent</button>
+            <button class="ai-mode-btn" data-mode="agent" id="aiModeAgent">🤖 Agent</button>
             <button class="ai-mode-btn" data-mode="llm" id="aiModeLLM">💬 LLM</button>
-            <button class="ai-mode-btn" data-mode="cc" id="aiModeCC">🧠 CC</button>
+            <button class="ai-mode-btn active" data-mode="cc" id="aiModeCC">🧠 M-Agent</button>
           </div>
-          <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M5 20a7 7 0 0114 0"/><circle cx="10" cy="9.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="14" cy="9.5" r="0.8" fill="currentColor" stroke="none"/><path d="M10 12.5c.6.5 3.4.5 4 0"/><path d="M9 6c-1.5-1-3.5-.5-3.5 1.5"/><path d="M15 6c1.5-1 3.5-.5 3.5 1.5"/></svg></button>
+          <button class="ai-assistant-btn" id="openAIAssistantBtn" data-tooltip="AI助手"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 7V4"/><circle cx="12" cy="3" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 15.5c1 .6 4 .6 5 0"/><path d="M2 12v3"/><path d="M22 12v3"/></svg></button>
           <button class="audit-btn" id="openAuditBtn" data-tooltip="审计日志"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></button>
           <button class="lang-toggle-btn" id="langToggleBtn" data-tooltip="语言/Language"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></button>
           <button class="settings-btn" id="openSettingsBtn" data-tooltip="设置"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
@@ -141,7 +143,16 @@
                 <p data-i18n="task.noTasks">暂无待办事项</p>
               </div>
             </div>
-            <button class="add-task-btn" id="addTaskBtn" data-i18n="task.newTask">+ 新建</button>
+            <div class="task-add-row">
+              <button class="add-task-btn" id="addTaskBtn" data-i18n="task.newTask">+ 新建</button>
+              <button class="voice-input-btn" id="voiceInputBtn" title="语音输入" data-i18n-title="voice.input">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                  <line x1="12" y1="18" x2="12" y2="22"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -282,10 +293,17 @@
                     </div>
                   </div>
                 </div>
+                <!-- 滚动快捷按钮 -->
+                <button class="chat-scroll-btn chat-scroll-top" id="chatScrollTopBtn" title="回到顶部" style="display:none;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                </button>
+                <button class="chat-scroll-btn chat-scroll-bottom" id="chatScrollBottomBtn" title="滚动到底部" style="display:none;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                </button>
                 <div class="chat-attachments" id="chatAttachments"></div>
                 <div class="chat-input-area">
                   <input type="file" id="chatFileInput" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.zip,.rar,.txt,.md,.csv" style="display:none">
-                  <!-- CC 工作目录指示器（仅 CC 模式显示） -->
+                  <!-- M-Agent 工作目录指示器（仅 M-Agent 模式显示） -->
                   <div class="cc-workdir-bar hidden" id="ccWorkdirBar">
                     <span class="cc-workdir-label">📂 工作目录:</span>
                     <span class="cc-workdir-path" id="ccWorkdirPath" title="">默认</span>
@@ -296,7 +314,29 @@
                       <option value="">不使用 Skill</option>
                     </select>
                     <button class="cc-skill-manage-btn" id="ccSkillManageBtn" title="管理 Skill（上传/安装）">⚙️</button>
-                    <button class="cc-restart-btn" id="ccRestartBtn" title="重启 CC 会话（安装 skill 后需重启生效）">🔁 重启CC</button>
+                    <span class="cc-connector-label">🔌 连接器:</span>
+                    <div class="cc-connector-dropdown" id="ccConnectorDropdown">
+                      <button class="cc-connector-trigger" id="ccConnectorTrigger" title="选择 MCP 连接器">
+                        <span id="ccConnectorLabel">无</span>
+                        <span class="cc-connector-arrow">▾</span>
+                      </button>
+                      <div class="cc-connector-menu hidden" id="ccConnectorMenu">
+                        <div class="cc-connector-list" id="ccConnectorList">
+                          <div class="cc-connector-empty-hint">暂无连接器，请到资产→连接器添加</div>
+                        </div>
+                      </div>
+                    </div>
+                    <button class="cc-connector-manage-btn" id="ccConnectorManageBtn" title="管理连接器">⚙️</button>
+                    <span class="cc-provider-label">🔌 供应商:</span>
+                    <select class="cc-provider-select" id="ccProviderSelect" title="选择 AI 供应商（火山引擎/DeepSeek/腾讯云/OpenRouter）">
+                      <option value="">默认</option>
+                    </select>
+                    <span class="cc-openrouter-label">🌐 模型:</span>
+                    <select class="cc-openrouter-select" id="ccOpenRouterSelect" title="选择 OpenRouter 模型（留空使用默认 Coding Plan 配置）">
+                      <option value="">默认</option>
+                    </select>
+                    <button class="cc-openrouter-refresh-btn" id="ccOpenRouterRefreshBtn" title="刷新模型列表">🔄</button>
+                    <button class="cc-restart-btn" id="ccRestartBtn" title="重启 M-Agent 会话（安装 skill 后需重启生效）">🔁 重启</button>
                   </div>
                   <div class="input-wrapper">
                     <button class="file-upload-btn" id="chatFileUploadBtn" title="上传文件">
@@ -305,6 +345,14 @@
                       </svg>
                     </button>
                     <textarea id="aiChatInput" placeholder="输入你的问题..." data-i18n-placeholder="ai.inputPlaceholder" autocomplete="off" rows="1"></textarea>
+                    <button class="chat-voice-btn" id="chatVoiceBtn" title="语音输入">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                      </svg>
+                    </button>
                     <button class="stop-btn hidden" id="stopAIMessageBtn" title="停止生成">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                     </button>
@@ -323,11 +371,11 @@
           <div class="knowledge-view hidden" id="knowledgeView">
             <!-- 子视图切换 Tab -->
             <div class="knowledge-sub-tabs">
-              <button class="knowledge-sub-tab active" data-knowledge-tab="graph" data-i18n="knowledge.sub.graph">🧠 知识图谱</button>
+              <button class="knowledge-sub-tab active" data-knowledge-tab="graph" data-i18n="knowledge.sub.graph">🧠 知识聚类</button>
               <button class="knowledge-sub-tab" data-knowledge-tab="global-graph" data-i18n="knowledge.sub.globalGraph">🗺 全局图谱</button>
               <button class="knowledge-sub-tab" data-knowledge-tab="articles" data-i18n="knowledge.sub.articles">📚 知识文章</button>
               <button class="knowledge-sub-tab" data-knowledge-tab="questions" data-i18n="knowledge.sub.questions">❓ 问题列表</button>
-              <button class="knowledge-sub-tab" data-knowledge-tab="search" data-i18n="knowledge.sub.search">🔍 知识搜索</button>
+              <button class="knowledge-sub-tab" data-knowledge-tab="search" data-i18n="knowledge.sub.search">🔍 知识跟随</button>
             </div>
 
             <!-- 子视图1：知识图谱 -->
@@ -574,6 +622,7 @@
               <button class="doc-cat-tab" data-type="local" data-i18n="documents.local">💻 本地</button>
               <button class="doc-cat-tab" data-type="artifacts" data-i18n="documents.artifacts">🤖 Agent 产物</button>
               <button class="doc-cat-tab" data-type="skill">🧩 Skill</button>
+              <button class="doc-cat-tab" data-type="connector">🔌 连接器</button>
               <button class="doc-cat-tab send-to-ai-toggle" id="sendToAIToggle" title="多选文件发送给 AI 助手">🤖 发给 AI</button>
             </div>
             <!-- 云端资料子分类 -->
@@ -687,7 +736,7 @@
                     <button class="btn primary" id="skillUploadBtn">📤 上传 Skill（zip）</button>
                     <input type="file" id="skillFileInput" accept=".zip" style="display:none">
                     <span class="skill-hint" style="color: var(--text-secondary); font-size: 12px; margin-left: 8px;">
-                      上传 .zip 格式的 Skill 包，在 CC 模式对话中可选择启用
+                      上传 .zip 格式的 Skill 包，在 M-Agent 模式对话中可选择启用
                     </span>
                   </div>
                   <div class="skill-body" id="skillBody">
@@ -695,7 +744,7 @@
                     <div class="skill-empty" id="skillEmpty">
                       <div class="empty-icon">🧩</div>
                       <p>暂无 Skill</p>
-                      <span class="empty-hint">上传 .zip 格式的 Skill 包，在 CC 模式中使用</span>
+                      <span class="empty-hint">上传 .zip 格式的 Skill 包，在 M-Agent 模式中使用</span>
                     </div>
                   </div>
                 </div>
@@ -733,6 +782,99 @@
                 </div>
               </div>
 
+              <!-- 连接器管理区域 -->
+              <div class="connector-container hidden" id="connectorContainer">
+                <div class="connector-toolbar">
+                  <button class="btn primary" id="connectorAddBtn">➕ 添加连接器</button>
+                  <span class="connector-hint">配置 MCP Server 连接器，在 M-Agent 模式对话中按需启用</span>
+                </div>
+                <div class="connector-body" id="connectorBody">
+                  <div class="connector-grid" id="connectorGrid"></div>
+                  <div class="connector-empty" id="connectorEmpty">
+                    <div class="empty-icon">🔌</div>
+                    <p>暂无连接器</p>
+                    <span class="empty-hint">添加 MCP Server 连接器，扩展 AI 的工具能力</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 连接器编辑弹窗 -->
+              <div class="connector-modal hidden" id="connectorModal">
+                <div class="connector-modal-overlay"></div>
+                <div class="connector-modal-content">
+                  <div class="connector-modal-header">
+                    <h3 id="connectorModalTitle">添加连接器</h3>
+                    <button class="connector-modal-close" id="connectorModalClose">✕</button>
+                  </div>
+                  <div class="connector-modal-body">
+                    <input type="hidden" id="connectorEditId">
+                    <div class="connector-form-group">
+                      <label>名称</label>
+                      <input type="text" id="connectorName" placeholder="如：SQLite DB" maxlength="50">
+                    </div>
+                    <div class="connector-form-group">
+                      <label>类型</label>
+                      <select id="connectorType">
+                        <option value="stdio">stdio（本地进程）</option>
+                        <option value="sse">SSE（远程 HTTP SSE）</option>
+                        <option value="http">HTTP（远程 HTTP 流式）</option>
+                      </select>
+                    </div>
+                    <div class="connector-form-group">
+                      <label>描述（可选）</label>
+                      <input type="text" id="connectorDesc" placeholder="如：本地 SQLite 数据库查询" maxlength="200">
+                    </div>
+                    <!-- stdio 字段 -->
+                    <div class="connector-stdio-fields" id="connectorStdioFields">
+                      <div class="connector-form-group">
+                        <label>命令 (Command)</label>
+                        <input type="text" id="connectorCommand" placeholder="如：npx">
+                      </div>
+                      <div class="connector-form-group">
+                        <label>参数 (Args，空格分隔)</label>
+                        <input type="text" id="connectorArgs" placeholder="如：-y @modelcontextprotocol/server-sqlite --db-path /path/to/db">
+                      </div>
+                      <div class="connector-form-group">
+                        <label>环境变量（可选，格式 KEY=VALUE 每行一个）</label>
+                        <textarea id="connectorEnv" rows="3" placeholder="API_KEY=xxx&#10;DB_PATH=/data/app.db"></textarea>
+                      </div>
+                    </div>
+                    <!-- sse/http 字段 -->
+                    <div class="connector-remote-fields hidden" id="connectorRemoteFields">
+                      <div class="connector-form-group">
+                        <label>URL</label>
+                        <input type="text" id="connectorUrl" placeholder="如：http://localhost:3001/sse">
+                      </div>
+                      <div class="connector-form-group">
+                        <label>请求头（可选，格式 KEY: VALUE 每行一个）</label>
+                        <textarea id="connectorHeaders" rows="3" placeholder="Authorization: Bearer xxx"></textarea>
+                      </div>
+                    </div>
+                    <!-- 预置模板 -->
+                    <div class="connector-form-group">
+                      <label>快速模板</label>
+                      <div class="connector-templates">
+                        <button class="connector-template-btn" data-template="sqlite">📦 SQLite</button>
+                        <button class="connector-template-btn" data-template="postgres">🐘 PostgreSQL</button>
+                        <button class="connector-template-btn" data-template="filesystem">📁 文件系统</button>
+                        <button class="connector-template-btn" data-template="websearch">🔍 Web Search</button>
+                        <button class="connector-template-btn" data-template="github">🐙 GitHub</button>
+                      </div>
+                    </div>
+                    <div class="connector-form-group">
+                      <label class="checkbox-label">
+                        <input type="checkbox" id="connectorEnabled" checked>
+                        <span>默认启用（每次 M-Agent 对话自动加载）</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="connector-modal-footer">
+                    <button class="btn" id="connectorModalCancel">取消</button>
+                    <button class="btn primary" id="connectorModalSave">保存</button>
+                  </div>
+                </div>
+              </div>
+
               <!-- 知识库区域（多模态资产 + 知识书本） -->
               <div class="knowledge-base-container hidden" id="knowledgeBaseContainer">
                 <div id="knowledgeBaseContent">
@@ -757,8 +899,6 @@
             <div class="insight-tabs">
               <button class="insight-tab active" data-tab="dashboard"><span class="tab-icon">📊</span> <span data-i18n="insight.dashboard">仪表盘</span></button>
               <button class="insight-tab" data-tab="activation"><span class="tab-icon">⚡</span> <span data-i18n="insight.activation">知识活化</span></button>
-              <button class="insight-tab" data-tab="evolution"><span class="tab-icon">🌱</span> <span data-i18n="insight.evolution">知识演化</span></button>
-              <button class="insight-tab" data-tab="conflicts"><span class="tab-icon">⚡</span> <span data-i18n="insight.conflicts">冲突检测</span></button>
               <button class="insight-tab" data-tab="relationship"><span class="tab-icon">👥</span> <span data-i18n="insight.relationship">人脉图谱</span></button>
             </div>
             <div class="insight-content">
@@ -881,8 +1021,23 @@
         <div class="form-group">
           <label>📝 AI智能分析（输入任务描述，AI自动创建待办）</label>
           <div id="aiTaskInputEditor"></div>
-          <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <!-- 录音指示器 -->
+          <div class="voice-recording-indicator hidden" id="modalVoiceIndicator">
+            <span class="rec-dot"></span>
+            <span class="rec-text" id="modalVoiceStatus">正在连接语音识别服务...</span>
+            <span class="rec-timer" id="modalVoiceTimer">00:00</span>
+            <button class="rec-stop-btn" id="modalVoiceStopBtn">停止</button>
+          </div>
+          <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
             <button class="btn primary small" id="aiAnalyzeBtn">🤖 AI分析待办</button>
+            <button class="modal-voice-btn" id="aiVoiceInputBtn" title="语音输入">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                <line x1="12" y1="18" x2="12" y2="22"/>
+              </svg>
+              语音输入
+            </button>
             <button class="btn secondary small" id="aiSaveToNoteBtn">📝 保存到记事本</button>
             <button class="btn secondary small" id="aiExtractMemoryBtn">🧠 提炼到记忆</button>
             <button class="btn secondary small" id="aiSaveAsQuestionBtn">❓ 记录问题</button>
@@ -1021,6 +1176,31 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- 语音输入浮层 -->
+  <div class="voice-overlay hidden" id="voiceOverlay">
+    <div class="voice-overlay-content">
+      <div class="voice-overlay-header">
+        <div class="voice-pulse-animation" id="voicePulse">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+            <line x1="12" y1="18" x2="12" y2="22"/>
+          </svg>
+        </div>
+        <div class="voice-overlay-status" id="voiceOverlayStatus">正在连接语音识别服务...</div>
+        <div class="voice-overlay-timer" id="voiceOverlayTimer">00:00</div>
+      </div>
+      <div class="voice-transcript-area" id="voiceTranscriptArea">
+        <div class="voice-transcript-text" id="voiceTranscriptText"></div>
+        <div class="voice-transcript-cursor"></div>
+      </div>
+      <div class="voice-overlay-actions">
+        <button class="btn secondary" id="voiceCancelBtn">取消</button>
+        <button class="btn primary" id="voiceSaveBtn">保存到记事本</button>
+      </div>
+    </div>
   </div>
 
   <!-- 新建笔记弹窗 -->
@@ -1309,7 +1489,7 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="llm" data-i18n="settings.tab.llm">LLM</button>
           <button class="settings-tab" data-tab="agent" data-i18n="settings.tab.agent">Agent</button>
-          <button class="settings-tab" data-tab="cc">CC</button>
+          <button class="settings-tab" data-tab="cc">M-Agent</button>
           <button class="settings-tab" data-tab="expert" data-i18n="settings.tab.expert">专家</button>
           <button class="settings-tab" data-tab="prompt" data-i18n="settings.tab.prompts">Prompt</button>
           <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">画像</button>
@@ -1318,6 +1498,7 @@
           <button class="settings-tab" data-tab="sync" data-i18n="settings.tab.sync">同步</button>
           <button class="settings-tab" data-tab="reminder" data-i18n="settings.tab.reminder">提醒</button>
           <button class="settings-tab" data-tab="context" data-i18n="settings.tab.context">智能上下文</button>
+          <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">语音</button>
           <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
@@ -1545,18 +1726,18 @@
           </div>
         </div>
 
-        <!-- Claude Code 配置 -->
+        <!-- M-Agent 配置 -->
         <div class="settings-panel hidden" id="ccPanel">
-          <h4 class="settings-section-title">🧠 Claude Code（火山引擎 Coding Plan）</h4>
+          <h4 class="settings-section-title">🧠 M-Agent</h4>
           <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
-            对接火山引擎方舟 Coding Plan，原生兼容 Anthropic API。支持 DeepSeek-V3.2、GLM-4.7、Kimi-K2.5 等模型（在火山引擎控制台切换）。无需翻墙，国内直连。
+            对接 Coding Plan 服务（Anthropic 兼容 API）。支持多种模型，具体取决于所配置的 API 服务。
           </small>
 
           <div class="form-group">
-            <label for="ccAuthToken">Auth Token（火山引擎 API Key）</label>
+            <label for="ccAuthToken">Auth Token（API Key）</label>
             <input type="password" id="ccAuthToken" placeholder="ark-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
             <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
-              从火山引擎控制台「方舟 → API Key 管理」获取。格式以 ark- 开头。
+              从 API 服务控制台获取 API Key。
             </small>
           </div>
 
@@ -1570,7 +1751,7 @@
               <label for="ccModel">模型名称</label>
               <input type="text" id="ccModel" placeholder="ark-code-latest">
               <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
-                推荐使用 ark-code-latest，实际模型在火山控制台切换。
+                填写 Coding Plan 服务提供的模型标识。
               </small>
             </div>
             <div class="form-group">
@@ -1582,7 +1763,7 @@
                 <option value="bypassPermissions">bypassPermissions（⚠️ 跳过所有权限检查，有风险）</option>
               </select>
               <small style="color: var(--danger); margin-top: 4px; display: none;" id="ccPermissionWarn">
-                ⚠️ bypassPermissions 会跳过所有工具权限检查。已通过 disallowedTools 拦截 Bash/Write/Edit 等危险工具，但仍建议仅在可信环境使用。
+                ⚠️ bypassPermissions 会跳过所有工具权限检查，允许 Bash/Write/Edit 等工具执行。请确保在可信环境使用。
               </small>
             </div>
           </div>
@@ -1604,9 +1785,9 @@
           <div class="form-group" style="margin-top: 16px;">
             <label>🧠 跨会话记忆（CLAUDE.md）</label>
             <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
-              Memora 记忆库自动同步到 CC 工作目录的 CLAUDE.md，实现跨会话记忆。
-              每天晚上 22 点自动整理，每次 CC 对话前自动刷新。
-              CC 回复中标记 [MEMORY: 内容] 的信息会自动提取到 Memora 记忆库。
+              Memora 记忆库自动同步到 M-Agent 工作目录的 CLAUDE.md，实现跨会话记忆。
+              每天晚上 22 点自动整理，每次 M-Agent 对话前自动刷新。
+              M-Agent 回复中标记 [MEMORY: 内容] 的信息会自动提取到 Memora 记忆库。
             </small>
             <button class="btn secondary" id="ccSyncMemoryBtn" style="margin-bottom: 12px;">🔄 立即同步记忆</button>
             <span id="ccSyncMemoryResult" style="margin-left: 8px; font-size: 13px;"></span>
@@ -1616,7 +1797,7 @@
             <label>🔧 Skill 环境变量 / API Key</label>
             <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
               部分 Skill 需要环境变量或 API Key（如 FIRECRAWL_API_KEY、GITHUB_TOKEN 等）。
-              添加的变量会在 CC 子进程启动时注入环境，所有 Skill 均可读取。
+              添加的变量会在 M-Agent 子进程启动时注入环境，所有 Skill 均可读取。
             </small>
             <div id="ccEnvVarsList" style="margin-bottom: 8px;">
               <!-- 动态生成的环境变量行 -->
@@ -1631,12 +1812,167 @@
               <button class="btn secondary" id="ccPickWorkdirBtn" style="white-space: nowrap;">📁 选择</button>
             </div>
             <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
-              CC 模式的默认工作目录。自动任务使用此目录；对话中可临时切换其他目录。
+              M-Agent 模式的默认工作目录。自动任务使用此目录；对话中可临时切换其他目录。
             </small>
           </div>
 
           <div class="config-status" id="ccStatus">
             <span id="ccConfigStatus">配置状态: 未检测</span>
+          </div>
+
+          <!-- OpenRouter 配置 -->
+          <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);">
+          <h4 class="settings-section-title">🌐 OpenRouter（多模型聚合）</h4>
+          <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
+            配置 OpenRouter API Key 后，可在 M-Agent 对话栏的"模型"下拉框中选择数百种模型。
+            选择模型后，请求将通过本地代理转换为 Anthropic 格式，Skill/MCP/工具链全部可用。
+            不选择时使用上方默认 Coding Plan 配置。
+          </small>
+
+          <div class="form-group">
+            <label for="ccOpenRouterApiKey">OpenRouter API Key</label>
+            <input type="password" id="ccOpenRouterApiKey" placeholder="sk-or-v1-xxxxxxxx">
+            <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+              从 <a href="https://openrouter.ai/keys" target="_blank" style="color: var(--primary-color);">openrouter.ai/keys</a> 获取。
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="ccOpenRouterBaseUrl">Base URL（可选，默认官方地址）</label>
+            <input type="text" id="ccOpenRouterBaseUrl" placeholder="https://openrouter.ai/api/v1">
+          </div>
+
+          <div class="form-group">
+            <label for="ccOpenRouterDefaultModel">默认模型（可选）</label>
+            <input type="text" id="ccOpenRouterDefaultModel" placeholder="anthropic/claude-sonnet-4">
+            <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+              设置后在对话模型选择器中默认选中。留空则默认使用 Coding Plan 配置。
+            </small>
+          </div>
+
+          <button class="btn secondary" id="testOpenRouterBtn" style="margin-bottom: 12px;">🔗 测试连接</button>
+          <span id="testOpenRouterResult" style="margin-left: 8px; font-size: 13px;"></span>
+
+          <!-- 国内供应商配置 -->
+          <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);">
+          <h4 class="settings-section-title">🇨🇳 国内供应商（Anthropic 兼容直连）</h4>
+          <small style="color: var(--text-secondary); display: block; margin-bottom: 12px;">
+            火山引擎、DeepSeek、腾讯云 Coding Plan 均提供 Anthropic 兼容端点，直连无需代理。
+            配置后在对话栏"供应商"下拉框中切换。
+          </small>
+
+          <div class="provider-card" id="provider-card-volcano">
+            <div class="provider-card-header" data-provider="volcano">
+              <span class="provider-icon">🌋</span>
+              <span class="provider-name">火山引擎 Coding Plan</span>
+              <span class="provider-status" id="providerStatusVolcano">未配置</span>
+              <span class="provider-toggle">▾</span>
+            </div>
+            <div class="provider-card-body hidden" id="providerBodyVolcano">
+              <div class="form-group">
+                <label>Base URL</label>
+                <input type="text" id="provider_volcano_baseUrl" placeholder="https://ark.cn-beijing.volces.com/api/coding">
+              </div>
+              <div class="form-group">
+                <label>Auth Token</label>
+                <input type="password" id="provider_volcano_authToken" placeholder="ark-xxxxxxxx">
+              </div>
+              <div class="form-group">
+                <label>模型列表 <small style="color: var(--text-tertiary); font-weight: normal;">粘贴模型说明 → AI 解析 → 选择</small></label>
+                <textarea id="provider_volcano_modelList" class="provider-model-list" rows="6" placeholder="将平台模型列表说明粘贴到此处，点击下方按钮 AI 自动解析..." style="width:100%;font-size:12px;border-radius:8px;border:1px solid var(--border-color);padding:8px;resize:vertical;"></textarea>
+                <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+                  <button class="btn secondary provider-parse-models-btn" data-provider="volcano">🤖 AI 解析模型</button>
+                  <span id="provider_volcano_parseStatus" style="font-size: 13px; color: var(--text-secondary);"></span>
+                </div>
+                <div class="form-group" style="margin-top: 12px;">
+                  <label>当前模型</label>
+                  <select id="provider_volcano_model">
+                    <option value="auto">Auto（默认）</option>
+                  </select>
+                </div>
+              </div>
+              <button class="btn secondary provider-test-btn" data-provider="volcano">🔗 测试连接</button>
+            </div>
+          </div>
+
+          <div class="provider-card" id="provider-card-deepseek">
+            <div class="provider-card-header" data-provider="deepseek">
+              <span class="provider-icon">🔵</span>
+              <span class="provider-name">DeepSeek</span>
+              <span class="provider-status" id="providerStatusDeepseek">未配置</span>
+              <span class="provider-toggle">▾</span>
+            </div>
+            <div class="provider-card-body hidden" id="providerBodyDeepseek">
+              <div class="form-group">
+                <label>Base URL</label>
+                <input type="text" id="provider_deepseek_baseUrl" placeholder="https://api.deepseek.com/anthropic">
+              </div>
+              <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="provider_deepseek_apiKey" placeholder="sk-xxxxxxxx">
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                  从 <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color: var(--primary-color);">platform.deepseek.com</a> 获取。
+                </small>
+              </div>
+              <div class="form-group">
+                <label>模型列表 <small style="color: var(--text-tertiary); font-weight: normal;">粘贴模型说明 → AI 解析 → 选择</small></label>
+                <textarea id="provider_deepseek_modelList" class="provider-model-list" rows="4" placeholder="粘贴模型说明文本，点击 AI 解析..." style="width:100%;font-size:12px;border-radius:8px;border:1px solid var(--border-color);padding:8px;resize:vertical;"></textarea>
+                <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+                  <button class="btn secondary provider-parse-models-btn" data-provider="deepseek">🤖 AI 解析模型</button>
+                  <span id="provider_deepseek_parseStatus" style="font-size: 13px; color: var(--text-secondary);"></span>
+                </div>
+                <div class="form-group" style="margin-top: 12px;">
+                  <label>当前模型</label>
+                  <select id="provider_deepseek_model">
+                    <option value="deepseek-chat">DeepSeek Chat (快速)</option>
+                    <option value="deepseek-reasoner">DeepSeek Reasoner (推理)</option>
+                  </select>
+                </div>
+              </div>
+              <button class="btn secondary provider-test-btn" data-provider="deepseek">🔗 测试连接</button>
+            </div>
+          </div>
+
+          <div class="provider-card" id="provider-card-tencent">
+            <div class="provider-card-header" data-provider="tencent">
+              <span class="provider-icon">🐧</span>
+              <span class="provider-name">腾讯云 Coding Plan</span>
+              <span class="provider-status" id="providerStatusTencent">未配置</span>
+              <span class="provider-toggle">▾</span>
+            </div>
+            <div class="provider-card-body hidden" id="providerBodyTencent">
+              <div class="form-group">
+                <label>Base URL</label>
+                <input type="text" id="provider_tencent_baseUrl" placeholder="https://api.lkeap.cloud.tencent.com/coding/anthropic">
+              </div>
+              <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="provider_tencent_apiKey" placeholder="sk-sp-xxxxxxxx">
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                  从 <a href="https://console.cloud.tencent.com/tokenhub/codingplan" target="_blank" style="color: var(--primary-color);">Coding Plan 控制台</a> 获取。注意：sk-sp- 开头的 Key 与普通 Key 不互通。
+                </small>
+              </div>
+              <div class="form-group">
+                <label>模型列表 <small style="color: var(--text-tertiary); font-weight: normal;">粘贴模型说明 → AI 解析 → 选择</small></label>
+                <textarea id="provider_tencent_modelList" class="provider-model-list" rows="4" placeholder="粘贴模型说明文本，点击 AI 解析..." style="width:100%;font-size:12px;border-radius:8px;border:1px solid var(--border-color);padding:8px;resize:vertical;"></textarea>
+                <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+                  <button class="btn secondary provider-parse-models-btn" data-provider="tencent">🤖 AI 解析模型</button>
+                  <span id="provider_tencent_parseStatus" style="font-size: 13px; color: var(--text-secondary);"></span>
+                </div>
+                <div class="form-group" style="margin-top: 12px;">
+                  <label>当前模型</label>
+                  <select id="provider_tencent_model">
+                    <option value="tc-code-latest">Auto (自动匹配)</option>
+                    <option value="minimax-m2.5">MiniMax-M2.5</option>
+                    <option value="kimi-k2.5">Kimi-K2.5</option>
+                    <option value="glm-5">GLM-5</option>
+                    <option value="hunyuan-t1">Hunyuan-T1</option>
+                    <option value="hunyuan-turbos">Hunyuan-TurboS</option>
+                  </select>
+                </div>
+              </div>
+              <button class="btn secondary provider-test-btn" data-provider="tencent">🔗 测试连接</button>
+            </div>
           </div>
         </div>
 
@@ -2292,13 +2628,98 @@
           </div>
         </div>
 
+        <!-- 语音 ASR 配置 -->
+        <div class="settings-panel hidden" id="voicePanel">
+          <div class="voice-config-section">
+            <h3 style="margin:0 0 16px 0;">🎤 语音识别配置</h3>
+            <p style="color:var(--text-secondary);margin:0 0 20px 0;font-size:13px;">
+              配置实时语音识别（ASR）服务，在新建待办旁的语音按钮即可开始实时语音转文字。
+            </p>
+
+            <!-- 供应商选择 -->
+            <div class="form-group" style="margin-bottom:20px;">
+              <label style="display:block;margin-bottom:8px;font-weight:600;">ASR 服务供应商</label>
+              <div style="display:flex;gap:8px;">
+                <button class="btn asr-provider-btn active" data-provider="volcano" id="asrProviderVolcano">🌋 火山引擎</button>
+                <button class="btn asr-provider-btn" data-provider="tencent" id="asrProviderTencent">🐧 腾讯云</button>
+              </div>
+            </div>
+
+            <!-- 火山引擎配置 -->
+            <div id="asrVolcanoConfig" class="asr-provider-config">
+              <div class="form-group">
+                <label for="asrVolcanoAppId">应用 ID (AppID)</label>
+                <input type="text" id="asrVolcanoAppId" placeholder="火山引擎控制台获取的 AppID" style="width:100%;"/>
+              </div>
+              <div class="form-group">
+                <label for="asrVolcanoToken">访问令牌 (Token)</label>
+                <input type="password" id="asrVolcanoToken" placeholder="火山引擎控制台获取的 Token" style="width:100%;"/>
+              </div>
+              <div class="form-group">
+                <label for="asrVolcanoCluster">集群标识 (Cluster)</label>
+                <input type="text" id="asrVolcanoCluster" placeholder="volcengine_streaming_common" style="width:100%;"/>
+                <small style="color:var(--text-tertiary);display:block;margin-top:4px;">
+                  通用流式识别默认值：volcengine_streaming_common
+                </small>
+              </div>
+              <div class="form-group" style="background:var(--bg-secondary);border-radius:8px;padding:12px;margin-top:16px;">
+                <p style="margin:0;font-size:12px;color:var(--text-secondary);">
+                  📖 获取方式：火山引擎控制台 → 语音技术 → 应用管理 → 创建应用 → 获取 AppID 和 Token
+                </p>
+                <a href="https://www.volcengine.com/docs/82379/2516286" target="_blank" style="font-size:12px;color:var(--accent-primary);">查看文档 →</a>
+              </div>
+            </div>
+
+            <!-- 腾讯云配置 -->
+            <div id="asrTencentConfig" class="asr-provider-config hidden">
+              <div class="form-group">
+                <label for="asrTencentAppId">AppID</label>
+                <input type="text" id="asrTencentAppId" placeholder="腾讯云控制台获取的 AppID" style="width:100%;"/>
+              </div>
+              <div class="form-group">
+                <label for="asrTencentSecretId">SecretID</label>
+                <input type="text" id="asrTencentSecretId" placeholder="API 密钥管理页面获取" style="width:100%;"/>
+              </div>
+              <div class="form-group">
+                <label for="asrTencentSecretKey">SecretKey</label>
+                <input type="password" id="asrTencentSecretKey" placeholder="API 密钥管理页面获取" style="width:100%;"/>
+              </div>
+              <div class="form-group">
+                <label for="asrTencentEngineModel">引擎模型</label>
+                <select id="asrTencentEngineModel" style="width:100%;">
+                  <option value="16k_zh_en">16k_zh_en（中英大模型，推荐）</option>
+                  <option value="16k_zh">16k_zh（中文通用）</option>
+                  <option value="16k_en">16k_en（英文通用）</option>
+                  <option value="16k_yue">16k_yue（粤语）</option>
+                  <option value="16k_ja">16k_ja（日语）</option>
+                  <option value="16k_ko">16k_ko（韩语）</option>
+                  <option value="16k_multi_lang">16k_multi_lang（多语种大模型）</option>
+                </select>
+              </div>
+              <div class="form-group" style="background:var(--bg-secondary);border-radius:8px;padding:12px;margin-top:16px;">
+                <p style="margin:0;font-size:12px;color:var(--text-secondary);">
+                  📖 获取方式：腾讯云控制台 → 语音识别 → 实时语音识别 → 开通服务 → API 密钥管理
+                </p>
+                <a href="https://cloud.tencent.com/document/product/1093/48982" target="_blank" style="font-size:12px;color:var(--accent-primary);">查看文档 →</a>
+              </div>
+            </div>
+
+            <!-- 保存按钮 -->
+            <div style="display:flex;gap:12px;margin-top:20px;">
+              <button class="btn primary" id="saveASRConfigBtn">💾 保存配置</button>
+              <button class="btn secondary" id="testASRConfigBtn">🎤 测试麦克风</button>
+            </div>
+            <div id="asrConfigStatus" style="margin-top:12px;font-size:13px;"></div>
+          </div>
+        </div>
+
         <!-- 关于 -->
         <div class="settings-panel hidden" id="aboutPanel">
           <div class="about-section">
-            <div class="about-logo-area">
+              <div class="about-logo-area">
               <div class="about-logo">M</div>
               <h2 class="about-app-name">Memora</h2>
-              <span class="about-version">v2.6.0</span>
+              <span class="about-version">v3.0.0</span>
             </div>
 
             <div class="about-description">
@@ -2308,6 +2729,20 @@
             <div class="about-features">
               <h4 data-i18n="about.features">✨ 核心特色</h4>
               <div class="about-feature-grid">
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🤖</span>
+                  <div>
+                    <strong>M-Agent 智能体</strong>
+                    <span>Claude Code SDK 驱动，Skill/MCP/工具链全复用，执行过程可视</span>
+                  </div>
+                </div>
+                <div class="about-feature-item">
+                  <span class="about-feature-icon">🌐</span>
+                  <div>
+                    <strong>OpenRouter 多模型</strong>
+                    <span>Anthropic 代理零侵入，数百种模型即选即用，Skill 全可用</span>
+                  </div>
+                </div>
                 <div class="about-feature-item">
                   <span class="about-feature-icon">🧠</span>
                   <div>
@@ -2330,13 +2765,6 @@
                   </div>
                 </div>
                 <div class="about-feature-item">
-                  <span class="about-feature-icon">🤖</span>
-                  <div>
-                    <strong data-i18n="about.feature.ai">AI 助手</strong>
-                    <span data-i18n="about.feature.ai.desc">ADP 智能体驱动，五大 AppKey 专业分工，对话即服务</span>
-                  </div>
-                </div>
-                <div class="about-feature-item">
                   <span class="about-feature-icon">📋</span>
                   <div>
                     <strong data-i18n="about.feature.clipboard">剪贴板监控</strong>
@@ -2347,21 +2775,14 @@
                   <span class="about-feature-icon">🏢</span>
                   <div>
                     <strong data-i18n="about.feature.org">组织协作</strong>
-                    <span data-i18n="about.feature.org.desc">云端配置同步 + 五大 AppKey 独立管控 + 权限管理</span>
+                    <span data-i18n="about.feature.org.desc">云端配置同步 + 多 AppKey 独立管控 + 权限管理</span>
                   </div>
                 </div>
                 <div class="about-feature-item">
-                  <span class="about-feature-icon">🧑‍💼</span>
-                  <div>
-                    <strong data-i18n="about.feature.expert">配置专家</strong>
-                    <span data-i18n="about.feature.expert.desc">专家知识库 + 专业领域问答 + 个性化推荐配置方案</span>
-                  </div>
-                </div>
-                <div class="about-feature-item">
-                  <span class="about-feature-icon">👥</span>
+                  <span class="about-feature-icon">🤝</span>
                   <div>
                     <strong data-i18n="about.feature.expertTeam">专家团群聊</strong>
-                    <span data-i18n="about.feature.expertTeam.desc">多 Agent 协作对话 + 主持人自动调度 + 专家观点碰撞与共识</span>
+                    <span data-i18n="about.feature.expertTeam.desc">多 Agent 协作对话 + 主持人自动调度 + 专家观点碰撞</span>
                   </div>
                 </div>
               </div>
@@ -2369,6 +2790,17 @@
 
               <div class="about-changelog">
               <h4 data-i18n="about.changelog">📋 版本说明</h4>
+              <div class="about-changelog-item">
+                <span class="changelog-version">v3.0.0</span>
+                <span class="changelog-date">2026-06</span>
+                <ul>
+                  <li>🤖 M-Agent 执行过程可视化 — 流式展示工具调用/文件读写/网络搜索等步骤，时间线节点追踪，完成后自动折叠</li>
+                  <li>🌐 OpenRouter 多模型集成 — Anthropic 兼容代理架构，零侵入 SDK，数百种模型即选即用，Skill/MCP 全复用</li>
+                  <li>⏱ 执行过程摘要 — 完成后显示步骤数、工具调用次数、耗时统计</li>
+                  <li>🔧 修复 M-Agent 流式结束后 "send is not defined" 导致十分钟后报错的问题</li>
+                  <li>📐 对话区域优化 — 滚动快捷按钮（一键到顶/到底）、消息气泡设计增强</li>
+                </ul>
+              </div>
               <div class="about-changelog-item">
                 <span class="changelog-version">v2.6.0</span>
                 <span class="changelog-date">2026-06</span>

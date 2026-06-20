@@ -371,7 +371,7 @@ const Calendar = {
           displayText = window.i18n?.t('nav.knowledge') || '知识';
           break;
         case 'documents':
-          displayText = window.i18n?.t('nav.documents') || '文档';
+          displayText = window.i18n?.t('nav.documents') || '资产';
           break;
         case 'insight':
           displayText = window.i18n?.t('nav.insight') || '洞察';
@@ -961,7 +961,7 @@ const Calendar = {
     this.calendarActive = false;
     this.currentView = 'documents';
 
-    document.getElementById('currentDate').textContent = window.i18n?.t('nav.documents') || '文档';
+    document.getElementById('currentDate').textContent = window.i18n?.t('nav.documents') || '资产';
 
     if (window.Documents) Documents.onShow();
   },

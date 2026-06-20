@@ -422,7 +422,7 @@ const ExpertSettings = {
             <div style="display:flex;gap:16px;flex-wrap:wrap">
               <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeAgent" ${modes.includes('agent') ? 'checked' : ''}>🤖 Agent（ADP）</label>
               <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeLlm" ${modes.includes('llm') ? 'checked' : ''}>💬 LLM</label>
-              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeCc" ${modes.includes('cc') ? 'checked' : ''}>🧠 CC（Claude Code）</label>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="modeCc" ${modes.includes('cc') ? 'checked' : ''}>🧠 M-Agent</label>
             </div>
             <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">选择该专家在哪些对话模式下显示。至少选择一个。</div>
           </div>

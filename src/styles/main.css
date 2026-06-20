@@ -865,9 +865,16 @@ body {
   font-weight: 400;
 }
 
+/* 新建+语音按钮容器：横向排列 */
+.task-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .add-task-btn {
-  width: 100%;
-  padding: 14px;
+  flex: 1;
+  padding: 10px;
   border: 2px dashed var(--border-color);
   background: transparent;
   border-radius: var(--radius-md);
@@ -2431,6 +2438,7 @@ body {
   flex-direction: column;
   height: 100%;
   min-width: 0;
+  position: relative;
 }
 
 /* 功能提示卡片 */
@@ -2542,6 +2550,42 @@ body {
   overflow-y: auto;
   padding: 24px;
   background: var(--bg-secondary);
+  position: relative;
+}
+
+/* 滚动快捷按钮 */
+.chat-scroll-btn {
+  position: absolute;
+  z-index: 100;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.08));
+  background: var(--bg-glass-heavy, rgba(255,255,255,0.85));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,0.08));
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.chat-scroll-btn:hover {
+  background: var(--bg-glass-medium, rgba(255,255,255,0.9));
+  color: var(--text-primary, #1d1d1f);
+  border-color: var(--primary-color, #4F8EF7);
+  box-shadow: var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.12)), 0 0 0 3px var(--primary-glow, rgba(79,142,247,0.15));
+  transform: scale(1.08);
+}
+.chat-scroll-top {
+  top: 60px;
+  right: 20px;
+}
+.chat-scroll-bottom {
+  bottom: 80px;
+  right: 20px;
 }
 
 .message {
@@ -3781,7 +3825,7 @@ body {
   color: #34C759;
 }
 
-/* Claude Code 徽标 - 紫色调 */
+/* M-Agent 徽标 - 紫色调 */
 .agent-badge-cc {
   background: rgba(120, 80, 245, 0.12);
   color: #7850F5;
@@ -3798,6 +3842,81 @@ body {
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm, 6px);
   overflow: hidden;
+}
+
+.cc-process-summary {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* CC 流式执行进度增强 */
+.cc-streaming-progress .adp-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(0, 122, 255, 0.04);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.adp-progress-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.cc-progress-steps {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-light);
+  margin-left: 6px;
+}
+
+.cc-progress-steps .adp-progress-step {
+  position: relative;
+  padding: 4px 0 4px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cc-progress-steps .adp-progress-step::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-light);
+}
+
+.cc-progress-steps .adp-progress-step.active::before {
+  background: #007AFF;
+  animation: pulse-blue 1.2s ease-in-out infinite;
+}
+
+.cc-progress-steps .adp-progress-step.done::before {
+  background: #34C759;
+}
+
+@keyframes pulse-blue {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.cc-progress-steps .adp-step-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-tertiary, #aeaeb2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .cc-process-header {
@@ -3974,6 +4093,285 @@ body {
 .message-content .cc-code-toolbar + pre {
   border-radius: 0 0 4px 4px;
   margin-top: 0;
+}
+
+/* CC 代码块复制按钮 */
+.cc-code-copy-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary, #86868b);
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.cc-code-copy-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.08));
+  color: var(--text-primary, #1d1d1f);
+}
+
+/* CC 命令类工具栏高亮 */
+.cc-code-toolbar-command {
+  background: rgba(255, 149, 0, 0.06);
+  border-bottom: 1px solid rgba(255, 149, 0, 0.15);
+}
+
+/* CC 执行/忽略/拒绝按钮 */
+.cc-code-exec-btn {
+  background: rgba(0, 122, 255, 0.08);
+  border: 1px solid rgba(0, 122, 255, 0.2);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: #007AFF;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.cc-code-exec-btn:hover {
+  background: rgba(0, 122, 255, 0.15);
+}
+
+.cc-code-exec-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.cc-code-ignore-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary, #86868b);
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.cc-code-ignore-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.08));
+  color: var(--text-primary, #1d1d1f);
+}
+
+.cc-code-reject-btn {
+  background: rgba(255, 59, 48, 0.06);
+  border: 1px solid rgba(255, 59, 48, 0.15);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: #FF3B30;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.cc-code-reject-btn:hover {
+  background: rgba(255, 59, 48, 0.12);
+}
+
+/* 命令状态标签 */
+.cc-command-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.cc-command-executed {
+  color: #34C759;
+  background: rgba(52, 199, 89, 0.08);
+}
+
+.cc-command-ignored {
+  color: var(--text-secondary, #86868b);
+  background: var(--bg-tertiary, rgba(0,0,0,0.05));
+}
+
+.cc-command-rejected {
+  color: #FF3B30;
+  background: rgba(255, 59, 48, 0.08);
+}
+
+/* CC 命令执行输出区域 */
+.cc-command-output {
+  margin: 0 0 8px 0;
+  border-radius: 0 0 4px 4px;
+  overflow: hidden;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-top: none;
+}
+
+.cc-command-output-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary, rgba(0,0,0,0.05));
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
+}
+
+.cc-command-output-icon {
+  font-size: 12px;
+}
+
+.cc-command-output-title {
+  font-weight: 500;
+}
+
+.cc-command-output-body {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: 'SF Mono', Menlo, Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-primary, #1d1d1f);
+  background: var(--bg-secondary, rgba(0,0,0,0.03));
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cc-command-output-success .cc-command-output-header {
+  background: rgba(52, 199, 89, 0.06);
+  color: #34C759;
+}
+
+.cc-command-output-error .cc-command-output-header {
+  background: rgba(255, 59, 48, 0.06);
+  color: #FF3B30;
+}
+
+.cc-command-output-error .cc-command-output-body {
+  color: #FF3B30;
+}
+
+/* CC 命令执行确认弹窗 */
+.cc-exec-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: cc-fade-in 0.15s ease;
+}
+
+@keyframes cc-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cc-exec-confirm-modal {
+  width: 560px;
+  max-width: 90vw;
+  background: var(--bg-primary, #fff);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  animation: cc-slide-up 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes cc-slide-up {
+  from { transform: translateY(20px) scale(0.95); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.cc-exec-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color, rgba(0,0,0,0.08));
+}
+
+.cc-exec-confirm-icon {
+  font-size: 18px;
+}
+
+.cc-exec-confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.cc-exec-confirm-body {
+  padding: 14px 16px;
+}
+
+.cc-exec-confirm-label {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  margin-bottom: 8px;
+}
+
+.cc-exec-confirm-cmd {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-secondary, rgba(0,0,0,0.03));
+  border-radius: 8px;
+  font-family: 'SF Mono', Menlo, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #1d1d1f);
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cc-exec-confirm-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+}
+
+.cc-exec-confirm-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color, rgba(0,0,0,0.08));
+  justify-content: flex-end;
+}
+
+.cc-exec-confirm-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cc-exec-confirm-yes {
+  background: #007AFF;
+  color: #fff;
+}
+
+.cc-exec-confirm-yes:hover {
+  background: #0066d6;
+}
+
+.cc-exec-confirm-no {
+  background: var(--bg-tertiary, rgba(0,0,0,0.06));
+  color: var(--text-primary, #1d1d1f);
+}
+
+.cc-exec-confirm-no:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.1));
 }
 
 /* ===== Skill 管理区域 ===== */
@@ -4487,6 +4885,214 @@ body {
   cursor: not-allowed;
 }
 
+/* ============ MCP 连接器管理 ============ */
+.connector-container { padding: 16px; }
+.connector-toolbar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+}
+.connector-hint {
+  color: var(--text-secondary, #86868b); font-size: 12px; margin-left: 8px;
+}
+.connector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+.connector-card {
+  background: var(--bg-primary, #fff);
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 12px;
+  padding: 14px;
+  transition: box-shadow 0.2s;
+}
+.connector-card:hover {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+.connector-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.connector-card-icon { font-size: 18px; }
+.connector-card-name {
+  font-weight: 600; font-size: 14px; color: var(--text-primary, #1d1d1f);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.connector-card-type {
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  background: rgba(0,122,255,0.1); color: var(--primary-color, #007AFF);
+}
+.connector-card-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+}
+.connector-card-badge.enabled {
+  background: rgba(52,199,89,0.12); color: #34C759;
+}
+.connector-card-badge.disabled {
+  background: rgba(142,142,147,0.12); color: #86868b;
+}
+.connector-card-desc {
+  font-size: 12px; color: var(--text-secondary, #86868b);
+  margin-bottom: 6px; line-height: 1.5;
+}
+.connector-card-config {
+  font-size: 11px; color: var(--text-secondary, #aeaeb2);
+  font-family: 'SF Mono', monospace; margin-bottom: 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.connector-card-footer {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.connector-card-time {
+  font-size: 11px; color: var(--text-secondary, #aeaeb2);
+}
+.connector-card-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+.connector-edit-btn, .connector-delete-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 14px; padding: 4px; border-radius: 4px; transition: background 0.15s;
+}
+.connector-edit-btn:hover { background: rgba(0,122,255,0.1); }
+.connector-delete-btn:hover { background: rgba(255,59,48,0.1); }
+
+/* Toggle switch */
+.connector-toggle-switch {
+  position: relative; display: inline-block; width: 32px; height: 18px;
+}
+.connector-toggle-switch input { opacity: 0; width: 0; height: 0; }
+.connector-toggle-slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: rgba(142,142,147,0.3); border-radius: 9px; transition: 0.2s;
+}
+.connector-toggle-slider::before {
+  content: ''; position: absolute; height: 14px; width: 14px;
+  left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.2s;
+}
+.connector-toggle-switch input:checked + .connector-toggle-slider {
+  background: var(--primary-color, #007AFF);
+}
+.connector-toggle-switch input:checked + .connector-toggle-slider::before {
+  transform: translateX(14px);
+}
+
+/* Connector Modal */
+.connector-modal {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  z-index: 10000; display: flex; align-items: center; justify-content: center;
+}
+.connector-modal-overlay {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+}
+.connector-modal-content {
+  position: relative; background: var(--bg-primary, #fff);
+  border-radius: 16px; width: 90%; max-width: 560px;
+  max-height: 85vh; overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+.connector-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 0.5px solid var(--border-color, rgba(0,0,0,0.1));
+}
+.connector-modal-header h3 {
+  font-size: 16px; font-weight: 600; margin: 0;
+}
+.connector-modal-close {
+  background: none; border: none; font-size: 18px; cursor: pointer;
+  color: var(--text-secondary, #86868b); padding: 4px;
+}
+.connector-modal-body { padding: 20px; }
+.connector-modal-footer {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 16px 20px; border-top: 0.5px solid var(--border-color, rgba(0,0,0,0.1));
+}
+.connector-form-group { margin-bottom: 14px; }
+.connector-form-group label {
+  display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;
+  color: var(--text-primary, #1d1d1f);
+}
+.connector-form-group input[type="text"],
+.connector-form-group select,
+.connector-form-group textarea {
+  width: 100%; padding: 8px 12px; font-size: 14px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.15));
+  border-radius: 8px; background: var(--bg-primary, #fff);
+  color: var(--text-primary, #1d1d1f); box-sizing: border-box;
+}
+.connector-form-group input:focus,
+.connector-form-group select:focus,
+.connector-form-group textarea:focus {
+  outline: none; border-color: var(--primary-color, #007AFF);
+  box-shadow: 0 0 0 3px rgba(0,122,255,0.1);
+}
+.connector-form-group textarea { resize: vertical; font-family: 'SF Mono', monospace; font-size: 13px; }
+.checkbox-label {
+  display: flex !important; align-items: center; gap: 6px;
+  font-weight: 400 !important; cursor: pointer;
+}
+.checkbox-label input[type="checkbox"] { width: 16px; height: 16px; }
+.connector-templates {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.connector-template-btn {
+  padding: 4px 10px; font-size: 12px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.15));
+  border-radius: 6px; background: var(--bg-primary, #fff);
+  cursor: pointer; transition: all 0.15s;
+}
+.connector-template-btn:hover {
+  border-color: var(--primary-color, #007AFF);
+  background: rgba(0,122,255,0.05);
+}
+
+/* CC mode connector dropdown */
+.cc-connector-label {
+  font-size: 12px; color: var(--text-secondary, #86868b);
+  white-space: nowrap;
+}
+.cc-connector-dropdown { position: relative; }
+.cc-connector-trigger {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; font-size: 12px;
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.15));
+  border-radius: 6px; background: var(--bg-primary, #fff);
+  cursor: pointer; color: var(--text-primary, #1d1d1f);
+  transition: border-color 0.15s;
+}
+.cc-connector-trigger:hover { border-color: var(--primary-color, #007AFF); }
+.cc-connector-arrow { font-size: 10px; color: var(--text-secondary, #86868b); }
+.cc-connector-menu {
+  position: absolute; bottom: 100%; left: 0; margin-bottom: 4px;
+  min-width: 240px; max-height: 280px; overflow-y: auto;
+  background: var(--bg-primary, #fff);
+  border: 0.5px solid var(--border-color, rgba(0,0,0,0.15));
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  z-index: 100; padding: 4px;
+}
+.cc-connector-list { display: flex; flex-direction: column; gap: 2px; }
+.cc-connector-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 6px; cursor: pointer;
+  font-size: 12px; transition: background 0.1s;
+}
+.cc-connector-item:hover { background: var(--bg-hover, rgba(0,0,0,0.04)); }
+.cc-connector-item input[type="checkbox"] { width: 14px; height: 14px; margin: 0; }
+.cc-connector-item-icon { font-size: 14px; }
+.cc-connector-item-name {
+  flex: 1; color: var(--text-primary, #1d1d1f);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cc-connector-item-type {
+  font-size: 10px; color: var(--text-secondary, #86868b);
+}
+.cc-connector-empty-hint {
+  padding: 12px; text-align: center; color: var(--text-secondary, #86868b); font-size: 12px;
+}
+.cc-connector-manage-btn {
+  background: none; border: none; font-size: 14px; cursor: pointer;
+  padding: 4px; border-radius: 4px; transition: background 0.15s;
+}
+.cc-connector-manage-btn:hover { background: var(--bg-hover, rgba(0,0,0,0.05)); }
+
 /* CC 工作目录指示器 */
 .cc-workdir-bar {
   display: flex;
@@ -4541,6 +5147,146 @@ body {
   color: var(--primary-color, #007AFF);
   white-space: nowrap;
   margin-left: auto;
+}
+
+/* OpenRouter 模型选择器 */
+.cc-openrouter-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.cc-openrouter-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  max-width: 200px;
+  cursor: pointer;
+  outline: none;
+}
+.cc-openrouter-select:focus {
+  border-color: var(--primary-color);
+}
+.cc-openrouter-refresh-btn {
+  background: none;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.cc-openrouter-refresh-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text-primary);
+}
+
+/* ─── Provider Selector（供应商选择器）─── */
+.cc-provider-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 4px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  max-width: 140px;
+  cursor: pointer;
+  outline: none;
+}
+.cc-provider-select:focus {
+  border-color: var(--primary-color);
+}
+.cc-provider-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ─── Provider Cards（供应商配置卡片）─── */
+.provider-card {
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  background: var(--bg-primary, #fff);
+}
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.provider-card-header:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.03));
+}
+.provider-icon {
+  font-size: 18px;
+}
+.provider-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+.provider-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(255, 149, 0, 0.12);
+  color: #FF9500;
+}
+.provider-status.configured {
+  background: rgba(52, 199, 89, 0.12);
+  color: #34C759;
+}
+.provider-toggle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+}
+.provider-card.expanded .provider-toggle {
+  transform: rotate(180deg);
+}
+.provider-card-body {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-color, rgba(0,0,0,0.08));
+}
+.provider-card-body.hidden {
+  display: none;
+}
+.provider-test-btn {
+  margin-top: 8px;
+}
+
+/* ─── SubTask Progress（子任务进度展示）─── */
+.adp-progress-step.subtask-step {
+  border-left: 2px solid var(--primary-color, #007AFF);
+  padding-left: 8px;
+}
+.adp-progress-step.subtask-step .adp-step-label {
+  font-size: 12px;
+}
+.subtask-result {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg-secondary, rgba(0,0,0,0.03));
+  border: 1px solid var(--border-color, rgba(0,0,0,0.08));
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 400px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+.subtask-result pre {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Agent 结果卡片 */

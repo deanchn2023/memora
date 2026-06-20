@@ -12,7 +12,7 @@ const translations = {
     // 导航栏
     'nav.calendar': '日历',
     'nav.notebook': '记事本',
-    'nav.documents': '文档',
+    'nav.documents': '资产',
     'nav.knowledge': '知识',
     'nav.insight': '洞察',
     'nav.today': '今天',
@@ -103,6 +103,7 @@ const translations = {
     'settings.tab.sync': '同步',
     'settings.tab.reminder': '提醒',
     'settings.tab.context': '智能上下文',
+    'settings.tab.voice': '语音',
     'settings.tab.appearance': '外观',
     'settings.tab.login': '组织登录',
     'settings.tab.server': '服务器配置',
@@ -282,11 +283,11 @@ const translations = {
     'ai.clearSearch': '清除',
 
     // 知识子标签
-    'knowledge.sub.graph': '🧠 知识图谱',
+    'knowledge.sub.graph': '🧠 知识聚类',
     'knowledge.sub.globalGraph': '🗺 全局图谱',
     'knowledge.sub.articles': '📚 知识文章',
     'knowledge.sub.questions': '❓ 问题列表',
-    'knowledge.sub.search': '🔍 知识搜索',
+    'knowledge.sub.search': '🔍 知识跟随',
     'knowledge.stat.atoms': '知识原子',
     'knowledge.stat.clusters': '知识簇',
     'knowledge.stat.articles': '知识文章',
@@ -738,7 +739,7 @@ const translations = {
     // Navigation
     'nav.calendar': 'Calendar',
     'nav.notebook': 'Notes',
-    'nav.documents': 'Docs',
+    'nav.documents': 'Assets',
     'nav.knowledge': 'Knowledge',
     'nav.insight': 'Insight',
     'nav.today': 'Today',
@@ -829,6 +830,7 @@ const translations = {
     'settings.tab.sync': 'Sync',
     'settings.tab.reminder': 'Reminder',
     'settings.tab.context': 'Smart Context',
+    'settings.tab.voice': 'Voice',
     'settings.tab.appearance': 'Appearance',
     'settings.tab.login': 'Org Login',
     'settings.tab.server': 'Server',

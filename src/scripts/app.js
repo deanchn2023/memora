@@ -273,6 +273,7 @@ const App = {
 
   bindEvents() {
     document.getElementById('addTaskBtn')?.addEventListener('click', () => this.showTaskModal());
+    document.getElementById('voiceInputBtn')?.addEventListener('click', () => this._toggleMainVoiceInput());
     
     document.getElementById('createTaskBtn')?.addEventListener('click', () => this.createTaskFromClipboard());
     document.getElementById('editTaskBtn')?.addEventListener('click', () => this.editClipboardTask());
@@ -284,9 +285,17 @@ const App = {
     document.getElementById('closeModal')?.addEventListener('click', () => this.hideTaskModal());
     document.getElementById('cancelTask')?.addEventListener('click', () => this.hideTaskModal());
     document.getElementById('saveTask')?.addEventListener('click', () => this.saveTask());
+
+    // 语音 ASR 设置面板
+    document.getElementById('asrProviderVolcano')?.addEventListener('click', () => this._switchASRProvider('volcano'));
+    document.getElementById('asrProviderTencent')?.addEventListener('click', () => this._switchASRProvider('tencent'));
+    document.getElementById('saveASRConfigBtn')?.addEventListener('click', () => this._saveASRConfig());
+    document.getElementById('testASRConfigBtn')?.addEventListener('click', () => this._testASRMicrophone());
     
     // AI分析按钮
     document.getElementById('aiAnalyzeBtn')?.addEventListener('click', () => this.analyzeTaskInput());
+    document.getElementById('aiVoiceInputBtn')?.addEventListener('click', () => this._toggleModalVoiceInput());
+    document.getElementById('modalVoiceStopBtn')?.addEventListener('click', () => this._stopVoiceInput());
     document.getElementById('aiSaveToNoteBtn')?.addEventListener('click', () => this.saveAIToNote());
     document.getElementById('aiExtractMemoryBtn')?.addEventListener('click', () => this.extractAIMemory());
     document.getElementById('aiSaveAsQuestionBtn')?.addEventListener('click', () => this.saveAIAsQuestion());
@@ -458,6 +467,29 @@ const App = {
     document.getElementById('testLLMBtn')?.addEventListener('click', () => this._testLLMConnection('lowvol'));
     document.getElementById('testHighvolLLMBtn')?.addEventListener('click', () => this._testLLMConnection('highvol'));
     document.getElementById('testCCBtn')?.addEventListener('click', () => this._testCCConnection());
+    // OpenRouter 测试连接
+    document.getElementById('testOpenRouterBtn')?.addEventListener('click', () => this._testOpenRouterConnection());
+    // OpenRouter 刷新模型列表
+    document.getElementById('ccOpenRouterRefreshBtn')?.addEventListener('click', () => {
+      const providerId = document.getElementById('ccProviderSelect')?.value || '';
+      this._updateModelSelectorForProvider(providerId);
+    });
+    // 滚动快捷按钮
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+      chatMessages.addEventListener('scroll', () => this._updateScrollButtons());
+      // MutationObserver：内容变化时也检查
+      const observer = new MutationObserver(() => this._updateScrollButtons());
+      observer.observe(chatMessages, { childList: true, subtree: true });
+    }
+    document.getElementById('chatScrollTopBtn')?.addEventListener('click', () => {
+      const cm = document.getElementById('chatMessages');
+      if (cm) cm.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    document.getElementById('chatScrollBottomBtn')?.addEventListener('click', () => {
+      const cm = document.getElementById('chatMessages');
+      if (cm) cm.scrollTo({ top: cm.scrollHeight, behavior: 'smooth' });
+    });
     // CC 手动同步记忆
     document.getElementById('ccSyncMemoryBtn')?.addEventListener('click', async () => {
       const result = await window.electronAPI?.ccSyncMemory?.();
@@ -513,7 +545,7 @@ const App = {
     });
     // CC 重启会话（不重启 memora，仅清除 ccSessionId 让下次 query 新建子进程）
     document.getElementById('ccRestartBtn')?.addEventListener('click', async () => {
-      if (!confirm('重启 CC 会话将清除当前对话的 CC 上下文（安装的 skill 需重启才能生效）。是否继续？')) return;
+      if (!confirm('重启 M-Agent 会话将清除当前对话的上下文（安装的 skill 需重启才能生效）。是否继续？')) return;
       await window.electronAPI?.ccNewSession?.();
       // 清除当前会话的 ccSessionId
       if (this._activeSessionId) {
@@ -523,7 +555,7 @@ const App = {
           this._saveChatSessions();
         }
       }
-      this.showToast('CC 会话已重启，新 skill 将在下次对话生效');
+      this.showToast('M-Agent 会话已重启，新 skill 将在下次对话生效');
     });
     // Skill 管理事件
     document.getElementById('skillUploadBtn')?.addEventListener('click', () => {
@@ -535,6 +567,8 @@ const App = {
       await this._uploadSkill(file);
       e.target.value = ''; // 重置以便重复上传同名文件
     });
+    // 连接器管理事件
+    this._initConnectorEvents();
     document.getElementById('refreshMemoriesBtn')?.addEventListener('click', () => this.loadMemories());
     document.getElementById('clearAllMemoriesBtn')?.addEventListener('click', () => this.clearAllMemories());
     document.getElementById('addManualMemoryBtn')?.addEventListener('click', () => this.addManualMemory());
@@ -594,6 +628,8 @@ const App = {
       window.electronAPI.onGlobalAIModeChanged((mode) => {
         this._aiAssistantMode = mode;
         document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+        // 同步更新 CC 工作目录栏可见性
+        this._updateCCWorkdirBar();
       });
     }
 
@@ -610,16 +646,21 @@ const App = {
       }
     });
 
-    // 全局 CC 代码块保存/打开/预览按钮事件委托
+    // 全局 CC 代码块保存/打开/预览/复制/执行按钮事件委托
     document.getElementById('chatMessages')?.addEventListener('click', async (e) => {
       const saveBtn = e.target.closest('.cc-code-save-btn');
       const openBtn = e.target.closest('.cc-code-open-btn');
       const previewBtn = e.target.closest('.cc-code-preview-btn');
-      if (!saveBtn && !openBtn && !previewBtn) return;
+      const copyBtn = e.target.closest('.cc-code-copy-btn');
+      const execBtn = e.target.closest('.cc-code-exec-btn');
+      const ignoreBtn = e.target.closest('.cc-code-ignore-btn');
+      const rejectBtn = e.target.closest('.cc-code-reject-btn');
+      if (!saveBtn && !openBtn && !previewBtn && !copyBtn && !execBtn && !ignoreBtn && !rejectBtn) return;
       e.preventDefault();
       e.stopPropagation();
 
-      const toolbar = (saveBtn || openBtn || previewBtn).closest('.cc-code-toolbar');
+      const clickedBtn = saveBtn || openBtn || previewBtn || copyBtn || execBtn || ignoreBtn || rejectBtn;
+      const toolbar = clickedBtn.closest('.cc-code-toolbar');
       const pre = toolbar?.nextElementSibling;
       const codeEl = pre?.querySelector('code');
       if (!codeEl) return;
@@ -628,6 +669,44 @@ const App = {
       const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
       const ext = extMap[lang] || 'txt';
       const fileName = `cc-output-${Date.now()}.${ext}`;
+
+      // 复制按钮
+      if (copyBtn) {
+        try {
+          await navigator.clipboard.writeText(codeContent);
+          copyBtn.textContent = '✅ 已复制';
+          setTimeout(() => { copyBtn.textContent = '📋 复制'; }, 2000);
+        } catch {
+          this.showToast('复制失败', 'error');
+        }
+        return;
+      }
+
+      // 执行按钮
+      if (execBtn) {
+        await this._executeCommandInline(execBtn, pre, codeContent);
+        return;
+      }
+
+      // 忽略按钮
+      if (ignoreBtn) {
+        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        const badge = document.createElement('span');
+        badge.className = 'cc-command-status cc-command-ignored';
+        badge.textContent = '✕ 已忽略';
+        toolbar.appendChild(badge);
+        return;
+      }
+
+      // 拒绝按钮
+      if (rejectBtn) {
+        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        const badge = document.createElement('span');
+        badge.className = 'cc-command-status cc-command-rejected';
+        badge.textContent = '🚫 已拒绝';
+        toolbar.appendChild(badge);
+        return;
+      }
 
       // 预览按钮：弹出 iframe 预览 HTML/SVG
       if (previewBtn) {
@@ -696,6 +775,9 @@ const App = {
         if (data.has_update) this._showUpdateModal(data);
       });
     }
+    // AI 聊天语音输入按钮
+    document.getElementById('chatVoiceBtn')?.addEventListener('click', () => this._toggleChatVoiceInput());
+
     document.getElementById('sendAIMessageBtn')?.addEventListener('click', () => {
       // 用户首次交互时初始化/解锁 AudioContext（规避 autoplay policy）
       this._unlockAudioContext();
@@ -1025,6 +1107,7 @@ const App = {
       if (tabName === 'sync') this._loadSyncSettings();
       if (tabName === 'reminder') this._loadReminderSettings();
       if (tabName === 'context') this._loadContextSettings();
+      if (tabName === 'voice') this._loadVoiceSettings();
     }
   },
 
@@ -1058,6 +1141,15 @@ const App = {
       document.getElementById('ccDefaultWorkdir').value = config.defaultWorkdir || '';
       document.getElementById('ccAuthToken').value = ''; // 不回显 token
 
+      // OpenRouter 配置
+      document.getElementById('ccOpenRouterBaseUrl').value = config.openRouterBaseUrl || 'https://openrouter.ai/api/v1';
+      document.getElementById('ccOpenRouterDefaultModel').value = config.openRouterDefaultModel || '';
+      document.getElementById('ccOpenRouterApiKey').value = ''; // 不回显 key
+      if (config.openRouterApiKey === '***configured***') {
+        const orStatus = document.getElementById('testOpenRouterResult');
+        if (orStatus) orStatus.textContent = '✅ API Key 已配置';
+      }
+
       // 加载环境变量列表
       this._renderCCEnvVars(config.envVars || []);
 
@@ -1069,7 +1161,219 @@ const App = {
       // 缓存默认工作目录，供对话区指示器使用
       this._ccDefaultWorkdir = config.defaultWorkdir || '';
       this._updateCCWorkdirBar();
+      // 初始化 OpenRouter 模型选择器
+      this._initOpenRouterModelSelector();
+
+      // 加载供应商配置
+      if (config.providers) {
+        this._loadProviderConfigs(config.providers);
+      }
+      // 初始化供应商选择器（复用已返回的 providers 数据，避免重复 IPC 调用）
+      this._initProviderSelector({
+        providers: config.providers,
+        activeProvider: config.activeProvider,
+      });
     });
+  },
+
+  /** 加载供应商配置到设置面板 */
+  _loadProviderConfigs(providers) {
+    for (const p of providers) {
+      if (p.config) {
+        for (const [key, value] of Object.entries(p.config)) {
+          const input = document.getElementById(`provider_${p.id}_${key}`);
+          if (input && key !== 'enabled') {
+            if (input.tagName === 'SELECT') {
+              input.value = value || '';
+            } else if (input.type === 'password') {
+              // Don't refill password fields, but show status
+              input.value = '';
+              input.placeholder = value ? '***已配置***' : input.placeholder;
+            } else {
+              input.value = value || '';
+            }
+          }
+        }
+      }
+      // 从 fields 数组加载模型选项（含 AI 解析保存的模型列表）
+      if (p.fields) {
+        const modelField = p.fields.find(f => f.key === 'model');
+        if (modelField && modelField.options) {
+          this._populateProviderModelSelect(p.id, modelField.options);
+          // 恢复选中的值
+          const modelSelect = document.getElementById(`provider_${p.id}_model`);
+          if (modelSelect && modelField.value) {
+            modelSelect.value = modelField.value;
+          }
+        }
+      }
+      // 显示已解析模型数量
+      if (p.fields) {
+        const modelField = p.fields.find(f => f.key === 'model');
+        const parseStatusEl = document.getElementById(`provider_${p.id}_parseStatus`);
+        if (parseStatusEl && modelField && modelField.options && modelField.options.length > 0) {
+          // 检查是否是 AI 解析的模型（非默认数量）
+          const parseHint = parseStatusEl;
+          if (modelField.options.length > 1 || (modelField.options.length === 1 && modelField.options[0].value !== 'auto' && modelField.options[0].value !== 'deepseek-chat' && modelField.options[0].value !== 'tc-code-latest')) {
+            parseHint.textContent = `✅ 已解析 ${modelField.options.length} 个模型`;
+            parseHint.style.color = 'var(--success-color, #34C759)';
+          }
+        }
+      }
+      // Update status badge
+      const statusEl = document.getElementById(`providerStatus${p.id.charAt(0).toUpperCase() + p.id.slice(1)}`);
+      if (statusEl) {
+        if (p.configured) {
+          statusEl.textContent = '✓ 已配置';
+          statusEl.classList.add('configured');
+        } else {
+          statusEl.textContent = '未配置';
+          statusEl.classList.remove('configured');
+        }
+      }
+    }
+
+    // Init provider card toggle events
+    this._initProviderCardEvents();
+    // Init model parse buttons
+    this._initModelParseButtons();
+  },
+
+  /** 初始化供应商卡片折叠/展开和测试连接 */
+  _initProviderCardEvents() {
+    // Card header toggle
+    document.querySelectorAll('.provider-card-header').forEach(header => {
+      // Remove existing listeners by cloning
+      const newHeader = header.cloneNode(true);
+      header.parentNode.replaceChild(newHeader, header);
+      newHeader.addEventListener('click', () => {
+        const providerId = newHeader.dataset.provider;
+        const card = newHeader.closest('.provider-card');
+        const body = card.querySelector('.provider-card-body');
+        if (body) {
+          body.classList.toggle('hidden');
+          card.classList.toggle('expanded');
+        }
+      });
+    });
+
+    // Test buttons
+    document.querySelectorAll('.provider-test-btn').forEach(btn => {
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      newBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const providerId = newBtn.dataset.provider;
+        newBtn.textContent = '⏳ 测试中...';
+        newBtn.disabled = true;
+        try {
+      // Collect current values
+      await this._saveProviderConfigs();
+          const result = await window.electronAPI.ccTestProvider({ providerId });
+          if (result.success) {
+            newBtn.textContent = '✅ 连接成功';
+            this.showToast(result.message || '连接成功', 'success');
+          } else {
+            newBtn.textContent = '🔗 测试连接';
+            this.showToast(result.error || '连接失败', 'error');
+          }
+        } catch (e) {
+          newBtn.textContent = '🔗 测试连接';
+          this.showToast(`测试失败: ${e.message}`, 'error');
+        } finally {
+          newBtn.disabled = false;
+          setTimeout(() => { newBtn.textContent = '🔗 测试连接'; }, 3000);
+        }
+      });
+    });
+  },
+
+  /** 初始化模型列表 AI 解析按钮 */
+  _initModelParseButtons() {
+    document.querySelectorAll('.provider-parse-models-btn').forEach(btn => {
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      newBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const providerId = newBtn.dataset.provider;
+        const textarea = document.getElementById(`provider_${providerId}_modelList`);
+        const statusEl = document.getElementById(`provider_${providerId}_parseStatus`);
+        if (!textarea || !textarea.value.trim()) {
+          this.showToast('请先粘贴模型列表文本', 'error');
+          return;
+        }
+        newBtn.textContent = '⏳ 解析中...';
+        newBtn.disabled = true;
+        if (statusEl) { statusEl.textContent = 'AI 解析中...'; statusEl.style.color = ''; }
+        try {
+          const result = await window.electronAPI.ccParseModels({
+            providerId,
+            text: textarea.value,
+          });
+          if (result.success && result.models) {
+            // 填充模型下拉框
+            this._populateProviderModelSelect(providerId, result.models);
+            if (statusEl) {
+              statusEl.textContent = `✅ 已解析 ${result.models.length} 个模型`;
+              statusEl.style.color = 'var(--success-color, #34C759)';
+            }
+            this.showToast(`成功解析 ${result.models.length} 个模型`, 'success');
+          } else {
+            if (statusEl) {
+              statusEl.textContent = `❌ ${result.error || '解析失败'}`;
+              statusEl.style.color = 'var(--error-color, #FF3B30)';
+            }
+            this.showToast(result.error || 'AI 解析失败', 'error');
+          }
+        } catch (err) {
+          if (statusEl) {
+            statusEl.textContent = `❌ ${err.message}`;
+            statusEl.style.color = 'var(--error-color, #FF3B30)';
+          }
+          this.showToast(`解析失败: ${err.message}`, 'error');
+        } finally {
+          newBtn.textContent = '🤖 AI 解析模型';
+          newBtn.disabled = false;
+        }
+      });
+    });
+  },
+
+  /** 填充供应商模型下拉框（设置面板内） */
+  _populateProviderModelSelect(providerId, models) {
+    const select = document.getElementById(`provider_${providerId}_model`);
+    if (!select) return;
+    const currentValue = select.value;
+    select.innerHTML = '';
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.value = m.value;
+      opt.textContent = m.label;
+      select.appendChild(opt);
+    }
+    // 尝试恢复之前选中的值
+    if (currentValue && [...select.options].some(o => o.value === currentValue)) {
+      select.value = currentValue;
+    }
+  },
+  async _saveProviderConfigs() {
+    if (!window.electronAPI?.ccSetConfig) return;
+    const providers = {};
+    const providerIds = ['volcano', 'deepseek', 'tencent'];
+    for (const id of providerIds) {
+      const config = {};
+      const fields = document.querySelectorAll(`[id^="provider_${id}_"]`);
+      fields.forEach(field => {
+        const key = field.id.replace(`provider_${id}_`, '');
+        if (!key) return;
+        // 密码字段为空时跳过，避免用空字符串覆盖已保存的值
+        // （页面加载时密码不回显，password 字段值为空不代表用户要清除）
+        if (field.type === 'password' && !field.value.trim()) return;
+        config[key] = field.value;
+      });
+      providers[id] = config;
+    }
+    await window.electronAPI.ccSetConfig({ providers });
   },
 
   /** 渲染 CC 环境变量列表 */
@@ -2295,6 +2599,13 @@ const App = {
     // 更新 AI 模式切换按钮可见性
     this._updateAIModeToggle();
 
+    // 恢复 CC 模式 UI（工作目录栏 + skill 下拉 + 连接器下拉）
+    // 切到其他标签再切回来时，ccWorkdirBar 可能未被正确恢复
+    this._updateCCWorkdirBar();
+    if (this._aiAssistantMode === 'cc') {
+      this._refreshCCConnectorSelect();
+    }
+
     // 功能卡片点击切换快捷问题
     this._initFeatureCards();
 
@@ -2324,13 +2635,16 @@ const App = {
 
     if (window.electronAPI?.getGlobalAIMode) {
       window.electronAPI.getGlobalAIMode().then(result => {
-        this._aiAssistantMode = result.mode || 'agent';
+        this._aiAssistantMode = result.mode || 'cc';
         toggle.querySelectorAll('.ai-mode-btn').forEach(btn => {
           btn.classList.toggle('active', btn.dataset.mode === this._aiAssistantMode);
         });
+        // 恢复模式后同步显示 CC 工作目录栏
+        this._updateCCWorkdirBar();
       });
     } else {
-      this._aiAssistantMode = 'agent';
+      this._aiAssistantMode = 'cc';
+      this._updateCCWorkdirBar();
     }
   },
 
@@ -2485,6 +2799,8 @@ const App = {
 
     // 同时刷新 Skill 选择器
     this._refreshCCSkillSelect();
+    // 同时初始化 OpenRouter 模型选择器
+    this._initOpenRouterModelSelector();
   },
 
   /** 刷新 CC Skill 选择下拉框（只显示已安装的 skill） */
@@ -2512,6 +2828,120 @@ const App = {
     }
     // 恢复选中（如果仍存在）
     if (prevValue) select.value = prevValue;
+  },
+
+  /** 初始化 OpenRouter 模型选择器 */
+  async _initOpenRouterModelSelector(forceRefresh = false) {
+    const select = document.getElementById('ccOpenRouterSelect');
+    if (!select) return;
+    if (!forceRefresh && select.dataset.loaded === 'true') return;
+
+    // 保留当前选中值
+    const prevValue = select.value;
+
+    // 先检查是否有 API Key（通过已加载的配置状态判断）
+    const result = await window.electronAPI?.ccOpenRouterGetModels?.();
+    if (!result?.success) {
+      select.innerHTML = '<option value="">默认</option>';
+      if (result?.error && !result.error.includes('未配置')) {
+        // 有 key 但获取失败
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = `⚠️ ${result.error.substring(0, 40)}`;
+        select.appendChild(opt);
+      }
+      return;
+    }
+
+    const models = result.models || [];
+    // 按提供商分组
+    const groups = {};
+    for (const m of models) {
+      const provider = m.id.split('/')[0] || 'other';
+      if (!groups[provider]) groups[provider] = [];
+      groups[provider].push(m);
+    }
+
+    select.innerHTML = '<option value="">默认</option>';
+    for (const [provider, providerModels] of Object.entries(groups).sort()) {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = provider;
+      for (const m of providerModels) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        // 显示模型名 + 价格提示
+        let label = m.name || m.id;
+        if (m.pricing?.prompt) {
+          const price = parseFloat(m.pricing.prompt);
+          if (price > 0) {
+            label += ` ($${(price * 1e6).toFixed(2)}/1M)`;
+          } else {
+            label += ` (free)`;
+          }
+        }
+        opt.textContent = label;
+        opt.title = m.id;
+        optgroup.appendChild(opt);
+      }
+      select.appendChild(optgroup);
+    }
+
+    // 设置默认模型（从配置读取）
+    const config = await window.electronAPI?.ccGetConfig?.();
+    if (config?.openRouterDefaultModel) {
+      select.value = config.openRouterDefaultModel;
+    } else if (prevValue) {
+      select.value = prevValue;
+    }
+
+    select.dataset.loaded = 'true';
+    console.log(`[OpenRouter] Loaded ${models.length} models`);
+  },
+
+  /** 测试 OpenRouter 连接 */
+  async _testOpenRouterConnection() {
+    const resultEl = document.getElementById('testOpenRouterResult');
+    const btnEl = document.getElementById('testOpenRouterBtn');
+    if (!resultEl || !btnEl) return;
+
+    btnEl.disabled = true;
+    resultEl.innerHTML = '<span style="color: var(--text-secondary);">⏳ 测试中...</span>';
+
+    const apiKey = document.getElementById('ccOpenRouterApiKey')?.value.trim();
+    const baseUrl = document.getElementById('ccOpenRouterBaseUrl')?.value.trim();
+
+    try {
+      const result = await window.electronAPI?.ccOpenRouterTest?.({
+        apiKey: apiKey || undefined,
+        baseUrl: baseUrl || undefined,
+      });
+      if (result?.ok) {
+        resultEl.innerHTML = `<span style="color: var(--success);">✅ 连接成功（${result.modelCount} 个模型，${result.latency}ms）</span>`;
+      } else {
+        resultEl.innerHTML = `<span style="color: var(--danger);">❌ ${result?.error || '连接失败'}</span>`;
+      }
+    } catch (err) {
+      resultEl.innerHTML = `<span style="color: var(--danger);">❌ ${err.message}</span>`;
+    } finally {
+      btnEl.disabled = false;
+    }
+  },
+
+  /** 更新滚动快捷按钮显示状态 */
+  _updateScrollButtons() {
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+    const topBtn = document.getElementById('chatScrollTopBtn');
+    const bottomBtn = document.getElementById('chatScrollBottomBtn');
+    if (!topBtn || !bottomBtn) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = chatMessages;
+    const scrollThreshold = 100; // 100px 阈值
+
+    // 顶部按钮：当不在顶部时显示
+    topBtn.style.display = scrollTop > scrollThreshold ? 'flex' : 'none';
+    // 底部按钮：当不在底部时显示
+    bottomBtn.style.display = (scrollHeight - scrollTop - clientHeight) > scrollThreshold ? 'flex' : 'none';
   },
 
   /** 判断是否已登录组织 */
@@ -2794,7 +3224,7 @@ const App = {
       // 根据 AI 助手模式决定调用路径：
       // - agent 模式：使用 ADP 智能体（工具调用、多步推理等）
       // - llm 模式：使用已配置的大模型 API 直接对话（简单聊天）
-      // - cc 模式：使用 Claude Code Agent SDK（火山引擎 Coding Plan）
+      // - cc 模式：使用 Claude Code Agent SDK（Coding Plan）
       // - forceMode: 'adp' 强制走 ADP，'agent' 强制走本地 Agent
       const isAgentMode = this._aiAssistantMode === 'agent';
       
@@ -2972,16 +3402,17 @@ const App = {
           throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
         }
       } else if (this._aiAssistantMode === 'cc' && window.electronAPI?.ccInvoke) {
-        // CC 模式：使用 Claude Code Agent SDK（火山引擎 Coding Plan）
+        // M-Agent 模式：使用 Claude Code Agent SDK（Coding Plan）
         const messageContent = assistantMessage.querySelector('.message-content');
         messageContent.innerHTML = `
-          <div class="adp-progress" id="adpProgress">
-            <div class="adp-progress-header">
+          <div class="adp-progress cc-streaming-progress" id="adpProgress">
+            <div class="adp-progress-header" id="ccProgressHeader">
               <div class="adp-progress-spinner"></div>
-              <span class="adp-progress-title">Claude Code 处理中</span>
+              <span class="adp-progress-title" id="ccProgressTitle">M-Agent 处理中</span>
+              <span class="adp-progress-status" id="ccProgressStatus"></span>
               <span class="adp-progress-timer" id="adpProgressTimer">0s</span>
             </div>
-            <div class="adp-progress-steps" id="adpProgressSteps"></div>
+            <div class="adp-progress-steps cc-progress-steps" id="adpProgressSteps"></div>
           </div>`;
 
         // 获取当前会话的 ccSessionId（用于 resume）
@@ -2992,10 +3423,21 @@ const App = {
         console.log('[CC] sendAIMessage | activeSessionId:', this._activeSessionId, '| ccSessionId:', ccSessionId, '| sessionFound:', !!activeSession);
 
         this._ccTimerStart = Date.now();
+        this._ccLastEventTime = Date.now();
         this._ccTimerInterval = setInterval(() => {
           const elapsed = Math.floor((Date.now() - this._ccTimerStart) / 1000);
           const el = messageContent.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
           if (el) el.textContent = elapsed + 's';
+          // 心跳检测：超过 4 秒无事件，显示"思考中"状态
+          const idleSecs = Math.floor((Date.now() - this._ccLastEventTime) / 1000);
+          const statusEl = messageContent.querySelector('#ccProgressStatus');
+          if (idleSecs >= 4 && statusEl && this._ccStreaming) {
+            const stepsEl = messageContent.querySelector('#adpProgressSteps');
+            const totalSteps = stepsEl ? stepsEl.querySelectorAll('.adp-progress-step').length : 0;
+            const doneSteps = stepsEl ? stepsEl.querySelectorAll('.adp-progress-step.done').length : 0;
+            const dots = '.'.repeat((idleSecs % 3) + 1);
+            statusEl.textContent = `${doneSteps}/${totalSteps} 步骤 · 思考中${dots} (${elapsed}s)`;
+          }
         }, 1000);
 
         // 🔧 关键修复：在 ccInvoke 之前注册流式监听器并缓冲事件
@@ -3006,11 +3448,21 @@ const App = {
         this._ccCurrentText = '';
         this._ccThinkingText = '';
         this._ccRenderPending = false;
+        // Clean up any previous subtask listeners before starting new message
+        window.electronAPI?.removeCCSubTaskListeners?.();
         window.electronAPI.onCCStream((evt) => {
+          this._ccLastEventTime = Date.now();
           if (this._ccStreamListening) {
             this._ccStreamBuffer.push(evt);
             console.log('[CC] Buffered event:', evt.event);
           }
+        });
+
+        // 子任务事件监听（独立通道，在 CC done 后继续接收）
+        window.electronAPI.onCCSubTask((evt) => {
+          this._handleSubTaskEvent(evt, messageContent);
+          // Update last event time to keep timer running during subtask polling
+          this._ccLastEventTime = Date.now();
         });
 
         const ccResult = await window.electronAPI.ccInvoke({
@@ -3020,6 +3472,9 @@ const App = {
           systemRole: options.systemRole || '',
           workdir: this._getCCWorkdir(),
           skill: document.getElementById('ccSkillSelect')?.value || '',
+          connectorIds: this._getSelectedConnectorIds(),
+          openRouterModel: document.getElementById('ccOpenRouterSelect')?.value || '',
+          providerId: document.getElementById('ccProviderSelect')?.value || '',
         });
 
         if (ccResult.success && ccResult.streaming) {
@@ -3044,6 +3499,7 @@ const App = {
               // 移除旧监听器，注册新的直接处理模式
               window.electronAPI.removeCCListeners();
               window.electronAPI.onCCStream((evt) => {
+                this._ccLastEventTime = Date.now();
                 this._handleCCStreamEvent(evt, assistantMessage);
               });
             });
@@ -3219,7 +3675,7 @@ const App = {
     // 获取纯文本内容，排除复制按钮、反馈按钮等非内容元素
     const clone = messageContent.cloneNode(true);
     // 移除不需要复制的元素（含 CC 代码块工具栏等）
-    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-open-artifact-btn, .agent-artifact-btns, .adp-file-save-btn, .adp-file-open-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions, .cc-code-toolbar, .agent-streaming-hint, .agent-reasoning-stream').forEach(el => el.remove());
+    clone.querySelectorAll('.copy-btn, .agent-feedback, .agent-badge, .adp-config-source, .adp-progress, .adp-thinking-section, .adp-files-section, .message-time, .agent-save-artifact-btn, .agent-open-artifact-btn, .agent-artifact-btns, .adp-file-save-btn, .adp-file-open-btn, .agent-task-card, .adp-step-detail, .msg-action-btn, .user-msg-actions, .cc-code-toolbar, .cc-command-output, .agent-streaming-hint, .agent-reasoning-stream').forEach(el => el.remove());
     // 使用 textContent 获取纯文本（不含格式），再清理多余空白
     const text = (clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     console.log('[Copy] Text length:', text.length, 'Preview:', text.slice(0, 100));
@@ -3351,12 +3807,13 @@ const App = {
     });
   },
 
-  // ===== Claude Code 流式渲染（火山引擎 Coding Plan） =====
+  // ===== M-Agent 流式渲染 =====
 
   _handleCCStreamEvent(evt, assistantMessage) {
     const messageContent = assistantMessage.querySelector('.message-content');
     if (!messageContent) return;
 
+    this._ccLastEventTime = Date.now();
     const { event, content, sessionId, usage, result, name, error, aborted, level } = evt;
 
     // 会话 ID（用于 resume）
@@ -3369,7 +3826,7 @@ const App = {
           console.log('[CC] Saved ccSessionId for session', this._activeSessionId, ':', sessionId);
         }
       }
-      this._addCCProgressStep(messageContent, '🧠', 'Claude Code 已启动', 'done');
+      this._addCCProgressStep(messageContent, '🧠', 'M-Agent 已启动', 'done');
       return;
     }
 
@@ -3472,6 +3929,12 @@ const App = {
       this._finishCCMessage(messageContent, null, null, false, error);
       return;
     }
+
+    // ─── 子任务事件（SubTask Poller）───
+    if (evt._subtask) {
+      this._handleSubTaskEvent(evt, messageContent);
+      return;
+    }
   },
 
   _renderCCStream(messageContent) {
@@ -3492,6 +3955,7 @@ const App = {
 
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+    this._updateScrollButtons();
   },
 
   _addCCProgressStep(messageContent, icon, label, status, type) {
@@ -3500,8 +3964,32 @@ const App = {
     const step = document.createElement('div');
     step.className = `adp-progress-step ${status}`;
     step.dataset.type = type || '';
-    step.innerHTML = `<span class="adp-step-icon">${icon}</span><span class="adp-step-label">${this.escapeHtml(label)}</span>`;
+    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    step.innerHTML = `<span class="adp-step-icon">${icon}</span><span class="adp-step-label">${this.escapeHtml(label)}</span><span class="adp-step-time">${timeStr}</span>`;
     stepsEl.appendChild(step);
+    // 更新进度计数和状态文字
+    this._updateCCProgressStatus(messageContent);
+    // 自动滚动到最新步骤
+    if (stepsEl.parentElement) {
+      stepsEl.parentElement.scrollTop = stepsEl.parentElement.scrollHeight;
+    }
+  },
+
+  _updateCCProgressStatus(messageContent) {
+    const stepsEl = messageContent.querySelector('#adpProgressSteps');
+    if (!stepsEl) return;
+    const totalSteps = stepsEl.querySelectorAll('.adp-progress-step').length;
+    const doneSteps = stepsEl.querySelectorAll('.adp-progress-step.done').length;
+    const activeSteps = stepsEl.querySelectorAll('.adp-progress-step.active').length;
+    const statusEl = messageContent.querySelector('#ccProgressStatus');
+    const titleEl = messageContent.querySelector('#ccProgressTitle');
+    if (statusEl) {
+      statusEl.textContent = `${doneSteps}/${totalSteps} 步骤${activeSteps > 0 ? ' · 执行中' : ''}`;
+    }
+    if (titleEl) {
+      // 有活跃步骤时显示标题为"正在执行..."
+      titleEl.textContent = activeSteps > 0 ? 'M-Agent 正在执行' : (totalSteps > 0 ? 'M-Agent 处理完成' : 'M-Agent 处理中');
+    }
   },
 
   _getCCToolIcon(toolName) {
@@ -3512,6 +4000,913 @@ const App = {
   _getCCToolLabel(toolName) {
     const labelMap = { Read: '读取文件', Glob: '搜索文件', Grep: '搜索内容', WebSearch: '网络搜索', Write: '写入文件', Edit: '编辑文件', Bash: '执行命令' };
     return labelMap[toolName] || toolName;
+  },
+
+  // ─── 子任务事件处理 ───
+  _handleSubTaskEvent(evt, messageContent) {
+    const { event, taskId, message, state, stage, progress, elapsed, result, error } = evt;
+
+    if (event === 'subtask_start') {
+      this._addCCProgressStep(messageContent, '🔬', `子任务监控已启动: ${taskId}`, 'active', 'subtask');
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+
+    if (event === 'subtask_progress') {
+      const progressStr = progress != null ? ` (${progress}%)` : '';
+      const elapsedStr = elapsed != null ? ` ${elapsed}s` : '';
+      const stageStr = stage || message || '执行中...';
+      const displayText = `${stageStr}${progressStr}${elapsedStr}`;
+
+      // Update last subtask step or add new one
+      const subtaskSteps = messageContent.querySelectorAll('.adp-progress-step[data-type="subtask"]');
+      if (subtaskSteps.length > 0) {
+        const lastStep = subtaskSteps[subtaskSteps.length - 1];
+        const labelEl = lastStep.querySelector('.adp-step-label');
+        if (labelEl) {
+          labelEl.textContent = displayText;
+        }
+        // Update step status
+        lastStep.classList.remove('done', 'error');
+        lastStep.classList.add('active');
+        // Update icon based on state
+        const iconEl = lastStep.querySelector('.adp-step-icon');
+        if (iconEl) {
+          iconEl.textContent = state === 'completed' ? '✅' : (state === 'failed' ? '❌' : '⏳');
+        }
+      } else {
+        this._addCCProgressStep(messageContent, '⏳', displayText, 'active', 'subtask');
+      }
+
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+
+    if (event === 'subtask_done') {
+      // Update last subtask step to done
+      const subtaskSteps = messageContent.querySelectorAll('.adp-progress-step[data-type="subtask"]');
+      if (subtaskSteps.length > 0) {
+        const lastStep = subtaskSteps[subtaskSteps.length - 1];
+        lastStep.classList.remove('active');
+        lastStep.classList.add('done');
+        const iconEl = lastStep.querySelector('.adp-step-icon');
+        const labelEl = lastStep.querySelector('.adp-step-label');
+        if (iconEl) iconEl.textContent = '✅';
+        if (labelEl) {
+          const elapsedStr = elapsed != null ? ` (${elapsed}s)` : '';
+          labelEl.textContent = `子任务完成${elapsedStr}`;
+        }
+      } else {
+        this._addCCProgressStep(messageContent, '✅', `子任务完成 (${elapsed || 0}s)`, 'done', 'subtask');
+      }
+
+      // Render result
+      if (result) {
+        const resultHtml = this._formatSubTaskResult(result);
+        messageContent.insertAdjacentHTML('beforeend', resultHtml);
+      }
+
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+
+    if (event === 'subtask_error' || event === 'subtask_timeout' || event === 'subtask_not_found') {
+      const subtaskSteps = messageContent.querySelectorAll('.adp-progress-step[data-type="subtask"]');
+      if (subtaskSteps.length > 0) {
+        const lastStep = subtaskSteps[subtaskSteps.length - 1];
+        lastStep.classList.remove('active');
+        lastStep.classList.add('done');
+        const iconEl = lastStep.querySelector('.adp-step-icon');
+        const labelEl = lastStep.querySelector('.adp-step-label');
+        if (iconEl) iconEl.textContent = event === 'subtask_timeout' ? '⏰' : (event === 'subtask_not_found' ? '❓' : '❌');
+        if (labelEl) labelEl.textContent = error || message || '子任务异常';
+      } else {
+        const icon = event === 'subtask_timeout' ? '⏰' : (event === 'subtask_not_found' ? '❓' : '❌');
+        this._addCCProgressStep(messageContent, icon, error || message || '子任务异常', 'done', 'subtask');
+      }
+
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+  },
+
+  _formatSubTaskResult(result) {
+    // Result can be: HTML string, markdown string, or JSON object
+    if (typeof result === 'string') {
+      // If it looks like HTML, render as-is
+      if (result.trim().startsWith('<') && result.includes('</')) {
+        return `<div class="subtask-result">${result}</div>`;
+      }
+      // Otherwise escape and render as preformatted text
+      return `<div class="subtask-result"><pre>${this.escapeHtml(result)}</pre></div>`;
+    }
+    // JSON object — pretty print
+    try {
+      const jsonStr = JSON.stringify(result, null, 2);
+      return `<div class="subtask-result"><pre>${this.escapeHtml(jsonStr)}</pre></div>`;
+    } catch (_) {
+      return `<div class="subtask-result">${this.escapeHtml(String(result))}</div>`;
+    }
+  },
+
+  // ─── 供应商选择器初始化 ───
+  // cachedData 可选：如果调用方已有 providers + activeProvider 数据，直接复用，避免重复 IPC 调用
+  async _initProviderSelector(cachedData) {
+    const select = document.getElementById('ccProviderSelect');
+    if (!select) return;
+
+    try {
+      // 如果有缓存数据直接用，否则才发 IPC 请求
+      let data = cachedData;
+      if (!data) {
+        data = await window.electronAPI.ccGetProviders();
+      }
+      if (!data || !data.providers) return;
+
+      // Clear existing options
+      select.innerHTML = '';
+
+      // Add "默认" option
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = '默认';
+      select.appendChild(defaultOpt);
+
+      // Group by region
+      const cnProviders = data.providers.filter(p => p.region === 'cn');
+      const globalProviders = data.providers.filter(p => p.region !== 'cn');
+
+      if (cnProviders.length > 0) {
+        const group = document.createElement('optgroup');
+        group.label = '── 国内 ──';
+        for (const p of cnProviders) {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.icon} ${p.shortName}`;
+          if (!p.configured) opt.disabled = true;
+          group.appendChild(opt);
+        }
+        select.appendChild(group);
+      }
+
+      if (globalProviders.length > 0) {
+        const group = document.createElement('optgroup');
+        group.label = '── 海外 ──';
+        for (const p of globalProviders) {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.icon} ${p.shortName}`;
+          if (!p.configured) opt.disabled = true;
+          group.appendChild(opt);
+        }
+        select.appendChild(group);
+      }
+
+      // Set active provider
+      if (data.activeProvider) {
+        select.value = data.activeProvider;
+      }
+
+      // Avoid duplicate change listeners
+      if (!select.dataset.providerListenerAdded) {
+        select.dataset.providerListenerAdded = 'true';
+        select.addEventListener('change', () => {
+          const providerId = select.value;
+          console.log('[CC] Provider changed to:', providerId);
+          this._updateModelSelectorForProvider(providerId);
+        });
+      }
+
+      // Initialize model selector for the current active provider
+      this._updateModelSelectorForProvider(select.value);
+    } catch (e) {
+      console.error('[CC] Failed to init provider selector:', e);
+    }
+  },
+
+  async _updateModelSelectorForProvider(providerId) {
+    const modelSelect = document.getElementById('ccOpenRouterSelect');
+    if (!modelSelect) return;
+
+    const labelEl = document.querySelector('.cc-openrouter-label');
+
+    // 默认 — 重置为 OpenRouter 模型或简单默认
+    if (!providerId) {
+      modelSelect.innerHTML = '<option value="">默认</option>';
+      if (labelEl) labelEl.textContent = '🌐 模型:';
+      modelSelect.title = '';
+      // 尝试加载 OpenRouter 模型列表
+      this._initOpenRouterModelSelector(true);
+      return;
+    }
+
+    // 获取最新的供应商数据
+    let providers = [];
+    try {
+      const data = await window.electronAPI.ccGetProviders();
+      providers = data?.providers || [];
+    } catch (e) {
+      console.error('[CC] Failed to fetch providers for model selector:', e);
+      return;
+    }
+
+    const provider = providers.find(p => p.id === providerId);
+    if (!provider) return;
+
+    if (provider.type === 'direct') {
+      // 直连供应商（火山引擎/DeepSeek/腾讯云）— 填充预设模型列表
+      const modelField = provider.fields.find(f => f.key === 'model');
+      modelSelect.innerHTML = '';
+
+      if (modelField && modelField.options) {
+        // select 类型 — 有预设选项
+        for (const opt of modelField.options) {
+          const option = document.createElement('option');
+          option.value = opt.value;
+          option.textContent = opt.label;
+          if (modelField.value === opt.value) option.selected = true;
+          modelSelect.appendChild(option);
+        }
+      } else if (modelField && modelField.value) {
+        // text 类型 — 当前配置值作为唯一选项
+        const option = document.createElement('option');
+        option.value = modelField.value;
+        option.textContent = modelField.value;
+        modelSelect.appendChild(option);
+      } else {
+        // 兜底
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '默认';
+        modelSelect.appendChild(option);
+      }
+
+      if (labelEl) labelEl.textContent = '🤖 模型:';
+      modelSelect.title = `${provider.name} 模型`;
+
+      // 避免重复添加 change 监听
+      if (!modelSelect.dataset.directModelListenerAdded) {
+        modelSelect.dataset.directModelListenerAdded = 'true';
+        modelSelect.addEventListener('change', () => {
+          const currentProviderId = document.getElementById('ccProviderSelect')?.value;
+          if (!currentProviderId) return;
+          // 直连供应商的模型选择实时保存到配置
+          const currentProvider = providers.find(p => p.id === currentProviderId);
+          if (currentProvider && currentProvider.type === 'direct') {
+            const modelConfig = {};
+            modelConfig[currentProviderId] = { model: modelSelect.value };
+            window.electronAPI?.ccSetConfig?.({ providers: modelConfig });
+            console.log(`[CC] Model saved for ${currentProvider.name}: ${modelSelect.value}`);
+          }
+        });
+      }
+    } else if (provider.type === 'proxy') {
+      // 代理供应商（OpenRouter）— 加载动态模型列表
+      if (labelEl) labelEl.textContent = '🌐 模型:';
+      modelSelect.title = `选择 ${provider.name} 模型`;
+      await this._initOpenRouterModelSelector(true);
+    }
+  },
+
+  // ============ 语音 ASR 实时识别 ============
+
+  _voiceRecording: false,
+  _voiceTranscript: '',
+  _voicePartialText: '',
+  _voiceTimer: null,
+  _voiceStartTime: 0,
+  _voicePreText: '', // 录音前编辑器已有的文本
+
+  // 主语音按钮：打开新建弹窗并开始录音
+  async _toggleMainVoiceInput() {
+    // 如果弹窗未打开，先打开
+    const modal = document.getElementById('taskModal');
+    if (!modal || modal.classList.contains('hidden')) {
+      this.showTaskModal();
+    }
+    // 然后切换录音
+    await this._toggleModalVoiceInput();
+  },
+
+  // 模态框内语音按钮：切换录音
+  async _toggleModalVoiceInput() {
+    if (this._voiceRecording) {
+      await this._stopVoiceInput();
+    } else {
+      await this._startVoiceInput();
+    }
+  },
+
+  async _startVoiceInput() {
+    // 检查 ASR 配置
+    if (!window.electronAPI?.asrGetConfig) {
+      this.showToast('语音功能不可用', 'error');
+      return;
+    }
+
+    // macOS 麦克风权限检查
+    if (window.electronAPI?.asrCheckMicPermission) {
+      try {
+        const perm = await window.electronAPI.asrCheckMicPermission();
+        if (!perm.granted) {
+          this.showToast('麦克风权限未授权，请在系统设置 → 隐私与安全 → 麦克风中允许 Memora', 'error');
+          return;
+        }
+      } catch (e) {
+        console.error('[Voice] mic permission check failed:', e);
+        // 权限检查失败不阻止流程，继续尝试
+      }
+    }
+
+    const asrConfig = await window.electronAPI.asrGetConfig();
+    const provider = asrConfig.provider || 'volcano';
+
+    if (provider === 'volcano' && (!asrConfig.volcano?.appId || !asrConfig.volcano?.token)) {
+      this.showToast('请先在设置中配置火山引擎 ASR', 'error');
+      return;
+    }
+    if (provider === 'tencent' && (!asrConfig.tencent?.appId || !asrConfig.tencent?.secretId || !asrConfig.tencent?.secretKey)) {
+      this.showToast('请先在设置中配置腾讯云 ASR', 'error');
+      return;
+    }
+
+    // 确保弹窗已打开
+    const modal = document.getElementById('taskModal');
+    if (!modal || modal.classList.contains('hidden')) {
+      this.showTaskModal();
+    }
+
+    // 显示模态框内录音指示器
+    const indicator = document.getElementById('modalVoiceIndicator');
+    if (indicator) indicator.classList.remove('hidden');
+
+    // 重置状态
+    this._voiceTranscript = '';
+    this._voicePartialText = '';
+    this._voiceStartTime = Date.now();
+    // 保存编辑器已有文本（录音结束后追加在前面）
+    this._voicePreText = this._aiTaskEditor ? this._aiTaskEditor.getText().trim() : '';
+
+    // 更新指示器状态
+    const statusEl = document.getElementById('modalVoiceStatus');
+    if (statusEl) statusEl.textContent = '正在连接语音识别服务...';
+
+    // 启动计时器
+    this._voiceTimer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - this._voiceStartTime) / 1000);
+      const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const secs = String(elapsed % 60).padStart(2, '0');
+      const timerEl = document.getElementById('modalVoiceTimer');
+      if (timerEl) timerEl.textContent = `${mins}:${secs}`;
+    }, 1000);
+
+    // 按钮状态
+    const mainBtn = document.getElementById('voiceInputBtn');
+    if (mainBtn) mainBtn.classList.add('recording');
+    const modalBtn = document.getElementById('aiVoiceInputBtn');
+    if (modalBtn) modalBtn.classList.add('recording');
+
+    // 监听 ASR 事件
+    window.electronAPI.onASRStart((data) => {
+      if (statusEl) statusEl.textContent = `正在聆听（${data.provider === 'volcano' ? '🌋 火山引擎' : '🐧 腾讯云'}）...`;
+    });
+
+    window.electronAPI.onASRResult((data) => {
+      if (data.isFinal) {
+        this._voiceTranscript += data.text;
+        this._voicePartialText = '';
+      } else {
+        this._voicePartialText = data.text;
+      }
+      // 实时更新 AI 编辑器内容
+      this._updateAIEditorFromVoice();
+    });
+
+    window.electronAPI.onASRError((data) => {
+      console.error('[Voice] ASR error:', data.message);
+      if (statusEl) statusEl.textContent = `错误: ${data.message}`;
+      this._stopVoiceInput();
+    });
+
+    // 启动 ASR 连接
+    const result = await window.electronAPI.asrStart({ provider });
+    if (!result.success) {
+      if (statusEl) statusEl.textContent = '';
+      clearInterval(this._voiceTimer);
+      if (indicator) indicator.classList.add('hidden');
+      if (mainBtn) mainBtn.classList.remove('recording');
+      if (modalBtn) modalBtn.classList.remove('recording');
+      window.electronAPI.removeASRListeners();
+      this.showToast(result.error || 'ASR 启动失败', 'error');
+      return;
+    }
+
+    // 开始录音
+    this._voiceRecording = true;
+
+    if (window.voiceRecorder) {
+      window.voiceRecorder.onChunk = async (pcmBuffer) => {
+        try {
+          const uint8 = new Uint8Array(pcmBuffer);
+          window.electronAPI.asrAudioChunk(uint8).catch(() => {});
+        } catch (e) {
+          console.error('[Voice] onChunk error:', e);
+        }
+      };
+      try {
+        await window.voiceRecorder.start();
+      } catch (e) {
+        this.showToast(`麦克风启动失败: ${e.message}`, 'error');
+        this._stopVoiceInput();
+      }
+    }
+  },
+
+  async _stopVoiceInput() {
+    if (!this._voiceRecording) return;
+    this._voiceRecording = false;
+
+    // 停止录音
+    if (window.voiceRecorder) {
+      window.voiceRecorder.stop();
+    }
+
+    // 停止 ASR
+    let result = null;
+    try {
+      result = await window.electronAPI.asrStop();
+    } catch (e) {
+      console.error('[Voice] ASR stop error:', e);
+    }
+
+    // 移除监听
+    window.electronAPI.removeASRListeners();
+
+    // 清理 UI
+    clearInterval(this._voiceTimer);
+    const mainBtn = document.getElementById('voiceInputBtn');
+    if (mainBtn) mainBtn.classList.remove('recording');
+    const modalBtn = document.getElementById('aiVoiceInputBtn');
+    if (modalBtn) modalBtn.classList.remove('recording');
+    const indicator = document.getElementById('modalVoiceIndicator');
+    if (indicator) indicator.classList.add('hidden');
+
+    // 更新最终文本
+    if (result && result.text) {
+      this._voiceTranscript = result.text;
+    }
+    this._voicePartialText = '';
+
+    // 将识别结果填充到 AI 编辑器
+    const finalText = this._voiceTranscript.trim();
+    if (finalText) {
+      if (this._aiTaskEditor) {
+        // 恢复录音前已有文本，追加最终识别结果
+        if (this._voicePreText) {
+          this._aiTaskEditor.setText(this._voicePreText + '\n' + finalText);
+        } else {
+          this._aiTaskEditor.setText(finalText);
+        }
+        this._aiTaskEditor.focus();
+      }
+      this.showToast(`已识别 ${finalText.length} 字`);
+    } else {
+      // 没有识别到内容，恢复之前的文本
+      if (this._aiTaskEditor && this._voicePreText) {
+        this._aiTaskEditor.setText(this._voicePreText);
+      }
+      this.showToast('未识别到语音内容', 'error');
+    }
+
+    this._voiceTranscript = '';
+    this._voicePreText = '';
+  },
+
+  _cancelVoiceInput() {
+    if (this._voiceRecording) {
+      this._voiceRecording = false;
+      if (window.voiceRecorder) window.voiceRecorder.stop();
+      window.electronAPI.asrStop().catch(() => {});
+      window.electronAPI.removeASRListeners();
+      clearInterval(this._voiceTimer);
+    }
+
+    const indicator = document.getElementById('modalVoiceIndicator');
+    if (indicator) indicator.classList.add('hidden');
+
+    const mainBtn = document.getElementById('voiceInputBtn');
+    if (mainBtn) mainBtn.classList.remove('recording');
+    const modalBtn = document.getElementById('aiVoiceInputBtn');
+    if (modalBtn) modalBtn.classList.remove('recording');
+
+    this._voiceTranscript = '';
+    this._voicePartialText = '';
+    this._voicePreText = '';
+  },
+
+  // 实时更新 AI 编辑器内容（录音过程中）
+  _updateAIEditorFromVoice() {
+    if (!this._aiTaskEditor) return;
+    const voiceText = this._voiceTranscript + this._voicePartialText;
+    if (voiceText) {
+      // 保留录音前已有文本，追加语音识别内容
+      const fullText = this._voicePreText ? this._voicePreText + '\n' + voiceText : voiceText;
+      this._aiTaskEditor.setText(fullText);
+    }
+  },
+
+  // ============ AI 聊天语音输入 ============
+
+  _chatVoiceRecording: false,
+  _chatVoiceTranscript: '',
+  _chatVoicePartial: '',
+  _chatVoicePreText: '',
+
+  async _toggleChatVoiceInput() {
+    if (this._chatVoiceRecording) {
+      await this._stopChatVoiceInput();
+    } else {
+      await this._startChatVoiceInput();
+    }
+  },
+
+  async _startChatVoiceInput() {
+    if (!window.electronAPI?.asrGetConfig) {
+      this.showToast('语音功能不可用', 'error');
+      return;
+    }
+
+    // macOS 麦克风权限检查
+    if (window.electronAPI?.asrCheckMicPermission) {
+      try {
+        const perm = await window.electronAPI.asrCheckMicPermission();
+        if (!perm.granted) {
+          this.showToast('麦克风权限未授权，请在系统设置 → 隐私与安全 → 麦克风中允许 Memora', 'error');
+          return;
+        }
+      } catch (e) {
+        console.error('[ChatVoice] mic permission check failed:', e);
+      }
+    }
+
+    const asrConfig = await window.electronAPI.asrGetConfig();
+    const provider = asrConfig.provider || 'volcano';
+
+    if (provider === 'volcano' && (!asrConfig.volcano?.appId || !asrConfig.volcano?.token)) {
+      this.showToast('请先在设置中配置火山引擎 ASR', 'error');
+      return;
+    }
+    if (provider === 'tencent' && (!asrConfig.tencent?.appId || !asrConfig.tencent?.secretId || !asrConfig.tencent?.secretKey)) {
+      this.showToast('请先在设置中配置腾讯云 ASR', 'error');
+      return;
+    }
+
+    // 重置状态
+    this._chatVoiceTranscript = '';
+    this._chatVoicePartial = '';
+    this._chatVoicePreText = '';
+
+    // 保存输入框已有文本
+    const chatInput = document.getElementById('aiChatInput');
+    if (chatInput) {
+      this._chatVoicePreText = chatInput.value.trim();
+    }
+
+    // 按钮状态
+    const btn = document.getElementById('chatVoiceBtn');
+    if (btn) {
+      btn.classList.add('recording');
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+      btn.title = '停止语音输入';
+    }
+
+    // placeholder 提示
+    if (chatInput) {
+      chatInput.setAttribute('placeholder', '🎤 正在聆听...');
+    }
+
+    // 监听 ASR 事件
+    window.electronAPI.onASRStart(() => {
+      if (chatInput) chatInput.setAttribute('placeholder', '🎤 正在聆听... 说完后点击停止');
+    });
+
+    window.electronAPI.onASRResult((data) => {
+      if (data.isFinal) {
+        this._chatVoiceTranscript += data.text;
+        this._chatVoicePartial = '';
+      } else {
+        this._chatVoicePartial = data.text;
+      }
+      this._updateChatInputFromVoice();
+    });
+
+    window.electronAPI.onASRError((data) => {
+      console.error('[ChatVoice] ASR error:', data.message);
+      this.showToast(`语音识别错误: ${data.message}`, 'error');
+      this._stopChatVoiceInput();
+    });
+
+    // 启动 ASR
+    const result = await window.electronAPI.asrStart({ provider });
+    if (!result.success) {
+      if (btn) {
+        btn.classList.remove('recording');
+        btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+        btn.title = '语音输入';
+      }
+      if (chatInput) chatInput.setAttribute('placeholder', '输入你的问题...');
+      window.electronAPI.removeASRListeners();
+      this.showToast(result.error || 'ASR 启动失败', 'error');
+      return;
+    }
+
+    // 开始录音
+    this._chatVoiceRecording = true;
+
+    if (window.voiceRecorder) {
+      window.voiceRecorder.onChunk = async (pcmBuffer) => {
+        try {
+          const uint8 = new Uint8Array(pcmBuffer);
+          window.electronAPI.asrAudioChunk(uint8).catch(() => {});
+        } catch (e) {
+          console.error('[ChatVoice] onChunk error:', e);
+        }
+      };
+      try {
+        await window.voiceRecorder.start();
+      } catch (e) {
+        this.showToast(`麦克风启动失败: ${e.message}`, 'error');
+        this._stopChatVoiceInput();
+      }
+    }
+  },
+
+  async _stopChatVoiceInput() {
+    if (!this._chatVoiceRecording) return;
+    this._chatVoiceRecording = false;
+
+    // 停止录音
+    if (window.voiceRecorder) {
+      window.voiceRecorder.stop();
+    }
+
+    // 停止 ASR
+    let result = null;
+    try {
+      result = await window.electronAPI.asrStop();
+    } catch (e) {
+      console.error('[ChatVoice] ASR stop error:', e);
+    }
+
+    // 移除监听
+    window.electronAPI.removeASRListeners();
+
+    // 恢复按钮
+    const btn = document.getElementById('chatVoiceBtn');
+    if (btn) {
+      btn.classList.remove('recording');
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+      btn.title = '语音输入';
+    }
+
+    // 更新最终文本
+    if (result && result.text) {
+      this._chatVoiceTranscript = result.text;
+    }
+    this._chatVoicePartial = '';
+
+    // 填充到聊天输入框
+    const chatInput = document.getElementById('aiChatInput');
+    const finalText = this._chatVoiceTranscript.trim();
+    if (finalText) {
+      if (chatInput) {
+        const preText = this._chatVoicePreText;
+        chatInput.value = preText ? preText + ' ' + finalText : finalText;
+        chatInput.style.height = 'auto';
+        chatInput.style.height = chatInput.scrollHeight + 'px';
+        chatInput.focus();
+      }
+      this.showToast(`已识别 ${finalText.length} 字`);
+    } else {
+      if (chatInput) {
+        chatInput.value = this._chatVoicePreText;
+      }
+      this.showToast('未识别到语音内容', 'error');
+    }
+
+    // 恢复 placeholder
+    if (chatInput) {
+      chatInput.setAttribute('placeholder', '输入你的问题...');
+    }
+
+    this._chatVoiceTranscript = '';
+    this._chatVoicePartial = '';
+    this._chatVoicePreText = '';
+  },
+
+  _updateChatInputFromVoice() {
+    const chatInput = document.getElementById('aiChatInput');
+    if (!chatInput) return;
+    const voiceText = this._chatVoiceTranscript + this._chatVoicePartial;
+    if (voiceText) {
+      const preText = this._chatVoicePreText;
+      chatInput.value = preText ? preText + ' ' + voiceText : voiceText;
+      chatInput.style.height = 'auto';
+      chatInput.style.height = chatInput.scrollHeight + 'px';
+    }
+  },
+
+  // ─── 语音 ASR 设置 ───
+
+  _loadVoiceSettings() {
+    if (!window.electronAPI?.asrGetConfig) return;
+
+    window.electronAPI.asrGetConfig().then(config => {
+      // 供应商切换
+      this._switchASRProvider(config.provider || 'volcano');
+
+      // 火山引擎
+      const vAppId = document.getElementById('asrVolcanoAppId');
+      const vToken = document.getElementById('asrVolcanoToken');
+      const vCluster = document.getElementById('asrVolcanoCluster');
+      if (vAppId) vAppId.value = config.volcano?.appId || '';
+      if (vToken) vToken.value = '';
+      if (vCluster) vCluster.value = config.volcano?.cluster || 'volcengine_streaming_common';
+
+      // 显示 token 已配置状态
+      if (config.volcano?.token) {
+        vToken.placeholder = '已配置（输入新值覆盖）';
+      }
+
+      // 腾讯云
+      const tAppId = document.getElementById('asrTencentAppId');
+      const tSecretId = document.getElementById('asrTencentSecretId');
+      const tSecretKey = document.getElementById('asrTencentSecretKey');
+      const tEngineModel = document.getElementById('asrTencentEngineModel');
+      if (tAppId) tAppId.value = config.tencent?.appId || '';
+      // SecretId 脱敏显示：前4位 + 星号 + 后4位，实际值不变
+      if (tSecretId) {
+        tSecretId.value = '';
+        if (config.tencent?.secretId) {
+          const sid = config.tencent.secretId;
+          if (sid.length > 12) {
+            tSecretId.placeholder = sid.substring(0, 4) + '****' + sid.substring(sid.length - 4) + '（已配置，输入新值覆盖）';
+          } else {
+            tSecretId.placeholder = '已配置（输入新值覆盖）';
+          }
+        } else {
+          tSecretId.placeholder = 'API 密钥管理页面获取';
+        }
+      }
+      // SecretKey 脱敏显示
+      if (tSecretKey) tSecretKey.value = '';
+      if (tEngineModel) tEngineModel.value = config.tencent?.engineModelType || '16k_zh_en';
+
+      if (config.tencent?.secretKey) {
+        tSecretKey.placeholder = '已配置（输入新值覆盖）';
+      }
+
+      // 状态提示
+      const statusEl = document.getElementById('asrConfigStatus');
+      if (statusEl) {
+        const activeProvider = config.provider || 'volcano';
+        const providerName = activeProvider === 'volcano' ? '🌋 火山引擎' : '🐧 腾讯云';
+        statusEl.innerHTML = `当前供应商: <strong>${providerName}</strong>`;
+      }
+    });
+  },
+
+  _switchASRProvider(provider) {
+    document.querySelectorAll('.asr-provider-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.provider === provider);
+    });
+
+    const volcanoPanel = document.getElementById('asrVolcanoConfig');
+    const tencentPanel = document.getElementById('asrTencentConfig');
+    if (volcanoPanel) volcanoPanel.classList.toggle('hidden', provider !== 'volcano');
+    if (tencentPanel) tencentPanel.classList.toggle('hidden', provider !== 'tencent');
+  },
+
+  async _saveASRConfig() {
+    const provider = document.querySelector('.asr-provider-btn.active')?.dataset.provider || 'volcano';
+
+    const config = {
+      provider,
+      volcano: {
+        appId: document.getElementById('asrVolcanoAppId')?.value.trim() || '',
+        token: document.getElementById('asrVolcanoToken')?.value.trim() || '',
+        cluster: document.getElementById('asrVolcanoCluster')?.value.trim() || 'volcengine_streaming_common',
+      },
+      tencent: {
+        appId: document.getElementById('asrTencentAppId')?.value.trim() || '',
+        secretId: document.getElementById('asrTencentSecretId')?.value.trim() || '',
+        secretKey: document.getElementById('asrTencentSecretKey')?.value.trim() || '',
+        engineModelType: document.getElementById('asrTencentEngineModel')?.value.trim() || '16k_zh_en',
+      },
+    };
+
+    // 空值不覆盖已配置的值
+    if (!config.volcano.token) delete config.volcano.token;
+    if (!config.tencent.secretId) delete config.tencent.secretId;
+    if (!config.tencent.secretKey) delete config.tencent.secretKey;
+
+    try {
+      const result = await window.electronAPI.asrSetConfig(config);
+      if (result.success) {
+        this.showToast('语音 ASR 配置已保存');
+        this._loadVoiceSettings(); // 刷新状态
+      } else {
+        this.showToast('保存失败', 'error');
+      }
+    } catch (e) {
+      this.showToast(`保存失败: ${e.message}`, 'error');
+    }
+  },
+
+  async _testASRMicrophone() {
+    try {
+      const statusEl = document.getElementById('asrConfigStatus');
+      if (statusEl) statusEl.innerHTML = '🎤 正在测试麦克风... 请说话';
+
+      // macOS 麦克风权限检查
+      if (window.electronAPI?.asrCheckMicPermission) {
+        try {
+          const perm = await window.electronAPI.asrCheckMicPermission();
+          if (!perm.granted) {
+            if (statusEl) statusEl.innerHTML = '❌ 麦克风权限未授权，请在系统设置 → 隐私与安全 → 麦克风中允许 Memora';
+            this.showToast('麦克风权限未授权', 'error');
+            return;
+          }
+        } catch (e) {
+          console.error('[Voice] mic permission check failed:', e);
+        }
+      }
+
+      // 创建测试 UI
+      let testBar = document.getElementById('asrTestBar');
+      if (!testBar) {
+        testBar = document.createElement('div');
+        testBar.id = 'asrTestBar';
+        testBar.className = 'voice-test-bar';
+        testBar.innerHTML = `
+          <span>🎤</span>
+          <div class="mic-level"><div class="mic-level-fill" id="asrMicLevelFill"></div></div>
+          <span id="asrTestStatus">测试中...</span>
+        `;
+        const voicePanel = document.getElementById('voicePanel');
+        const configSection = voicePanel?.querySelector('.voice-config-section');
+        if (configSection) {
+          configSection.appendChild(testBar);
+        } else {
+          // fallback: 追加到保存按钮行后面
+          const saveBtn = document.getElementById('saveASRConfigBtn');
+          if (saveBtn?.parentElement) saveBtn.parentElement.appendChild(testBar);
+        }
+      }
+      testBar.classList.remove('hidden');
+
+      const fillEl = document.getElementById('asrMicLevelFill');
+      const statusText = document.getElementById('asrTestStatus');
+
+      if (!window.voiceRecorder) {
+        if (statusText) statusText.textContent = '录音模块未加载';
+        if (statusEl) statusEl.innerHTML = '❌ 录音模块未加载，请重启应用';
+        return;
+      }
+
+      // 如果上次录音未停止，先停止
+      if (window.voiceRecorder.isRecording) {
+        window.voiceRecorder.stop();
+      }
+
+      await window.voiceRecorder.testMicrophone(
+        (level) => {
+          if (fillEl) fillEl.style.width = `${level}%`;
+          if (statusText) statusText.textContent = `音量: ${level}%`;
+        },
+        (success, error) => {
+          if (fillEl) fillEl.style.width = '0%';
+          if (success) {
+            if (statusText) statusText.textContent = '麦克风正常 ✓';
+            if (statusEl) statusEl.innerHTML = '✅ 麦克风测试通过，可以开始使用语音功能';
+            setTimeout(() => testBar.classList.add('hidden'), 2000);
+          } else {
+            if (statusText) statusText.textContent = '失败';
+            if (statusEl) statusEl.innerHTML = `❌ 麦克风测试失败: ${error || '未知错误'}`;
+          }
+        },
+        4000
+      );
+    } catch (e) {
+      console.error('[Voice] Test microphone error:', e);
+      const statusEl = document.getElementById('asrConfigStatus');
+      if (statusEl) statusEl.innerHTML = `❌ 测试出错: ${e.message}`;
+      this.showToast(`麦克风测试出错: ${e.message}`, 'error');
+    }
   },
 
   _finishCCMessage(messageContent, usage, result, aborted, error, cost) {
@@ -3532,15 +4927,22 @@ const App = {
     // 提取执行过程步骤（流式过程中积累的）
     const progressSteps = messageContent.querySelector('#adpProgressSteps');
     const stepsHtml = progressSteps ? progressSteps.innerHTML : '';
+    const allSteps = progressSteps ? progressSteps.querySelectorAll('.adp-progress-step') : [];
+    const totalSteps = allSteps.length;
+    const doneSteps = progressSteps ? progressSteps.querySelectorAll('.adp-progress-step.done').length : 0;
+    const toolSteps = progressSteps ? progressSteps.querySelectorAll('.adp-progress-step[data-type="tool_call"]').length : 0;
+    const totalTime = this._ccTimerStart ? Math.floor((Date.now() - this._ccTimerStart) / 1000) : 0;
 
-    let html = '<div class="agent-badge agent-badge-cc">🧠 Claude Code</div>';
+    let html = '<div class="agent-badge agent-badge-cc">🧠 M-Agent</div>';
 
     // 执行过程（可折叠）— 只在有步骤时显示
     if (stepsHtml) {
-      html += `<div class="cc-process-wrapper collapsed">
+      const stepSummary = `${totalSteps} 个步骤` + (toolSteps > 0 ? ` · ${toolSteps} 次工具调用` : '') + ` · ${totalTime}s`;
+      html += `<div class="cc-process-wrapper collapsed" id="ccProcessWrapper">
         <div class="cc-process-header">
           <span class="cc-process-toggle">▶</span>
           <span class="cc-process-title">⚡ 执行过程</span>
+          <span class="cc-process-summary">${stepSummary}</span>
         </div>
         <div class="cc-process-body">
           <div class="adp-progress-steps">${stepsHtml}</div>
@@ -3550,6 +4952,7 @@ const App = {
 
     if (error) {
       html += `<div class="error-text">❌ ${this.escapeHtml(error)}</div>`;
+      html += `<div class="error-hint" style="margin-top:4px;font-size:12px;color:var(--text-secondary);">⏱ 耗时 ${totalTime}s${totalSteps > 0 ? ` · 已执行 ${totalSteps} 步` : ''}</div>`;
     } else {
       // 优先用 result（最终结果），否则用流式累积文本
       const finalText = result || this._ccCurrentText;
@@ -3565,6 +4968,7 @@ const App = {
         if (usage?.input_tokens) parts.push(`输入 ${usage.input_tokens}`);
         if (usage?.output_tokens) parts.push(`输出 ${usage.output_tokens}`);
         if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`);
+        if (totalTime > 0) parts.push(`${totalTime}s`);
         if (parts.length > 0) {
           html += `<div class="adp-config-source" style="color: var(--text-secondary);">📊 ${parts.join(' · ')}</div>`;
         }
@@ -3590,7 +4994,7 @@ const App = {
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
   },
 
-  /** 给 CC 输出中的代码块添加工具栏（保存/打开/预览按钮由全局事件委托处理） */
+  /** 给 CC 输出中的代码块添加工具栏（保存/打开/预览/复制/执行按钮由全局事件委托处理） */
   _enhanceCCCodeBlocks(messageContent) {
     const codeBlocks = messageContent.querySelectorAll('pre code');
     codeBlocks.forEach((codeEl, idx) => {
@@ -3622,27 +5026,166 @@ const App = {
       const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
       const ext = extMap[lang] || 'txt';
 
-      // 创建操作栏（事件由全局委托处理）
+      // 检测是否为命令/脚本类型
+      const shellLangs = ['bash', 'shell', 'sh', 'zsh', 'fish'];
+      const isShell = shellLangs.includes(lang);
+      // 无语言标记时检测是否像命令
+      const looksLikeCommand = !lang || lang === 'txt'
+        ? /^\s*(npm|npx|yarn|pnpm|git|node|python|pip|cd|ls|mkdir|cp|mv|cat|echo|curl|wget|brew|docker|sudo|chmod|grep|sed|awk|find|tar|zip|unzip|export|source|rb|ruby|go|cargo|rustc|make|cmake)\b/.test(rawContent.trim())
+        : false;
+      const isCommand = isShell || looksLikeCommand;
+
+      // 创建操作栏
       const toolbar = document.createElement('div');
       toolbar.className = 'cc-code-toolbar';
+      if (isCommand) toolbar.classList.add('cc-code-toolbar-command');
       // 可打开的类型（用系统默认程序）
       const canOpen = ['html', 'svg', 'json', 'md', 'txt', 'csv', 'xml'].includes(ext);
       // 可预览的类型（iframe 内嵌渲染）
       const canPreview = ['html', 'svg'].includes(ext);
-      toolbar.innerHTML = `
-        <span class="cc-code-lang">${lang}</span>
-        <button class="cc-code-save-btn" title="保存到 Agent 产物">💾 保存</button>
-        <button class="cc-code-preview-btn" title="预览" style="${canPreview ? '' : 'display:none'}">👁 预览</button>
-        <button class="cc-code-open-btn" title="在浏览器中打开" style="${canOpen ? '' : 'display:none'}">↗ 打开</button>
-      `;
+
+      let toolbarHtml = `<span class="cc-code-lang">${lang}</span>`;
+      // 复制按钮（所有代码块都有）
+      toolbarHtml += `<button class="cc-code-copy-btn" title="复制代码">📋 复制</button>`;
+      // 命令类代码块：执行/忽略/拒绝
+      if (isCommand) {
+        toolbarHtml += `<button class="cc-code-exec-btn" title="执行命令">▶ 执行</button>`;
+        toolbarHtml += `<button class="cc-code-ignore-btn" title="忽略">✕ 忽略</button>`;
+        toolbarHtml += `<button class="cc-code-reject-btn" title="拒绝">🚫 拒绝</button>`;
+      }
+      // 保存按钮
+      toolbarHtml += `<button class="cc-code-save-btn" title="保存到 Agent 产物">💾 保存</button>`;
+      // 预览/打开
+      toolbarHtml += `<button class="cc-code-preview-btn" title="预览" style="${canPreview ? '' : 'display:none'}">👁 预览</button>`;
+      toolbarHtml += `<button class="cc-code-open-btn" title="在浏览器中打开" style="${canOpen ? '' : 'display:none'}">↗ 打开</button>`;
+
+      toolbar.innerHTML = toolbarHtml;
       pre.parentNode.insertBefore(toolbar, pre);
 
-      // 移除 markdown 渲染注入的重复 Agent 产物按钮（CC 工具栏已提供保存/预览/打开）
+      // 移除 markdown 渲染注入的重复 Agent 产物按钮
       const nextSibling = pre.nextElementSibling;
       if (nextSibling?.classList?.contains('agent-artifact-btns')) {
         nextSibling.remove();
       }
     });
+  },
+
+  /** 在对话中直接执行命令并显示输出 */
+  async _executeCommandInline(execBtn, pre, command) {
+    // 如果已经在执行中，不重复触发
+    if (execBtn.disabled) return;
+
+    // 检查是否已有输出区域
+    let outputEl = pre.nextElementSibling;
+    if (outputEl && outputEl.classList.contains('cc-command-output')) {
+      outputEl.remove();
+      outputEl = null;
+    }
+
+    // 显示确认弹窗
+    const shortCmd = command.length > 80 ? command.substring(0, 80) + '...' : command;
+    const overlay = document.createElement('div');
+    overlay.className = 'cc-exec-confirm-overlay';
+    overlay.innerHTML = `
+      <div class="cc-exec-confirm-modal">
+        <div class="cc-exec-confirm-header">
+          <span class="cc-exec-confirm-icon">⚡</span>
+          <span class="cc-exec-confirm-title">执行命令确认</span>
+        </div>
+        <div class="cc-exec-confirm-body">
+          <div class="cc-exec-confirm-label">即将执行以下命令：</div>
+          <pre class="cc-exec-confirm-cmd">${this.escapeHtml(command)}</pre>
+          <div class="cc-exec-confirm-hint">工作目录：${this.escapeHtml(this._getCCWorkdir() || this._ccDefaultWorkdir || '默认')}</div>
+        </div>
+        <div class="cc-exec-confirm-actions">
+          <button class="cc-exec-confirm-btn cc-exec-confirm-yes">✓ 确认执行</button>
+          <button class="cc-exec-confirm-btn cc-exec-confirm-no">✕ 取消</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const confirmed = await new Promise((resolve) => {
+      overlay.querySelector('.cc-exec-confirm-yes').addEventListener('click', () => { overlay.remove(); resolve(true); });
+      overlay.querySelector('.cc-exec-confirm-no').addEventListener('click', () => { overlay.remove(); resolve(false); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(false); } });
+    });
+
+    if (!confirmed) return;
+
+    // 创建输出区域
+    outputEl = document.createElement('div');
+    outputEl.className = 'cc-command-output';
+    outputEl.innerHTML = `
+      <div class="cc-command-output-header">
+        <span class="cc-command-output-icon">⏳</span>
+        <span class="cc-command-output-title">执行中...</span>
+      </div>
+      <pre class="cc-command-output-body"></pre>
+    `;
+    pre.after(outputEl);
+
+    // 禁用执行按钮
+    execBtn.disabled = true;
+    execBtn.textContent = '⏳ 执行中';
+
+    const bodyEl = outputEl.querySelector('.cc-command-output-body');
+    const titleEl = outputEl.querySelector('.cc-command-output-title');
+    const iconEl = outputEl.querySelector('.cc-command-output-icon');
+
+    try {
+      const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || null;
+      const result = await window.electronAPI?.ccExecuteCommand?.({ command, workdir });
+
+      if (!result) {
+        titleEl.textContent = '❌ 执行失败';
+        iconEl.textContent = '❌';
+        bodyEl.textContent = 'IPC 调用失败';
+        execBtn.textContent = '▶ 重试';
+        execBtn.disabled = false;
+        outputEl.classList.add('cc-command-output-error');
+        return;
+      }
+
+      const output = [];
+      if (result.stdout) output.push(result.stdout);
+      if (result.stderr) output.push('--- stderr ---\n' + result.stderr);
+      if (!output.length) output.push('(无输出)');
+
+      bodyEl.textContent = output.join('\n');
+
+      if (result.success && result.exitCode === 0) {
+        titleEl.textContent = `✅ 执行成功 (exit: 0)`;
+        iconEl.textContent = '✅';
+        outputEl.classList.add('cc-command-output-success');
+        // 隐藏执行/忽略/拒绝按钮，显示已执行状态
+        const toolbar = execBtn.closest('.cc-code-toolbar');
+        toolbar?.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        const badge = document.createElement('span');
+        badge.className = 'cc-command-status cc-command-executed';
+        badge.textContent = '✅ 已执行';
+        toolbar?.appendChild(badge);
+      } else {
+        titleEl.textContent = `❌ 执行失败 (exit: ${result.exitCode})`;
+        iconEl.textContent = '❌';
+        outputEl.classList.add('cc-command-output-error');
+        if (result.error && !result.stderr) {
+          bodyEl.textContent = result.error;
+        }
+        execBtn.textContent = '▶ 重试';
+        execBtn.disabled = false;
+      }
+    } catch (err) {
+      titleEl.textContent = '❌ 执行异常';
+      iconEl.textContent = '❌';
+      bodyEl.textContent = err.message;
+      outputEl.classList.add('cc-command-output-error');
+      execBtn.textContent = '▶ 重试';
+      execBtn.disabled = false;
+    }
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
   },
 
   /** 弹出 HTML/SVG 预览窗口（iframe 沙箱） */
@@ -4106,6 +5649,379 @@ const App = {
       this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
       if (btn) { btn.disabled = false; btn.textContent = '✅ 已安装 | 卸载'; }
     }
+  },
+
+  // ===== MCP 连接器管理 =====
+
+  _connectors: [],
+  _ccSelectedConnectors: null, // null=使用默认启用的, []=不选, [id,...]=指定选中的
+
+  async _loadConnectorList() {
+    if (!window.electronAPI?.connectorList) return;
+    try {
+      this._connectors = await window.electronAPI.connectorList({});
+      this._renderConnectorList();
+      this._refreshCCConnectorSelect();
+    } catch (e) {
+      console.error('[Connector] load error:', e);
+    }
+  },
+
+  _renderConnectorList() {
+    const grid = document.getElementById('connectorGrid');
+    const empty = document.getElementById('connectorEmpty');
+    if (!grid || !empty) return;
+
+    if (this._connectors.length === 0) {
+      grid.innerHTML = '';
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+
+    const typeIcons = { stdio: '🖥️', sse: '📡', http: '🌐' };
+    const typeLabels = { stdio: 'stdio', sse: 'SSE', http: 'HTTP' };
+
+    grid.innerHTML = this._connectors.map(c => {
+      const configSummary = c.type === 'stdio'
+        ? `${c.config?.command || ''} ${(c.config?.args || []).join(' ')}`
+        : c.config?.url || '';
+      const time = this._formatRelativeTime(c.updated_at || c.created_at);
+      return `
+        <div class="connector-card" data-id="${c.id}">
+          <div class="connector-card-header">
+            <span class="connector-card-icon">${typeIcons[c.type] || '🔌'}</span>
+            <span class="connector-card-name">${this._escapeHtml(c.name)}</span>
+            <span class="connector-card-type">${typeLabels[c.type]}</span>
+            ${c.enabled ? '<span class="connector-card-badge enabled">启用</span>' : '<span class="connector-card-badge disabled">停用</span>'}
+          </div>
+          <div class="connector-card-desc">${c.description ? this._escapeHtml(c.description) : '<span class="muted">无描述</span>'}</div>
+          <div class="connector-card-config" title="${this._escapeHtml(configSummary)}">${this._escapeHtml(configSummary.substring(0, 80))}${configSummary.length > 80 ? '...' : ''}</div>
+          <div class="connector-card-footer">
+            <span class="connector-card-time">${time}</span>
+            <div class="connector-card-actions">
+              <label class="connector-toggle-switch">
+                <input type="checkbox" ${c.enabled ? 'checked' : ''} data-toggle-id="${c.id}">
+                <span class="connector-toggle-slider"></span>
+              </label>
+              <button class="connector-edit-btn" data-edit-id="${c.id}">✏️</button>
+              <button class="connector-delete-btn" data-delete-id="${c.id}">🗑️</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // 绑定事件
+    grid.querySelectorAll('[data-toggle-id]').forEach(el => {
+      el.addEventListener('change', (e) => {
+        this._toggleConnector(e.target.dataset.toggleId, e.target.checked);
+      });
+    });
+    grid.querySelectorAll('[data-edit-id]').forEach(el => {
+      el.addEventListener('click', () => this._openConnectorModal(el.dataset.editId));
+    });
+    grid.querySelectorAll('[data-delete-id]').forEach(el => {
+      el.addEventListener('click', () => this._deleteConnector(el.dataset.deleteId));
+    });
+  },
+
+  _escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+  },
+
+  _formatRelativeTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = Date.now();
+    const diff = now - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(mins / 60);
+    const days = Math.floor(hours / 24);
+    if (mins < 1) return '刚刚';
+    if (mins < 60) return `${mins}分钟前`;
+    if (hours < 24) return `${hours}小时前`;
+    if (days < 30) return `${days}天前`;
+    return d.toLocaleDateString();
+  },
+
+  _openConnectorModal(editId) {
+    const modal = document.getElementById('connectorModal');
+    const title = document.getElementById('connectorModalTitle');
+    const editIdEl = document.getElementById('connectorEditId');
+    const nameEl = document.getElementById('connectorName');
+    const typeEl = document.getElementById('connectorType');
+    const descEl = document.getElementById('connectorDesc');
+    const commandEl = document.getElementById('connectorCommand');
+    const argsEl = document.getElementById('connectorArgs');
+    const envEl = document.getElementById('connectorEnv');
+    const urlEl = document.getElementById('connectorUrl');
+    const headersEl = document.getElementById('connectorHeaders');
+    const enabledEl = document.getElementById('connectorEnabled');
+
+    // 重置
+    if (editId) {
+      const conn = this._connectors.find(c => c.id === editId);
+      if (!conn) return;
+      title.textContent = '编辑连接器';
+      editIdEl.value = conn.id;
+      nameEl.value = conn.name;
+      typeEl.value = conn.type;
+      descEl.value = conn.description || '';
+      commandEl.value = conn.config?.command || '';
+      argsEl.value = (conn.config?.args || []).join(' ');
+      envEl.value = Object.entries(conn.config?.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+      urlEl.value = conn.config?.url || '';
+      headersEl.value = Object.entries(conn.config?.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+      enabledEl.checked = conn.enabled;
+    } else {
+      title.textContent = '添加连接器';
+      editIdEl.value = '';
+      nameEl.value = '';
+      typeEl.value = 'stdio';
+      descEl.value = '';
+      commandEl.value = '';
+      argsEl.value = '';
+      envEl.value = '';
+      urlEl.value = '';
+      headersEl.value = '';
+      enabledEl.checked = true;
+    }
+
+    this._updateConnectorTypeFields();
+    modal.classList.remove('hidden');
+  },
+
+  _closeConnectorModal() {
+    document.getElementById('connectorModal')?.classList.add('hidden');
+  },
+
+  _updateConnectorTypeFields() {
+    const type = document.getElementById('connectorType')?.value;
+    const stdioFields = document.getElementById('connectorStdioFields');
+    const remoteFields = document.getElementById('connectorRemoteFields');
+    if (type === 'stdio') {
+      stdioFields?.classList.remove('hidden');
+      remoteFields?.classList.add('hidden');
+    } else {
+      stdioFields?.classList.add('hidden');
+      remoteFields?.classList.remove('hidden');
+    }
+  },
+
+  _applyConnectorTemplate(template) {
+    const templates = {
+      sqlite: {
+        name: 'SQLite DB', type: 'stdio',
+        command: 'npx', args: '-y @modelcontextprotocol/server-sqlite --db-path ~/data.db',
+        desc: '本地 SQLite 数据库查询'
+      },
+      postgres: {
+        name: 'PostgreSQL', type: 'stdio',
+        command: 'npx', args: '-y @modelcontextprotocol/server-postgres postgresql://user:pass@localhost:5432/db',
+        desc: 'PostgreSQL 数据库查询'
+      },
+      filesystem: {
+        name: '文件系统', type: 'stdio',
+        command: 'npx', args: '-y @modelcontextprotocol/server-filesystem ~/Documents',
+        desc: '文件系统读写访问'
+      },
+      websearch: {
+        name: 'Web 搜索', type: 'stdio',
+        command: 'npx', args: '-y @modelcontextprotocol/server-brave-search',
+        env: 'BRAVE_API_KEY=your-api-key',
+        desc: 'Brave 网络搜索'
+      },
+      github: {
+        name: 'GitHub', type: 'stdio',
+        command: 'npx', args: '-y @modelcontextprotocol/server-github',
+        env: 'GITHUB_TOKEN=ghp_xxx',
+        desc: 'GitHub 仓库/Issue/PR 操作'
+      },
+    };
+    const t = templates[template];
+    if (!t) return;
+    document.getElementById('connectorName').value = t.name;
+    document.getElementById('connectorType').value = t.type;
+    document.getElementById('connectorDesc').value = t.desc || '';
+    document.getElementById('connectorCommand').value = t.command || '';
+    document.getElementById('connectorArgs').value = t.args || '';
+    document.getElementById('connectorEnv').value = t.env || '';
+    document.getElementById('connectorUrl').value = '';
+    document.getElementById('connectorHeaders').value = '';
+    this._updateConnectorTypeFields();
+  },
+
+  async _saveConnector() {
+    const id = document.getElementById('connectorEditId').value;
+    const name = document.getElementById('connectorName').value.trim();
+    const type = document.getElementById('connectorType').value;
+    const description = document.getElementById('connectorDesc').value.trim();
+    const enabled = document.getElementById('connectorEnabled').checked;
+
+    const config = {};
+    if (type === 'stdio') {
+      config.command = document.getElementById('connectorCommand').value.trim();
+      const argsStr = document.getElementById('connectorArgs').value.trim();
+      config.args = argsStr ? argsStr.split(/\s+/) : [];
+      const envStr = document.getElementById('connectorEnv').value.trim();
+      if (envStr) {
+        config.env = {};
+        envStr.split('\n').forEach(line => {
+          const idx = line.indexOf('=');
+          if (idx > 0) config.env[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+        });
+      }
+    } else {
+      config.url = document.getElementById('connectorUrl').value.trim();
+      const headersStr = document.getElementById('connectorHeaders').value.trim();
+      if (headersStr) {
+        config.headers = {};
+        headersStr.split('\n').forEach(line => {
+          const idx = line.indexOf(':');
+          if (idx > 0) config.headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+        });
+      }
+    }
+
+    const connector = { id: id || undefined, name, type, description, enabled, config };
+    const result = await window.electronAPI?.connectorSave?.(connector);
+    if (result?.success) {
+      this.showToast(id ? '连接器已更新' : '连接器已添加', 'success');
+      this._closeConnectorModal();
+      this._loadConnectorList();
+    } else {
+      this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
+    }
+  },
+
+  async _deleteConnector(id) {
+    const conn = this._connectors.find(c => c.id === id);
+    if (!conn) return;
+    if (!confirm(`确定删除连接器 "${conn.name}" 吗？`)) return;
+    const result = await window.electronAPI?.connectorDelete?.({ id });
+    if (result?.success) {
+      this.showToast('连接器已删除', 'success');
+      this._loadConnectorList();
+    } else {
+      this.showToast('删除失败: ' + (result?.error || '未知错误'), 'error');
+    }
+  },
+
+  async _toggleConnector(id, enabled) {
+    const result = await window.electronAPI?.connectorToggle?.({ id, enabled });
+    if (result?.success) {
+      // 更新本地数据
+      const conn = this._connectors.find(c => c.id === id);
+      if (conn) conn.enabled = enabled;
+      this._refreshCCConnectorSelect();
+    } else {
+      this.showToast('操作失败', 'error');
+      this._loadConnectorList(); // 恢复 UI
+    }
+  },
+
+  // CC 模式对话栏连接器选择
+  _refreshCCConnectorSelect() {
+    const list = document.getElementById('ccConnectorList');
+    const label = document.getElementById('ccConnectorLabel');
+    if (!list) return;
+
+    if (this._connectors.length === 0) {
+      list.innerHTML = '<div class="cc-connector-empty-hint">暂无连接器，请到资产→连接器添加</div>';
+      if (label) label.textContent = '无';
+      return;
+    }
+
+    // 确定选中状态：首次加载时使用 enabled 默认值
+    if (this._ccSelectedConnectors === null) {
+      this._ccSelectedConnectors = this._connectors.filter(c => c.enabled).map(c => c.id);
+    } else {
+      // 移除已删除的连接器 ID
+      const validIds = new Set(this._connectors.map(c => c.id));
+      this._ccSelectedConnectors = this._ccSelectedConnectors.filter(id => validIds.has(id));
+      // 添加新启用的连接器
+      this._connectors.filter(c => c.enabled && !this._ccSelectedConnectors.includes(c.id)).forEach(c => {
+        this._ccSelectedConnectors.push(c.id);
+      });
+    }
+
+    const typeIcons = { stdio: '🖥️', sse: '📡', http: '🌐' };
+    list.innerHTML = this._connectors.map(c => {
+      const checked = this._ccSelectedConnectors.includes(c.id) ? 'checked' : '';
+      return `
+        <label class="cc-connector-item">
+          <input type="checkbox" value="${c.id}" ${checked}>
+          <span class="cc-connector-item-icon">${typeIcons[c.type] || '🔌'}</span>
+          <span class="cc-connector-item-name">${c.name}</span>
+          <span class="cc-connector-item-type">${c.type}</span>
+        </label>
+      `;
+    }).join('');
+
+    list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => this._updateCCConnectorLabel());
+    });
+
+    this._updateCCConnectorLabel();
+  },
+
+  _updateCCConnectorLabel() {
+    const label = document.getElementById('ccConnectorLabel');
+    if (!label) return;
+    const checked = document.querySelectorAll('#ccConnectorList input[type="checkbox"]:checked');
+    if (checked.length === 0) {
+      label.textContent = '无';
+    } else if (checked.length === this._connectors.length) {
+      label.textContent = `全部 (${checked.length})`;
+    } else {
+      label.textContent = `已选 ${checked.length} 个`;
+    }
+  },
+
+  _getSelectedConnectorIds() {
+    const checked = document.querySelectorAll('#ccConnectorList input[type="checkbox"]:checked');
+    return Array.from(checked).map(cb => cb.value);
+  },
+
+  _initConnectorEvents() {
+    // 添加按钮
+    document.getElementById('connectorAddBtn')?.addEventListener('click', () => this._openConnectorModal());
+    // 弹窗关闭
+    document.getElementById('connectorModalClose')?.addEventListener('click', () => this._closeConnectorModal());
+    document.getElementById('connectorModalCancel')?.addEventListener('click', () => this._closeConnectorModal());
+    document.querySelector('.connector-modal-overlay')?.addEventListener('click', () => this._closeConnectorModal());
+    // 保存
+    document.getElementById('connectorModalSave')?.addEventListener('click', () => this._saveConnector());
+    // 类型切换
+    document.getElementById('connectorType')?.addEventListener('change', () => this._updateConnectorTypeFields());
+    // 模板按钮
+    document.querySelectorAll('.connector-template-btn').forEach(btn => {
+      btn.addEventListener('click', () => this._applyConnectorTemplate(btn.dataset.template));
+    });
+
+    // CC 模式对话栏连接器下拉
+    const trigger = document.getElementById('ccConnectorTrigger');
+    const menu = document.getElementById('ccConnectorMenu');
+    trigger?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu?.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#ccConnectorDropdown')) {
+        menu?.classList.add('hidden');
+      }
+    });
+
+    // CC 连接器管理按钮 → 跳转到资产页连接器标签
+    document.getElementById('ccConnectorManageBtn')?.addEventListener('click', () => {
+      document.querySelector('.view-tab[data-view="documents"]')?.click();
+      setTimeout(() => {
+        document.querySelector('.doc-cat-tab[data-type="connector"]')?.click();
+      }, 100);
+    });
   },
 
   // ===== Agent 流式渲染（本地 LLM 流式输出） =====
@@ -6167,6 +8083,9 @@ const App = {
     window.electronAPI?.newADPChat?.();
     // 重置 CC 会话
     window.electronAPI?.ccNewSession?.();
+    // 重置 OpenRouter 模型选择（新会话默认走 Coding Plan）
+    const orSelect = document.getElementById('ccOpenRouterSelect');
+    if (orSelect) orSelect.value = '';
 
     // 创建新会话
     const sessionId = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
@@ -6896,6 +8815,10 @@ ${JSON.stringify(reportData, null, 2)}`;
       const ccAllowedTools = document.getElementById('ccAllowedTools')?.value.trim();
       const ccPermissionMode = document.getElementById('ccPermissionMode')?.value;
       const ccMaxTurns = parseInt(document.getElementById('ccMaxTurns')?.value) || 50;
+      // OpenRouter 配置
+      const orApiKey = document.getElementById('ccOpenRouterApiKey')?.value.trim();
+      const orBaseUrl = document.getElementById('ccOpenRouterBaseUrl')?.value.trim();
+      const orDefaultModel = document.getElementById('ccOpenRouterDefaultModel')?.value.trim();
       if (window.electronAPI?.ccSetConfig) {
         await window.electronAPI.ccSetConfig({
           authToken: ccAuthToken || undefined,
@@ -6906,11 +8829,22 @@ ${JSON.stringify(reportData, null, 2)}`;
           maxTurns: ccMaxTurns || undefined,
           defaultWorkdir: document.getElementById('ccDefaultWorkdir')?.value.trim() || undefined,
           envVars: this._collectCCEnvVars(),
+          openRouterApiKey: orApiKey || undefined,
+          openRouterBaseUrl: orBaseUrl || undefined,
+          // 空字符串也需保存（用户清除配置时写入 '' 覆盖旧值）
+          openRouterDefaultModel: orDefaultModel,
+          // 供应商配置 + 活跃供应商
+          activeProvider: document.getElementById('ccProviderSelect')?.value || undefined,
         });
+        // 保存供应商配置
+        await this._saveProviderConfigs();
       }
 
       // 更新缓存的默认工作目录
       this._ccDefaultWorkdir = document.getElementById('ccDefaultWorkdir')?.value.trim() || '';
+      // 清除 OpenRouter 模型选择器缓存，确保下次刷新时重新拉取
+      const orSelectEl = document.getElementById('ccOpenRouterSelect');
+      if (orSelectEl) delete orSelectEl.dataset.loaded;
       this._updateCCWorkdirBar();
       
       // Phase 3: 保存用户画像
@@ -7974,6 +9908,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     // 回退硬编码
     const defaultLabels = {
       image: '🖼️ 图片',
+      voice: '🎤 语音数据',
       meeting: '会议记录',
       feedback: '问题反馈',
       task: '待办任务',
@@ -7988,6 +9923,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     const i = window.i18n;
     const defaults = [
       { key: 'image', label: '🖼️ 图片' },
+      { key: 'voice', label: '🎤 语音数据' },
       { key: 'meeting', label: i?.t('notebook.category.meeting') || '会议记录' },
       { key: 'feedback', label: i?.t('notebook.category.feedback') || '问题反馈' },
       { key: 'task', label: i?.t('notebook.category.task') || '待办任务' },
@@ -9958,6 +11894,10 @@ ${JSON.stringify(reportData, null, 2)}`;
   hideTaskModal() {
     document.getElementById('taskModal')?.classList.add('hidden');
     this.editingTask = null;
+    // 如果正在录音，停止录音
+    if (this._voiceRecording) {
+      this._cancelVoiceInput();
+    }
     // 清除 AI 编辑器内容
     if (this._aiTaskEditor) this._aiTaskEditor.clear();
     // 重置周期性选项
@@ -13639,6 +15579,18 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
   },
 };
+
+// 全局错误捕获：防止未捕获异常导致渲染进程崩溃白屏
+window.addEventListener('error', (e) => {
+  console.error('[Global Error]', e.error || e.message, e.filename, e.lineno);
+  // 阻止错误冒泡导致页面崩溃
+  e.preventDefault();
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[Unhandled Rejection]', e.reason);
+  e.preventDefault();
+});
 
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
