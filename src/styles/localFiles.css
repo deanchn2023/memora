@@ -42,7 +42,7 @@
   background: var(--bg-primary);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   white-space: nowrap;
   display: flex;
   align-items: center;
@@ -83,7 +83,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -125,7 +125,7 @@
   color: var(--text-tertiary);
   background: transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   margin-left: 2px;
   line-height: 1;
 }
@@ -145,7 +145,7 @@
   color: var(--text-tertiary);
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   flex-shrink: 0;
 }
 
@@ -175,7 +175,7 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
 }
 
 .local-type-tab:hover {
@@ -270,7 +270,7 @@
   border: 0.5px solid var(--border-light);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   user-select: none;
 }
 
@@ -367,7 +367,7 @@
   background: transparent;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
 }
 
 .local-file-copy-path:hover,
@@ -387,7 +387,7 @@
   border-radius: 20px;
   font-size: 13px;
   opacity: 0;
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: background-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   pointer-events: none;
   z-index: 9999;
   backdrop-filter: blur(10px);
@@ -412,7 +412,7 @@
   color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
 }
 
 .local-load-more-btn:hover {

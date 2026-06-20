@@ -220,7 +220,7 @@
   cursor: pointer;
   color: var(--text-tertiary);
   opacity: 0;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   font-size: 14px;
 }
 
@@ -385,7 +385,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
 }
 
 .expert-modal-header .modal-close:hover {
@@ -639,7 +639,7 @@
   border: 1.5px solid var(--border-color, rgba(0, 0, 0, 0.1));
   border-radius: 12px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   background: var(--bg-secondary, rgba(0, 0, 0, 0.02));
 }
 
@@ -714,7 +714,7 @@
   font-size: 12px;
   cursor: pointer;
   opacity: 0.5;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: background-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -764,7 +764,7 @@
   border: 1.5px solid var(--border-color, rgba(0, 0, 0, 0.1));
   border-radius: 10px;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: background-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   text-align: center;
 }
 
@@ -911,7 +911,7 @@
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
 }
 
 .pagination-btn:hover:not(:disabled) {
@@ -1069,7 +1069,7 @@
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
-  transition: all 0.1s;
+  transition: background-color 0.1s, color 0.1s, border-color 0.1s, box-shadow 0.1s, transform 0.1s, opacity 0.1s;
   line-height: 1;
 }
 
@@ -1093,7 +1093,7 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
 }
 
 .group-chat-exit-btn:hover {
@@ -1214,7 +1214,7 @@
   padding: 2px 4px;
   border-radius: 4px;
   opacity: 0;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
 }
 
 .chat-record-item:hover .chat-record-delete {

@@ -36,7 +36,7 @@
   background: var(--bg-primary);
   color: var(--text-primary);
   outline: none;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
 }
 
 .knowledge-search-input:focus {
@@ -55,7 +55,7 @@
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.25s var(--transition);
+  transition: background-color 0.25s var(--transition), color 0.25s var(--transition), border-color 0.25s var(--transition), box-shadow 0.25s var(--transition), transform 0.25s var(--transition), opacity 0.25s var(--transition);
   letter-spacing: -0.1px;
   white-space: nowrap;
   background: var(--gradient-brand);
@@ -135,7 +135,7 @@
   border: 1px solid var(--border-light);
   box-shadow: var(--shadow-xs);
   overflow: hidden;
-  transition: all 0.25s var(--transition);
+  transition: background-color 0.25s var(--transition), color 0.25s var(--transition), border-color 0.25s var(--transition), box-shadow 0.25s var(--transition), transform 0.25s var(--transition), opacity 0.25s var(--transition);
   display: flex;
   flex-direction: column;
 }
@@ -180,7 +180,7 @@
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
 }
 
 .knowledge-action-btn:hover {
@@ -219,7 +219,7 @@
   padding: 14px 16px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-light);
-  transition: all 0.25s var(--transition);
+  transition: background-color 0.25s var(--transition), color 0.25s var(--transition), border-color 0.25s var(--transition), box-shadow 0.25s var(--transition), transform 0.25s var(--transition), opacity 0.25s var(--transition);
   cursor: pointer;
 }
 
@@ -384,7 +384,7 @@
   background: var(--bg-primary);
   font-size: 11px;
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   color: var(--text-secondary);
 }
 
@@ -533,7 +533,7 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -671,7 +671,7 @@
   height: 3px;
   border-radius: 2px;
   background: rgba(0, 0, 0, 0.08);
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
 }
 
 .search-panel-resizer:hover {
@@ -767,7 +767,7 @@
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
 }
 
 .knowledge-no-config .config-btn:hover {
@@ -808,7 +808,7 @@
   font-weight: 500;
   border: 1.5px solid transparent;
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   background: var(--bg-secondary);
   color: var(--text-secondary);
 }
@@ -853,7 +853,7 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s var(--transition);
+  transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   background: var(--gradient-brand);
   color: white;
   box-shadow: 0 2px 8px var(--primary-glow);
@@ -918,7 +918,7 @@
   background: var(--bg-primary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: background-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   border: 0.5px solid transparent;
 }
 
@@ -1012,7 +1012,7 @@
   background: var(--bg-primary);
   font-size: 16px;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: background-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -34,6 +34,7 @@ const App = {
   // 对话会话管理
   _chatSessions: [],        // 所有对话会话
   _activeSessionId: null,   // 当前活跃的会话ID
+  _chatMsgData: new WeakMap(), // 聊天消息数据缓存（事件委托用，key=messageContent el）
 
   init() {
     console.log('[App] init() starting...');
@@ -655,122 +656,9 @@ const App = {
       });
     }
 
-    // 全局复制按钮事件委托（覆盖所有模式的 .copy-btn，避免 DOM 重建后事件丢失）
-    document.getElementById('chatMessages')?.addEventListener('click', (e) => {
-      const copyBtn = e.target.closest('.copy-btn');
-      if (!copyBtn) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const messageContent = copyBtn.closest('.message-content');
-      if (messageContent) {
-        console.log('[Copy] Button clicked via delegation');
-        this.copyAssistantMessage(copyBtn, messageContent);
-      }
-    });
-
-    // 全局 CC 代码块保存/打开/预览/复制/执行按钮事件委托
+    // 聊天消息事件委托：统一处理所有消息内按钮点击（合并原3个分散委托）
     document.getElementById('chatMessages')?.addEventListener('click', async (e) => {
-      const saveBtn = e.target.closest('.cc-code-save-btn');
-      const openBtn = e.target.closest('.cc-code-open-btn');
-      const previewBtn = e.target.closest('.cc-code-preview-btn');
-      const copyBtn = e.target.closest('.cc-code-copy-btn');
-      const execBtn = e.target.closest('.cc-code-exec-btn');
-      const ignoreBtn = e.target.closest('.cc-code-ignore-btn');
-      const rejectBtn = e.target.closest('.cc-code-reject-btn');
-      if (!saveBtn && !openBtn && !previewBtn && !copyBtn && !execBtn && !ignoreBtn && !rejectBtn) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      const clickedBtn = saveBtn || openBtn || previewBtn || copyBtn || execBtn || ignoreBtn || rejectBtn;
-      const toolbar = clickedBtn.closest('.cc-code-toolbar');
-      const pre = toolbar?.nextElementSibling;
-      const codeEl = pre?.querySelector('code');
-      if (!codeEl) return;
-      const codeContent = codeEl.textContent || '';
-      const lang = toolbar.querySelector('.cc-code-lang')?.textContent || 'txt';
-      const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
-      const ext = extMap[lang] || 'txt';
-      const fileName = `cc-output-${Date.now()}.${ext}`;
-
-      // 复制按钮
-      if (copyBtn) {
-        try {
-          await navigator.clipboard.writeText(codeContent);
-          copyBtn.textContent = '✅ 已复制';
-          setTimeout(() => { copyBtn.textContent = '📋 复制'; }, 2000);
-        } catch {
-          this.showToast('复制失败', 'error');
-        }
-        return;
-      }
-
-      // 执行按钮
-      if (execBtn) {
-        await this._executeCommandInline(execBtn, pre, codeContent);
-        return;
-      }
-
-      // 忽略按钮
-      if (ignoreBtn) {
-        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
-        const badge = document.createElement('span');
-        badge.className = 'cc-command-status cc-command-ignored';
-        badge.textContent = '✕ 已忽略';
-        toolbar.appendChild(badge);
-        return;
-      }
-
-      // 拒绝按钮
-      if (rejectBtn) {
-        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
-        const badge = document.createElement('span');
-        badge.className = 'cc-command-status cc-command-rejected';
-        badge.textContent = '🚫 已拒绝';
-        toolbar.appendChild(badge);
-        return;
-      }
-
-      // 预览按钮：弹出 iframe 预览 HTML/SVG
-      if (previewBtn) {
-        this._showHTMLPreview(codeContent, ext);
-        return;
-      }
-
-      if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.textContent = '⏳ 保存中...';
-      }
-      try {
-        const result = await window.electronAPI?.artifactsSave?.({ content: codeContent, fileName, source: 'cc' });
-        if (result?.success) {
-          if (saveBtn) {
-            saveBtn.textContent = '✅ 已保存';
-            saveBtn.disabled = false;
-          }
-          if (openBtn || saveBtn) {
-            this.showToast(`已保存到 Agent 产物: ${result.name}`);
-          }
-          if (openBtn) {
-            window.electronAPI?.openExternal?.('file://' + result.path);
-          }
-        } else {
-          if (saveBtn) { saveBtn.textContent = '💾 保存'; saveBtn.disabled = false; }
-          this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
-        }
-      } catch (err) {
-        if (saveBtn) { saveBtn.textContent = '💾 保存'; saveBtn.disabled = false; }
-        this.showToast('操作异常: ' + err.message, 'error');
-      }
-    });
-
-    // 全局 CC 执行过程展开/折叠事件委托
-    document.getElementById('chatMessages')?.addEventListener('click', (e) => {
-      const header = e.target.closest('.cc-process-header');
-      if (!header) return;
-      const wrapper = header.closest('.cc-process-wrapper');
-      if (wrapper) {
-        wrapper.classList.toggle('collapsed');
-      }
+      await this._handleChatClick(e);
     });
 
     // 通知铃铛
@@ -3643,40 +3531,8 @@ const App = {
             : this._formatChatTime(new Date());
           html += `<span class="message-time assistant-time">${timeLabel}</span>`;
           messageContent.innerHTML = html;
-          // 绑定按钮事件
-          const copyBtn = messageContent.querySelector('.copy-btn');
-          if (copyBtn) {
-            copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
-          }
-          const feedbackDiv = messageContent.querySelector('.agent-feedback');
-          if (feedbackDiv) {
-            const tid = feedbackDiv.dataset.traceId;
-            feedbackDiv.querySelector('.feedback-accept')?.addEventListener('click', () => {
-              window.electronAPI?.feedback?.accept(tid, result.result);
-              feedbackDiv.innerHTML = '<span class="feedback-done">✓ 感谢反馈</span>';
-            });
-            feedbackDiv.querySelector('.feedback-reject')?.addEventListener('click', () => {
-              window.electronAPI?.feedback?.reject(tid, '用户标记无用');
-              feedbackDiv.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
-            });
-          }
-          messageContent.querySelectorAll('.agent-action-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-              const action = e.currentTarget.dataset.action;
-              this.handleAgentAction(action, result.result, result.agentType);
-            });
-          });
-          // 绑定 Agent 产物保存按钮
-          this._bindArtifactSaveButtons(messageContent);
-          messageContent.querySelectorAll('.agent-task-card').forEach(card => {
-            card.addEventListener('click', () => {
-              const title = card.dataset.title;
-              const schedule = card.dataset.schedule;
-              if (title) {
-                this.showTaskModal({ title, description: `排程时间：${schedule || ''}`, estimatedDuration: 60, priority: 'high' });
-              }
-            });
-          });
+          // 事件委托：存储结果数据供 _handleChatClick 使用（无需单独 addEventListener）
+          this._chatMsgData.set(messageContent, { result: result.result, agentType: result.agentType });
         } else {
           this._agentStreamListening = false;
           this._agentStreamBuffer = [];
@@ -3710,7 +3566,363 @@ const App = {
     chatMessages.scrollTop = chatMessages.scrollHeight;
   },
 
-  // === 复制按钮 ===
+  // === 聊天消息事件委托处理器 ===
+  // 统一处理聊天消息内所有按钮点击，替代每条消息单独 addEventListener
+  async _handleChatClick(e) {
+    // --- 复制助手消息 ---
+    const copyBtn = e.target.closest('.copy-btn');
+    if (copyBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const messageContent = copyBtn.closest('.message-content');
+      if (messageContent) {
+        await this.copyAssistantMessage(copyBtn, messageContent);
+      }
+      return;
+    }
+
+    // --- 复制用户消息 ---
+    const copyUserBtn = e.target.closest('.copy-user-msg');
+    if (copyUserBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      const mc = copyUserBtn.closest('.message-content');
+      if (mc) {
+        const text = this._getFullUserMessageText(mc);
+        if (!text) { this.showToast('没有可复制的内容', 'error'); return; }
+        try {
+          if (window.electronAPI?.writeClipboardText) {
+            await window.electronAPI.writeClipboardText(text);
+          } else if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          copyUserBtn.style.color = '#34C759';
+          this.showToast('已复制到剪贴板', 'success');
+          setTimeout(() => { copyUserBtn.style.color = ''; }, 1500);
+        } catch (err) {
+          console.error('[Copy] User msg copy failed:', err);
+          this.showToast('复制失败: ' + (err.message || ''), 'error');
+        }
+      }
+      return;
+    }
+
+    // --- 编辑用户消息 ---
+    const editBtn = e.target.closest('.edit-user-msg');
+    if (editBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      const mc = editBtn.closest('.message-content');
+      if (mc) {
+        const text = this._getFullUserMessageText(mc);
+        const inputEl = document.getElementById('aiChatInput');
+        if (inputEl && text) {
+          inputEl.value = text;
+          inputEl.style.height = 'auto';
+          inputEl.style.height = inputEl.scrollHeight + 'px';
+          inputEl.focus();
+          this.showToast('已加载到输入框，可直接发送', 'success');
+        }
+      }
+      return;
+    }
+
+    // --- 反馈：有用 ---
+    const feedbackAccept = e.target.closest('.feedback-accept');
+    if (feedbackAccept) {
+      e.stopPropagation();
+      const fd = feedbackAccept.closest('.agent-feedback');
+      if (fd) {
+        const tid = fd.dataset.traceId;
+        const mc = fd.closest('.message-content');
+        const data = this._chatMsgData.get(mc);
+        window.electronAPI?.feedback?.accept(tid, data?.result || data?.parsed || { text: '' });
+        fd.innerHTML = '<span class="feedback-done">✓ 感谢反馈</span>';
+      }
+      return;
+    }
+
+    // --- 反馈：没用 ---
+    const feedbackReject = e.target.closest('.feedback-reject');
+    if (feedbackReject) {
+      e.stopPropagation();
+      const fd = feedbackReject.closest('.agent-feedback');
+      if (fd) {
+        const tid = fd.dataset.traceId;
+        window.electronAPI?.feedback?.reject(tid, '用户标记无用');
+        fd.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
+      }
+      return;
+    }
+
+    // --- Agent 操作按钮 ---
+    const actionBtn = e.target.closest('.agent-action-btn');
+    if (actionBtn) {
+      e.stopPropagation();
+      const mc = actionBtn.closest('.message-content');
+      const data = this._chatMsgData.get(mc);
+      if (data) {
+        this.handleAgentAction(actionBtn.dataset.action, data.result || data.parsed, data.agentType);
+      }
+      return;
+    }
+
+    // --- 任务卡片 ---
+    const taskCard = e.target.closest('.agent-task-card');
+    if (taskCard) {
+      e.stopPropagation();
+      const title = taskCard.dataset.title;
+      const schedule = taskCard.dataset.schedule;
+      if (title) {
+        this.showTaskModal({ title, description: `排程时间：${schedule || ''}`, estimatedDuration: 60, priority: 'high' });
+      }
+      return;
+    }
+
+    // --- ADP 链接 ---
+    const link = e.target.closest('.adp-link');
+    if (link) {
+      e.preventDefault();
+      const url = link.dataset.url || link.getAttribute('href');
+      if (url) window.electronAPI?.openExternal(url);
+      return;
+    }
+
+    // --- 思考过程折叠/展开 ---
+    const header = e.target.closest('.adp-thinking-header');
+    if (header) {
+      header.parentElement.classList.toggle('expanded');
+      const toggle = header.querySelector('.adp-thinking-toggle');
+      if (toggle) toggle.textContent = header.parentElement.classList.contains('expanded') ? '▼' : '▶';
+      return;
+    }
+
+    // --- CC 执行过程展开/折叠 ---
+    const ccHeader = e.target.closest('.cc-process-header');
+    if (ccHeader) {
+      const wrapper = ccHeader.closest('.cc-process-wrapper');
+      if (wrapper) wrapper.classList.toggle('collapsed');
+      return;
+    }
+
+    // --- 文件卡片保存按钮 ---
+    const fileSaveBtn = e.target.closest('.adp-file-save-btn');
+    if (fileSaveBtn) {
+      e.stopPropagation();
+      const card = fileSaveBtn.closest('.adp-file-card');
+      if (card) {
+        const url = card.dataset.url;
+        const name = card.dataset.name;
+        if ((url && url !== '#') || card.dataset.filepath) {
+          this._downloadFileToArtifacts(url, name, card);
+        }
+      }
+      return;
+    }
+
+    // --- 文件卡片打开按钮 ---
+    const fileOpenBtn = e.target.closest('.adp-file-open-btn');
+    if (fileOpenBtn) {
+      e.stopPropagation();
+      const card = fileOpenBtn.closest('.adp-file-card');
+      if (card) {
+        const url = card.dataset.url;
+        const savedPath = card.dataset.savedPath;
+        if (savedPath && window.electronAPI?.artifactsRead) {
+          try {
+            const result = await window.electronAPI.artifactsRead({ filePath: savedPath });
+            if (result.success && result.content) {
+              const ext = (card.dataset.name || '').split('.').pop()?.toLowerCase();
+              if (['html', 'htm', 'svg'].includes(ext)) {
+                const blob = new Blob([result.content], { type: ext === 'svg' ? 'image/svg+xml' : 'text/html' });
+                const blobUrl = URL.createObjectURL(blob);
+                window.electronAPI?.openExternal(blobUrl);
+              } else {
+                window.electronAPI?.artifactsShowInFolder?.(savedPath);
+              }
+              return;
+            }
+          } catch {}
+        }
+        if (url && url !== '#') {
+          window.electronAPI?.openExternal(url);
+        } else {
+          this.showToast('请先保存后再打开', 'info');
+        }
+      }
+      return;
+    }
+
+    // --- Agent 产物保存按钮 ---
+    const artifactSaveBtn = e.target.closest('.agent-save-artifact-btn');
+    if (artifactSaveBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const pre = artifactSaveBtn.closest('pre') || artifactSaveBtn.previousElementSibling;
+      if (!pre) return;
+      const codeEl = pre.querySelector('code');
+      if (!codeEl) return;
+      const content = codeEl.textContent || '';
+      const lang = artifactSaveBtn.dataset.lang || '';
+      let fileName = '';
+      const lowerLang = lang.toLowerCase();
+      if (lowerLang === 'html' || lowerLang === 'htm') {
+        const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
+        fileName = titleMatch ? titleMatch[1].trim().replace(/[<>:"/\\|?*]/g, '_') + '.html' : 'page.html';
+      } else if (lowerLang === 'json') {
+        fileName = 'data.json';
+      } else if (lowerLang === 'css') {
+        fileName = 'style.css';
+      } else if (lowerLang === 'javascript' || lowerLang === 'js') {
+        fileName = 'script.js';
+      } else if (lowerLang === 'typescript' || lowerLang === 'ts') {
+        fileName = 'script.ts';
+      } else if (lowerLang === 'python' || lowerLang === 'py') {
+        fileName = 'script.py';
+      } else if (lowerLang === 'svg') {
+        fileName = 'image.svg';
+      } else if (lowerLang === 'xml') {
+        fileName = 'data.xml';
+      } else if (lowerLang === 'markdown' || lowerLang === 'md') {
+        fileName = 'document.md';
+      } else {
+        fileName = `artifact-${Date.now()}.${lowerLang || 'txt'}`;
+      }
+      try {
+        const result = await window.electronAPI?.artifactsSave?.({ content, fileName, source: 'agent' });
+        if (result?.success) {
+          this.showToast(`已保存: ${result.name}`);
+        } else {
+          this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      } catch (err) {
+        this.showToast('保存异常: ' + err.message, 'error');
+      }
+      return;
+    }
+
+    // --- Agent 产物打开按钮 ---
+    const artifactOpenBtn = e.target.closest('.agent-open-artifact-btn');
+    if (artifactOpenBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const savedPath = artifactOpenBtn.dataset.savedPath;
+      if (savedPath) {
+        window.electronAPI?.openExternal?.('file://' + savedPath);
+      }
+      return;
+    }
+
+    // --- CC 代码块按钮（保存/打开/预览/复制/执行/忽略/拒绝）---
+    const ccSaveBtn = e.target.closest('.cc-code-save-btn');
+    const ccOpenBtn = e.target.closest('.cc-code-open-btn');
+    const ccPreviewBtn = e.target.closest('.cc-code-preview-btn');
+    const ccCopyBtn = e.target.closest('.cc-code-copy-btn');
+    const ccExecBtn = e.target.closest('.cc-code-exec-btn');
+    const ccIgnoreBtn = e.target.closest('.cc-code-ignore-btn');
+    const ccRejectBtn = e.target.closest('.cc-code-reject-btn');
+    if (ccSaveBtn || ccOpenBtn || ccPreviewBtn || ccCopyBtn || ccExecBtn || ccIgnoreBtn || ccRejectBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const clickedBtn = ccSaveBtn || ccOpenBtn || ccPreviewBtn || ccCopyBtn || ccExecBtn || ccIgnoreBtn || ccRejectBtn;
+      const toolbar = clickedBtn.closest('.cc-code-toolbar');
+      const pre = toolbar?.nextElementSibling;
+      const codeEl = pre?.querySelector('code');
+      if (!codeEl) return;
+      const codeContent = codeEl.textContent || '';
+      const lang = toolbar.querySelector('.cc-code-lang')?.textContent || 'txt';
+      const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
+      const ext = extMap[lang] || 'txt';
+      const fileName = `cc-output-${Date.now()}.${ext}`;
+
+      if (ccCopyBtn) {
+        try {
+          await navigator.clipboard.writeText(codeContent);
+          ccCopyBtn.textContent = '✅ 已复制';
+          setTimeout(() => { ccCopyBtn.textContent = '📋 复制'; }, 2000);
+        } catch {
+          this.showToast('复制失败', 'error');
+        }
+        return;
+      }
+      if (ccExecBtn) {
+        await this._executeCommandInline(ccExecBtn, pre, codeContent);
+        return;
+      }
+      if (ccIgnoreBtn) {
+        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        const badge = document.createElement('span');
+        badge.className = 'cc-command-status cc-command-ignored';
+        badge.textContent = '✕ 已忽略';
+        toolbar.appendChild(badge);
+        return;
+      }
+      if (ccRejectBtn) {
+        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        const badge = document.createElement('span');
+        badge.className = 'cc-command-status cc-command-rejected';
+        badge.textContent = '🚫 已拒绝';
+        toolbar.appendChild(badge);
+        return;
+      }
+      if (ccPreviewBtn) {
+        this._showHTMLPreview(codeContent, ext);
+        return;
+      }
+      if (ccSaveBtn) {
+        ccSaveBtn.disabled = true;
+        ccSaveBtn.textContent = '⏳ 保存中...';
+      }
+      try {
+        const result = await window.electronAPI?.artifactsSave?.({ content: codeContent, fileName, source: 'cc' });
+        if (result?.success) {
+          if (ccSaveBtn) { ccSaveBtn.textContent = '✅ 已保存'; ccSaveBtn.disabled = false; }
+          if (ccOpenBtn || ccSaveBtn) {
+            this.showToast(`已保存到 Agent 产物: ${result.name}`);
+          }
+          if (ccOpenBtn) {
+            window.electronAPI?.openExternal?.('file://' + result.path);
+          }
+        } else {
+          if (ccSaveBtn) { ccSaveBtn.textContent = '💾 保存'; ccSaveBtn.disabled = false; }
+          this.showToast('保存失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      } catch (err) {
+        if (ccSaveBtn) { ccSaveBtn.textContent = '💾 保存'; ccSaveBtn.disabled = false; }
+        this.showToast('操作异常: ' + err.message, 'error');
+      }
+      return;
+    }
+  },
+
+  // === 提取用户消息完整文本（含附件信息）===
+  _getFullUserMessageText(msgContent) {
+    const p = msgContent.querySelector('p');
+    let text = p ? p.textContent : '';
+    const attItems = msgContent.querySelectorAll('.message-attachment-item');
+    if (attItems.length > 0) {
+      text += '\n';
+      attItems.forEach(item => {
+        const name = item.dataset.attName || item.textContent.trim();
+        const path = item.dataset.attPath || '';
+        if (path) {
+          text += `\n📎 ${name} (${path})`;
+        } else {
+          text += `\n📎 ${name}`;
+        }
+      });
+    }
+    return text.trim();
+  },
+
   async copyAssistantMessage(btn, messageContent) {
     // 获取纯文本内容，排除复制按钮、反馈按钮等非内容元素
     const clone = messageContent.cloneNode(true);
@@ -3748,103 +3960,14 @@ const App = {
     }
   },
 
-  // === 绑定用户消息操作按钮（复制+编辑） ===
+  // === 用户消息操作按钮（事件委托，无需单独绑定）===
   _bindUserMsgActions(msgContent) {
-    if (!msgContent) return;
-    const copyBtn = msgContent.querySelector('.copy-user-msg');
-    const editBtn = msgContent.querySelector('.edit-user-msg');
-
-    // 提取消息完整文本（含附件信息）
-    const _getFullText = () => {
-      const p = msgContent.querySelector('p');
-      let text = p ? p.textContent : '';
-      // 收集附件信息
-      const attItems = msgContent.querySelectorAll('.message-attachment-item');
-      if (attItems.length > 0) {
-        text += '\n';
-        attItems.forEach(item => {
-          const name = item.dataset.attName || item.textContent.trim();
-          const path = item.dataset.attPath || '';
-          if (path) {
-            text += `\n📎 ${name} (${path})`;
-          } else {
-            text += `\n📎 ${name}`;
-          }
-        });
-      }
-      return text.trim();
-    };
-
-    if (copyBtn) {
-      copyBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const btn = e.currentTarget;
-        const text = _getFullText();
-        if (!text) { this.showToast('没有可复制的内容', 'error'); return; }
-        try {
-          // 优先通过主进程写入，确保写入纯文本
-          if (window.electronAPI?.writeClipboardText) {
-            await window.electronAPI.writeClipboardText(text);
-          } else if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-          } else {
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-          }
-          btn.style.color = '#34C759';
-          this.showToast('已复制到剪贴板', 'success');
-          setTimeout(() => { btn.style.color = ''; }, 1500);
-        } catch (err) {
-          console.error('[Copy] User msg copy failed:', err);
-          this.showToast('复制失败: ' + (err.message || ''), 'error');
-        }
-      });
-    }
-
-    if (editBtn) {
-      editBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const text = _getFullText();
-        const inputEl = document.getElementById('aiChatInput');
-        if (inputEl && text) {
-          inputEl.value = text;
-          inputEl.style.height = 'auto';
-          inputEl.style.height = inputEl.scrollHeight + 'px';
-          inputEl.focus();
-          this.showToast('已加载到输入框，可直接发送', 'success');
-        }
-      });
-    }
+    // 事件委托已在 _handleChatClick 中统一处理，此方法保留为空以兼容调用点
   },
 
-  // === 重新绑定恢复消息的事件处理器 ===
+  // === 恢复消息事件（事件委托，无需重新绑定）===
   _bindRestoredMessageActions() {
-    const chatMessages = document.getElementById('chatMessages');
-    if (!chatMessages) return;
-
-    // 重新绑定用户消息的复制和编辑按钮
-    chatMessages.querySelectorAll('.message.user').forEach(msg => {
-      const msgContent = msg.querySelector('.message-content');
-      if (msgContent && !msg.dataset._actionsBound) {
-        this._bindUserMsgActions(msgContent);
-        msg.dataset._actionsBound = 'true';
-      }
-    });
-
-    // 重新绑定助手消息的复制按钮
-    chatMessages.querySelectorAll('.message.assistant .copy-btn').forEach(btn => {
-      if (!btn.dataset._bound) {
-        btn.addEventListener('click', () => this.copyAssistantMessage(btn, btn.closest('.message-content')));
-        btn.dataset._bound = 'true';
-      }
-    });
+    // 事件委托已在 _handleChatClick 中统一处理，无需重新绑定
   },
 
   // ===== M-Agent 流式渲染 =====
@@ -5379,10 +5502,15 @@ const App = {
       `;
     }).join('');
 
-    // 绑定安装按钮
-    grid.querySelectorAll('.skill-install-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.skillName;
+    // 事件委托：在 grid 上统一处理安装/卸载/删除按钮点击
+    grid.onclick = async (e) => {
+      const installBtn = e.target.closest('.skill-install-btn');
+      const uninstallBtn = e.target.closest('.skill-uninstall-btn');
+      const deleteBtn = e.target.closest('.skill-delete-btn');
+      if (!installBtn && !uninstallBtn && !deleteBtn) return;
+
+      if (installBtn) {
+        const name = installBtn.dataset.skillName;
         const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
         const result = await window.electronAPI?.skillInstallToCC?.({ skillName: name, ccWorkdir: workdir });
         if (result?.success) {
@@ -5391,14 +5519,9 @@ const App = {
         } else {
           this.showToast('安装失败: ' + (result?.error || '未知错误'), 'error');
         }
-      });
-    });
-
-    // 绑定卸载按钮
-    grid.querySelectorAll('.skill-uninstall-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.skillName;
-        const card = btn.closest('.skill-card');
+      } else if (uninstallBtn) {
+        const name = uninstallBtn.dataset.skillName;
+        const card = uninstallBtn.closest('.skill-card');
         const isSkillhub = card?.querySelector('.skill-source-badge.skillhub');
         if (!confirm(`确定从 CC 卸载 Skill "${name}"？`)) return;
         const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
@@ -5406,25 +5529,17 @@ const App = {
         if (result?.success) {
           this.showToast(`Skill "${name}" 已从 CC 卸载`);
           this._loadSkillList();
-          // 如果是 SkillHub 技能，同步刷新市场页的安装状态
           if (isSkillhub) {
             this._skillhubInstalledSlugs.delete(name);
           }
         } else {
           this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
         }
-      });
-    });
-
-    // 绑定删除按钮
-    grid.querySelectorAll('.skill-delete-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.skillName;
+      } else if (deleteBtn) {
+        const name = deleteBtn.dataset.skillName;
         if (!confirm(`确定删除 Skill "${name}"？将同时从 CC 卸载。`)) return;
-        // 先卸载
         const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
         await window.electronAPI?.skillUninstallFromCC?.({ skillName: name, ccWorkdir: workdir });
-        // 再删除
         const result = await window.electronAPI?.skillDelete?.({ name });
         if (result?.success) {
           this.showToast(`Skill "${name}" 已删除`);
@@ -5432,8 +5547,8 @@ const App = {
         } else {
           this.showToast('删除失败: ' + (result?.error || '未知错误'), 'error');
         }
-      });
-    });
+      }
+    };
   },
 
   // ===== SkillHub 市场集成（v2.8） =====
@@ -6375,66 +6490,8 @@ const App = {
 
     messageContent.innerHTML = html;
 
-    // 🔧 绑定链接点击事件（Agent 模式也需要）
-    messageContent.querySelectorAll('.adp-link').forEach(link => {
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        const url = link.dataset.url || link.getAttribute('href');
-        if (url) {
-          window.electronAPI?.openExternal(url);
-        }
-      });
-    });
-    this._bindFileCardActions(messageContent);
-
-    // 绑定按钮事件
-    const copyBtn = messageContent.querySelector('.copy-btn');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
-    }
-    const feedbackDiv = messageContent.querySelector('.agent-feedback');
-    if (feedbackDiv) {
-      const tid = feedbackDiv.dataset.traceId;
-      feedbackDiv.querySelector('.feedback-accept')?.addEventListener('click', () => {
-        window.electronAPI?.feedback?.accept(tid, parsed || { text: fullText });
-        feedbackDiv.innerHTML = '<span class="feedback-done">✓ 感谢反馈</span>';
-      });
-      feedbackDiv.querySelector('.feedback-reject')?.addEventListener('click', () => {
-        window.electronAPI?.feedback?.reject(tid, '用户标记无用');
-        feedbackDiv.innerHTML = '<span class="feedback-done">✓ 已记录</span>';
-      });
-    }
-
-    // 绑定 Agent 操作按钮事件
-    messageContent.querySelectorAll('.agent-action-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const action = e.currentTarget.dataset.action;
-        this.handleAgentAction(action, parsed, agentType);
-      });
-    });
-
-    // 绑定 Agent 产物保存按钮
-    this._bindArtifactSaveButtons(messageContent);
-
-    // 绑定可点击任务卡片
-    messageContent.querySelectorAll('.agent-task-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const title = card.dataset.title;
-        const schedule = card.dataset.schedule;
-        if (title) {
-          this.showTaskModal({ title, description: `排程时间：${schedule || ''}`, estimatedDuration: 60, priority: 'high' });
-        }
-      });
-    });
-
-    // 绑定思考过程折叠/展开（Agent 流式输出时生成）
-    messageContent.querySelectorAll('.adp-thinking-header').forEach(header => {
-      header.addEventListener('click', () => {
-        header.parentElement.classList.toggle('expanded');
-        const toggle = header.querySelector('.adp-thinking-toggle');
-        if (toggle) toggle.textContent = header.parentElement.classList.contains('expanded') ? '▼' : '▶';
-      });
-    });
+    // 事件委托：存储结果数据供 _handleChatClick 使用（无需单独 addEventListener）
+    this._chatMsgData.set(messageContent, { parsed, agentType, fullText });
 
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -6449,10 +6506,7 @@ const App = {
   _addCopyButton(messageContent) {
     const copyBtnHtml = '<button class="copy-btn" title="复制"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>';
     messageContent.insertAdjacentHTML('beforeend', copyBtnHtml);
-    const copyBtn = messageContent.querySelector('.copy-btn:last-child');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', () => this.copyAssistantMessage(copyBtn, messageContent));
-    }
+    // 事件委托已在 _handleChatClick 中统一处理，无需单独 addEventListener
   },
 
   _handleADPSSEEvent(evt, assistantMessage) {
@@ -6722,31 +6776,7 @@ const App = {
       this._adpCurrentBubble.removeAttribute('id');
       this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(this._adpCurrentText, this._adpThinkingText);
 
-      // 绑定文件卡片点击事件
-      this._bindFileCardActions(this._adpCurrentBubble);
-
-      // 🔧 绑定链接点击事件（替代 inline onclick，更安全可靠）
-      this._adpCurrentBubble.querySelectorAll('.adp-link').forEach(link => {
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          const url = link.dataset.url || link.getAttribute('href');
-          if (url) {
-            window.electronAPI?.openExternal(url);
-          }
-        });
-      });
-
-      // 绑定思考过程折叠/展开
-      this._adpCurrentBubble.querySelectorAll('.adp-thinking-header').forEach(header => {
-        header.addEventListener('click', () => {
-          header.parentElement.classList.toggle('expanded');
-          const toggle = header.querySelector('.adp-thinking-toggle');
-          if (toggle) toggle.textContent = header.parentElement.classList.contains('expanded') ? '▼' : '▶';
-        });
-      });
-
-      // 绑定 Agent 产物保存按钮
-      this._bindArtifactSaveButtons(this._adpCurrentBubble);
+      // 事件委托已在 _handleChatClick 中统一处理链接、思考折叠、产物保存等
     }
 
     // 如果有文件输出，添加文件卡片区域
@@ -6762,7 +6792,7 @@ const App = {
       const filesEl = document.createElement('div');
       filesEl.className = 'adp-files-section';
       filesEl.innerHTML = filesHtml;
-      this._bindFileCardActions(filesEl);
+      // 事件委托已在 _handleChatClick 中统一处理文件卡片按钮
       messageContent.appendChild(filesEl);
     }
 
@@ -7079,8 +7109,7 @@ const App = {
       detailEl.innerHTML = `<div class="adp-step-detail-json"><pre><code>${this.escapeHtml(formatted)}</code></pre></div>`;
     } else if (contentType === 'file') {
       detailEl.innerHTML = content;
-      // 绑定文件卡片事件
-      this._bindFileCardActions(detailEl);
+      // 事件委托已在 _handleChatClick 中统一处理文件卡片按钮
     } else {
       detailEl.innerHTML = `<div class="adp-step-detail-text">${this.escapeHtml(content).replace(/\n/g, '<br>')}</div>`;
     }
@@ -10059,45 +10088,42 @@ ${JSON.stringify(reportData, null, 2)}`;
     this.bindCategoryEvents();
   },
 
-  // 绑定侧边栏分类事件（含新增、编辑、删除、拖放）
+  // 绑定侧边栏分类事件（事件委托模式，避免重新渲染时重复绑定）
   bindCategoryEvents() {
-    // 分类点击（使用 closest 确保 div 内子元素点击也能触发）
-    document.querySelectorAll('.category-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        const catItem = e.target.closest('.category-item');
-        if (!catItem) return;
+    const categoryList = document.getElementById('notebookCategoryList') || document.querySelector('.category-list');
+    if (!categoryList) return;
+
+    // 事件委托：统一处理分类点击、删除、编辑
+    categoryList.onclick = (e) => {
+      // 删除按钮
+      const delBtn = e.target.closest('.category-delete');
+      if (delBtn) {
+        e.stopPropagation();
+        this.deleteNotesByCategory(delBtn.dataset.category);
+        return;
+      }
+      // 编辑按钮
+      const editBtn = e.target.closest('.category-edit');
+      if (editBtn) {
+        e.stopPropagation();
+        this.renameCategory(editBtn.dataset.category);
+        return;
+      }
+      // 新增分类按钮
+      if (e.target.closest('.category-add-btn')) {
+        e.stopPropagation();
+        this.addCustomCategory();
+        return;
+      }
+      // 分类项点击
+      const catItem = e.target.closest('.category-item');
+      if (catItem) {
         document.querySelectorAll('.category-item').forEach(i => i.classList.remove('active'));
         catItem.classList.add('active');
         this.loadNotes(catItem.dataset.category);
-      });
-    });
-
-    // 删除按钮
-    document.querySelectorAll('.category-delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const category = e.target.dataset.category;
-        this.deleteNotesByCategory(category);
-      });
-    });
-
-    // 编辑（重命名）按钮
-    document.querySelectorAll('.category-edit').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const category = e.target.dataset.category;
-        this.renameCategory(category);
-      });
-    });
-
-    // 新增分类按钮
-    const addBtn = document.querySelector('.category-add-btn');
-    if (addBtn) {
-      addBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.addCustomCategory();
-      });
-    }
+        return;
+      }
+    };
 
     // 重新绑定拖放目标
     this.bindCategoryDropTargets();
@@ -13706,328 +13732,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     this.showToast(`已添加${typeLabel}：${name}`);
   },
 
-  // === Prompt 文件管理 ===
-  _currentPromptFile: null,
-
-  async loadPromptFiles() {
-    if (!window.electronAPI?.promptFiles?.list) {
-      console.error('[PromptFiles] electronAPI.promptFiles.list not available');
-      return;
-    }
-    const listEl = document.getElementById('promptFileList');
-    if (!listEl) {
-      console.error('[PromptFiles] promptFileList element not found');
-      return;
-    }
-
-    try {
-      const files = await window.electronAPI.promptFiles.list();
-      console.log('[PromptFiles] Loaded', files?.length, 'files');
-      if (!files || files.length === 0) {
-        listEl.innerHTML = '<div class="empty-state">暂无 Prompt 模板文件</div>';
-        return;
-      }
-
-      listEl.innerHTML = files.map(f => {
-        const sizeStr = f.exists ? `${(f.size / 1024).toFixed(1)} KB` : '未创建';
-        const modStr = f.modifiedAt ? `修改于 ${new Date(f.modifiedAt).toLocaleString('zh-CN')}` : '';
-        return `
-          <div class="prompt-file-card" data-filename="${this.escapeHtml(f.file)}">
-            <div class="prompt-file-icon">${f.icon}</div>
-            <div class="prompt-file-info">
-              <div class="prompt-file-name">${this.escapeHtml(f.name)}</div>
-              <div class="prompt-file-filename">${this.escapeHtml(f.file)}</div>
-              <div class="prompt-file-desc">${this.escapeHtml(f.desc)}</div>
-              <span class="prompt-file-used">用于：${this.escapeHtml(f.used_in)}</span>
-              <div class="prompt-file-meta">${sizeStr}${modStr ? ' · ' + modStr : ''}</div>
-            </div>
-            <div class="prompt-file-actions">
-              <button class="prompt-action-btn primary" data-action="edit-prompt" data-filename="${this.escapeHtml(f.file)}" title="在线编辑">✏️ 编辑</button>
-              <button class="prompt-action-btn" data-action="view-vars" data-filename="${this.escapeHtml(f.file)}" title="查看变量映射">🔖 变量</button>
-              <button class="prompt-action-btn" data-action="download-prompt" data-filename="${this.escapeHtml(f.file)}" title="下载文件">⬇️ 下载</button>
-              <button class="prompt-action-btn" data-action="upload-prompt" data-filename="${this.escapeHtml(f.file)}" title="上传替换">⬆️ 上传</button>
-              <button class="prompt-action-btn danger" data-action="reset-prompt" data-filename="${this.escapeHtml(f.file)}" title="恢复备份">🔄 恢复</button>
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      // 事件委托
-      listEl.onclick = (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (!btn) return;
-        const action = btn.dataset.action;
-        const filename = btn.dataset.filename;
-        console.log('[PromptFiles] Action clicked:', action, filename);
-        switch (action) {
-          case 'edit-prompt': this.openPromptEditor(filename); break;
-          case 'view-vars': this.loadPromptVariables(filename); break;
-          case 'download-prompt': this.downloadPromptFile(filename); break;
-          case 'upload-prompt': this.triggerPromptUpload(filename); break;
-          case 'reset-prompt': this.resetPromptFile(filename); break;
-        }
-      };
-
-      // 同时加载优化器历史
-      this.loadOptimizerHistory();
-    } catch (error) {
-      listEl.innerHTML = `<div class="empty-state">加载失败：${this.escapeHtml(error.message)}</div>`;
-    }
-  },
-
-  async openPromptEditor(filename) {
-    if (!window.electronAPI?.promptFiles?.read) return;
-    this._currentPromptFile = filename;
-
-    const result = await window.electronAPI.promptFiles.read(filename);
-    if (!result.success) {
-      this.showToast('读取文件失败：' + result.error, 'error');
-      return;
-    }
-
-    // 找到对应的 meta 信息
-    const meta = await window.electronAPI.promptFiles.list();
-    const fileMeta = meta.find(m => m.file === filename) || {};
-
-    document.getElementById('promptEditorTitle').textContent = `${fileMeta.icon || '📝'} ${fileMeta.name || filename}`;
-    document.getElementById('promptEditorInfo').innerHTML = `
-      <strong>文件：</strong>${filename} · <strong>用途：</strong>${this.escapeHtml(fileMeta.desc || '')} · <strong>使用场景：</strong>${this.escapeHtml(fileMeta.used_in || '')}
-    `;
-    document.getElementById('promptFileContent').value = result.content;
-    document.getElementById('promptEditorOverlay')?.classList.remove('hidden');
-  },
-
-  hidePromptEditor() {
-    document.getElementById('promptEditorOverlay')?.classList.add('hidden');
-    this._currentPromptFile = null;
-  },
-
-  async savePromptFile() {
-    if (!this._currentPromptFile || !window.electronAPI?.promptFiles?.write) return;
-    const content = document.getElementById('promptFileContent').value;
-
-    const result = await window.electronAPI.promptFiles.write(this._currentPromptFile, content);
-    if (result.success) {
-      this.showToast('Prompt 已保存（已自动备份旧版本）');
-      this.hidePromptEditor();
-      this.loadPromptFiles();
-    } else {
-      this.showToast('保存失败：' + result.error, 'error');
-    }
-  },
-
-  async downloadPromptFile(filename) {
-    if (!window.electronAPI?.promptFiles?.download) return;
-    const result = await window.electronAPI.promptFiles.download(filename);
-    if (result.success) {
-      // 创建下载链接
-      const blob = new Blob([result.content], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      this.showToast(`已下载 ${filename}`);
-    } else {
-      this.showToast('下载失败：' + result.error, 'error');
-    }
-  },
-
-  triggerPromptUpload(filename) {
-    this._currentPromptFile = filename;
-    const input = document.getElementById('promptFileUploadInput');
-    input.value = '';
-    input.click();
-  },
-
-  async handlePromptFileUpload(e) {
-    const file = e.target.files?.[0];
-    if (!file || !this._currentPromptFile) return;
-
-    try {
-      const content = await file.text();
-      const result = await window.electronAPI.promptFiles.upload(this._currentPromptFile, content);
-      if (result.success) {
-        this.showToast(`已上传替换 ${this._currentPromptFile}（已自动备份）`);
-        this.loadPromptFiles();
-      } else {
-        this.showToast('上传失败：' + result.error, 'error');
-      }
-    } catch (error) {
-      this.showToast('读取文件失败：' + error.message, 'error');
-    }
-    this._currentPromptFile = null;
-  },
-
-  async resetPromptFile(filename) {
-    // 弹出版本选择弹窗
-    const overlay = document.getElementById('promptVersionOverlay');
-    const listEl = document.getElementById('promptVersionList');
-    const titleEl = document.getElementById('promptVersionTitle');
-    if (!overlay) return;
-
-    titleEl.textContent = `${filename} - 版本管理`;
-    listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">加载中...</div>';
-    overlay.classList.remove('hidden');
-
-    // 加载备份列表
-    const result = await window.electronAPI.promptFiles.listBackups(filename);
-    if (!result.success) {
-      listEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-tertiary);">无备份记录</div>`;
-      return;
-    }
-
-    let html = '';
-    // 当前版本
-    html += `
-      <div class="prompt-version-item current">
-        <div class="version-info">
-          <span class="version-label">当前版本</span>
-          <span class="version-detail">正在使用</span>
-        </div>
-        <div class="version-actions">
-          <button class="btn small secondary" onclick="App.openPromptEditor('${filename}')">编辑</button>
-        </div>
-      </div>`;
-
-    // 内置版本（初始化选项）
-    html += `
-      <div class="prompt-version-item builtin">
-        <div class="version-info">
-          <span class="version-label">出厂初始版本</span>
-          <span class="version-detail">恢复到应用内置的初始 Prompt</span>
-        </div>
-        <div class="version-actions">
-          <button class="btn small danger" onclick="App.resetPromptToBuiltin('${filename}')">恢复初始</button>
-        </div>
-      </div>`;
-
-    // 备份版本列表
-    if (result.backups && result.backups.length > 0) {
-      html += '<div class="version-divider">历史备份版本</div>';
-      for (const backup of result.backups) {
-        const dateStr = backup.date ? new Date(backup.date).toLocaleString('zh-CN') : '未知时间';
-        const sizeStr = backup.size ? `${(backup.size / 1024).toFixed(1)} KB` : '';
-        html += `
-          <div class="prompt-version-item backup">
-            <div class="version-info">
-              <span class="version-label">${dateStr}</span>
-              <span class="version-detail">${sizeStr}</span>
-            </div>
-            <div class="version-actions">
-              <button class="btn small" onclick="App.restorePromptBackup('${filename}', '${backup.filename}')">恢复此版本</button>
-            </div>
-          </div>`;
-      }
-    }
-
-    listEl.innerHTML = html;
-  },
-
-  async restorePromptBackup(filename, backupFilename) {
-    const confirmed = await this.showConfirmDialog('恢复确认', `确定要恢复到该备份版本吗？当前版本会自动备份。`);
-    if (!confirmed) return;
-    const result = await window.electronAPI.promptFiles.restoreBackup(filename, backupFilename);
-    if (result.success) {
-      this.showToast(`已恢复到备份版本`);
-      this.hidePromptVersionOverlay();
-      this.loadPromptFiles();
-    } else {
-      this.showToast('恢复失败：' + (result.error || ''), 'error');
-    }
-  },
-
-  async resetPromptToBuiltin(filename) {
-    const confirmed = await this.showConfirmDialog('初始化确认', `确定要恢复到出厂初始版本吗？当前版本会自动备份。`);
-    if (!confirmed) return;
-    const result = await window.electronAPI.promptFiles.resetToBuiltin(filename);
-    if (result.success) {
-      this.showToast(`已恢复到出厂初始版本`);
-      this.hidePromptVersionOverlay();
-      this.loadPromptFiles();
-    } else {
-      this.showToast('恢复失败：' + (result.error || ''), 'error');
-    }
-  },
-
-  hidePromptVersionOverlay() {
-    const overlay = document.getElementById('promptVersionOverlay');
-    if (overlay) overlay.classList.add('hidden');
-  },
-
-  // === Prompt 变量预览 ===
-  async loadPromptVariables(filename) {
-    console.log('[PromptVars] loadPromptVariables called for:', filename);
-    if (!window.electronAPI?.promptFiles?.getVariables) {
-      console.error('[PromptVars] electronAPI.promptFiles.getVariables not available');
-      return;
-    }
-    const section = document.getElementById('promptVarsSection');
-    const listEl = document.getElementById('promptVarsList');
-    if (!section || !listEl) {
-      console.error('[PromptVars] DOM elements not found:', { section: !!section, listEl: !!listEl });
-      return;
-    }
-
-    section.classList.remove('hidden');
-    listEl.innerHTML = '<div style="color: var(--text-tertiary); font-size: 12px;">加载变量中...</div>';
-
-    try {
-      const result = await window.electronAPI.promptFiles.getVariables(filename);
-      console.log('[PromptVars] IPC result:', result);
-      if (!result.success) {
-        listEl.innerHTML = `<div style="color: var(--danger-color); font-size: 12px;">加载失败：${this.escapeHtml(result.error)}</div>`;
-        return;
-      }
-
-      const vars = result.variables || [];
-      if (vars.length === 0) {
-        listEl.innerHTML = '<div style="color: var(--text-tertiary); font-size: 12px;">此模板不包含变量</div>';
-        return;
-      }
-
-      const profileVars = vars.filter(v => v.source === 'profile');
-      const autoVars = vars.filter(v => v.source === 'auto');
-
-      let html = '';
-      if (profileVars.length > 0) {
-        html += `<div style="grid-column: 1/-1; font-size:12px; font-weight:600; color: var(--text-primary); margin-top:4px;">
-          👤 来自用户画像 <span style="font-weight:400; color: var(--text-tertiary);">（在「用户画像」标签页修改）</span>
-        </div>`;
-        profileVars.forEach(v => {
-          const displayVal = Array.isArray(v.currentValue) ? v.currentValue.join(', ') || '(空)' :
-            (v.currentValue === null ? '(未设置)' : String(v.currentValue));
-          html += `
-            <div class="prompt-var-item">
-              <span class="prompt-var-name">${this.escapeHtml(v.name)}</span>
-              <span class="prompt-var-label">${this.escapeHtml(v.label)}</span>
-              <span class="var-badge profile">画像</span>
-              <span class="prompt-var-value">${this.escapeHtml(displayVal)}</span>
-            </div>`;
-        });
-      }
-      if (autoVars.length > 0) {
-        html += `<div style="grid-column: 1/-1; font-size:12px; font-weight:600; color: var(--text-primary); margin-top:8px;">
-          ⚙️ 自动填充 <span style="font-weight:400; color: var(--text-tertiary);">（运行时从系统数据生成）</span>
-        </div>`;
-        autoVars.forEach(v => {
-          const displayVal = Array.isArray(v.currentValue) ? v.currentValue.join(', ') || '(空)' :
-            (v.currentValue === null ? '(运行时填充)' : String(v.currentValue));
-          html += `
-            <div class="prompt-var-item">
-              <span class="prompt-var-name">${this.escapeHtml(v.name)}</span>
-              <span class="prompt-var-label">${this.escapeHtml(v.label)}</span>
-              <span class="var-badge auto">自动</span>
-              <span class="prompt-var-value">${this.escapeHtml(displayVal)}</span>
-            </div>`;
-        });
-      }
-      listEl.innerHTML = html;
-    } catch (error) {
-      listEl.innerHTML = `<div style="color: var(--danger-color); font-size: 12px;">加载失败：${this.escapeHtml(error.message)}</div>`;
-    }
-  },
+  // === Prompt 文件管理（已提取到 app-prompt-manager.js）===
 
   // === 优化器历史记录 ===
   async loadOptimizerHistory() {
@@ -14533,632 +14238,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
   },
 
-  /** AI 小助手任务：注册定时执行 */
-  _scheduleAITask(task) {
-    if (!task.dueDate || task.taskType !== 'ai_scheduled') return;
-    
-    // 🔧 修复：先检查任务是否已完成，避免已过期的已完成任务被重新执行
-    const currentTask = Store.getTasks().find(t => t.id === task.id);
-    if (!currentTask || currentTask.status === 'completed') {
-      console.log(`[AI Task] Task "${task.title}" already completed or deleted, skip scheduling`);
-      return;
-    }
-    
-    const dueDate = new Date(currentTask.dueDate);
-    const now = new Date();
-    const delay = dueDate.getTime() - now.getTime();
-    
-    if (delay <= 0) {
-      // 🔧 修复：已过期的任务不再自动执行，仅标记逾期并通知用户
-      // 避免深夜创建的任务在次日凌晨重启时被误执行
-      const overdueMs = -delay;
-      const overdueMinutes = Math.round(overdueMs / 60000);
-      console.log(`[AI Task] Task "${currentTask.title}" is ${overdueMinutes}min overdue, marking as overdue instead of auto-executing`);
-      
-      // 如果逾期不超过5分钟，仍可执行（刚到期的场景）
-      if (overdueMinutes <= 5) {
-        this._executeAITask(currentTask);
-      } else {
-        // 逾期太久，不自动执行，提醒用户
-        this.showToast(`AI 任务「${currentTask.title}」已过期 ${overdueMinutes} 分钟，请手动执行`, 'warning');
-      }
-      return;
-    }
-    
-    // 存储定时器引用，方便取消
-    if (!this._aiTaskTimers) this._aiTaskTimers = {};
-    // 清除旧的定时器（避免重复调度）
-    if (this._aiTaskTimers[task.id]) {
-      clearTimeout(this._aiTaskTimers[task.id]);
-    }
-    
-    // 如果超过 24 小时，用 setTimeout 不合适，先设 1 小时后再检查
-    const maxDelay = 24 * 60 * 60 * 1000; // 24h
-    const actualDelay = Math.min(delay, maxDelay);
-    
-    this._aiTaskTimers[task.id] = setTimeout(() => {
-      const latestTask = Store.getTasks().find(t => t.id === task.id);
-      if (!latestTask || latestTask.status === 'completed') return;
-      
-      if (latestTask.taskType === 'ai_scheduled') {
-        const remaining = new Date(latestTask.dueDate).getTime() - Date.now();
-        if (remaining <= 60000) {
-          // 到时间了，执行
-          this._executeAITask(latestTask);
-        } else {
-          // 还没到，重新调度
-          this._scheduleAITask(latestTask);
-        }
-      }
-    }, actualDelay);
-    
-    console.log(`[AI Task] Scheduled task "${currentTask.title}" in ${Math.round(actualDelay / 60000)} minutes`);
-  },
-
-  /**
-   * 本地上下文注入：检索本地数据并组装 SystemRole
-   * @param {object} classification - LLM 意图分类结果
-   * @returns {Promise<{systemRole: string, sources: string[]}>}
-   */
-  async _retrieveLocalContext(classification) {
-    const sources = [];
-    const parts = [];
-
-    // 辅助函数：时间范围过滤（v2.7 增强版，支持 today/yesterday/tomorrow/this_week/last_week/last_month）
-    const filterByTimeRange = (items, timeRange, dateField = 'createdAt') => {
-      if (timeRange === 'all') return items;
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const todayEnd = new Date(todayStart.getTime() + 86400000);
-      
-      let rangeStart, rangeEnd;
-      switch (timeRange) {
-        case 'today':
-          rangeStart = todayStart; rangeEnd = todayEnd; break;
-        case 'yesterday':
-          rangeStart = new Date(todayStart.getTime() - 86400000); rangeEnd = todayStart; break;
-        case 'tomorrow':
-          rangeStart = todayEnd; rangeEnd = new Date(todayEnd.getTime() + 86400000); break;
-        case 'this_week': {
-          // 本周一到今天
-          const day = now.getDay() || 7; // 周日=7
-          rangeStart = new Date(todayStart.getTime() - (day - 1) * 86400000);
-          rangeEnd = todayEnd; break;
-        }
-        case 'last_week': {
-          const day = now.getDay() || 7;
-          rangeEnd = new Date(todayStart.getTime() - (day - 1) * 86400000);
-          rangeStart = new Date(rangeEnd.getTime() - 7 * 86400000); break;
-        }
-        case 'last_month': {
-          rangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          rangeEnd = new Date(now.getFullYear(), now.getMonth(), 1); break;
-        }
-        default: {
-          // 兼容旧格式 1d/7d/30d/90d
-          const msMap = { '1d': 86400000, '7d': 604800000, '30d': 2592000000, '90d': 7776000000 };
-          const ms = msMap[timeRange] || msMap['7d'];
-          rangeStart = new Date(now.getTime() - ms);
-          rangeEnd = now; break;
-        }
-      }
-      
-      return items.filter(item => {
-        // 任务用 dueDate，其他用 createdAt
-        const dateFieldToUse = dateField || 'createdAt';
-        const d = new Date(item[dateFieldToUse]);
-        if (isNaN(d)) return false;
-        // 任务类型的 tomorrow/this_week 按 dueDate 匹配
-        return d >= rangeStart && d < rangeEnd;
-      });
-    };
-
-    // 辅助函数：按 dueDate 过滤任务（特殊处理 tomorrow/this_week）
-    const filterTasksByTimeRange = (tasks, timeRange) => {
-      if (timeRange === 'all') return tasks;
-      if (timeRange === 'pending') return tasks.filter(t => t.status !== 'completed');
-      if (timeRange === 'overdue') return tasks.filter(t => t.status !== 'completed' && t.dueDate && new Date(t.dueDate) < new Date());
-      if (timeRange === 'completed') return tasks.filter(t => t.status === 'completed');
-      return filterByTimeRange(tasks, timeRange, 'dueDate');
-    };
-
-    // 并行检索所有需要的数据源
-    const promises = {};
-
-    if (classification?.need_notebook) {
-      promises.notebook = (async () => {
-        try {
-          const query = classification.notebook_query || '';
-          const result = await window.electronAPI.notebookSearch(query);
-          let notes = result?.notes || [];
-          if (classification.notebook_time_range) {
-            notes = filterByTimeRange(notes, classification.notebook_time_range, 'createdAt');
-          }
-          return notes.slice(0, 5).map(n => ({
-            title: n.title || '',
-            content: (n.content || '').substring(0, 500),
-            createdAt: n.createdAt
-          }));
-        } catch (e) { console.warn('[Context] notebook search failed:', e); return []; }
-      })();
-    }
-
-    if (classification?.need_memory) {
-      promises.memory = (async () => {
-        try {
-          const query = classification.memory_query || '';
-          const result = await window.electronAPI.knowledgeSearchLocal({ query, limit: 5 });
-          let memories = result?.results || result?.items || [];
-          if (classification.memory_time_range) {
-            memories = filterByTimeRange(memories, classification.memory_time_range, 'createdAt');
-          }
-          return memories.slice(0, 5).map(m => ({
-            content: (m.content || m.text || '').substring(0, 300),
-            category: m.category || '',
-            createdAt: m.createdAt
-          }));
-        } catch (e) { console.warn('[Context] memory search failed:', e); return []; }
-      })();
-    }
-
-    if (classification?.need_profile) {
-      promises.profile = (async () => {
-        try {
-          const profile = await window.electronAPI.profile.get();
-          return profile || {};
-        } catch (e) { console.warn('[Context] profile get failed:', e); return {}; }
-      })();
-    }
-
-    if (classification?.need_tasks) {
-      promises.tasks = (async () => {
-        try {
-          const tasks = Store.getTasks();
-          const filter = classification.task_filter || 'pending';
-          let filtered;
-          // v2.7: 支持 today/tomorrow/this_week 特殊 filter
-          if (['today', 'yesterday', 'tomorrow', 'this_week', 'last_week'].includes(filter)) {
-            filtered = filterTasksByTimeRange(tasks, filter);
-          } else if (filter === 'pending') {
-            filtered = tasks.filter(t => t.status !== 'completed');
-          } else if (filter === 'overdue') {
-            filtered = tasks.filter(t => t.status !== 'completed' && t.dueDate && new Date(t.dueDate) < new Date());
-          } else if (filter === 'completed') {
-            filtered = tasks.filter(t => t.status === 'completed');
-          } else {
-            filtered = tasks;
-          }
-          // 如果 task_time_range 与 task_filter 不同，额外按时间范围过滤
-          if (classification.task_time_range && classification.task_time_range !== filter) {
-            filtered = filterTasksByTimeRange(filtered, classification.task_time_range);
-          }
-          return filtered.slice(0, 10).map(t => ({
-            title: t.title || '',
-            description: (t.description || '').substring(0, 200),
-            dueDate: t.dueDate || '',
-            priority: t.priority || 'medium',
-            status: t.status || 'pending'
-          }));
-        } catch (e) { console.warn('[Context] tasks get failed:', e); return []; }
-      })();
-    }
-
-    if (classification?.need_knowledge) {
-      promises.knowledge = (async () => {
-        try {
-          const query = classification.knowledge_query || '';
-          const limit = classification.knowledge_limit || 3;
-          const result = await window.electronAPI.knowledgeGetArticles({});
-          let articles = result?.articles || [];
-          // 本地关键词过滤
-          if (query) {
-            const q = query.toLowerCase();
-            articles = articles.filter(a =>
-              (a.title || '').toLowerCase().includes(q) ||
-              (a.content || '').toLowerCase().includes(q) ||
-              (a.summary || '').toLowerCase().includes(q)
-            );
-          }
-          // v2.7: 按时间范围过滤
-          if (classification.knowledge_time_range) {
-            articles = filterByTimeRange(articles, classification.knowledge_time_range, 'createdAt');
-          }
-          return articles.slice(0, limit).map(a => ({
-            title: a.title || '',
-            content: (a.content || a.summary || '').substring(0, 300),
-            domain: a.domain || '',
-            createdAt: a.createdAt
-          }));
-        } catch (e) { console.warn('[Context] knowledge get failed:', e); return []; }
-      })();
-    }
-
-    if (classification?.need_relationship) {
-      promises.relationship = (async () => {
-        try {
-          const result = await window.electronAPI.relationshipGetAll();
-          const allPersons = result?.persons || [];
-          const allRelations = result?.relations || [];
-          
-          // v2.7: 如果指定了具体人名，优先取这些人的详细信息
-          const personNames = classification.relationship_person_names || [];
-          let persons = allPersons;
-          if (personNames.length > 0) {
-            const nameSet = new Set(personNames.map(n => n.toLowerCase()));
-            persons = allPersons.filter(p => nameSet.has(p.name.toLowerCase()));
-            // 也加入相关人物
-            const relatedNames = new Set(personNames);
-            allRelations.forEach(r => {
-              if (nameSet.has(r.source.toLowerCase())) relatedNames.add(r.target);
-              if (nameSet.has(r.target.toLowerCase())) relatedNames.add(r.source);
-            });
-            persons = allPersons.filter(p => relatedNames.has(p.name));
-          }
-          
-          return {
-            persons: persons.slice(0, 8).map(p => ({
-              name: p.name || '',
-              role: p.role || '',
-              company: p.company || '',
-              projects: p.projects || [],
-              relation: p.profileRelation || p.relation_to_user || '',
-              interactionCount: p.interactionCount || 0,
-              recentMemories: (p.recentMemories || []).slice(0, 2).map(m => m.content?.substring(0, 80))
-            })),
-            relations: allRelations.filter(r => 
-              persons.some(p => p.name === r.source) || persons.some(p => p.name === r.target)
-            ).slice(0, 10).map(r => ({
-              source: r.source,
-              target: r.target,
-              type: r.type || '',
-              label: r.label || '',
-              strength: r.strength
-            }))
-          };
-        } catch (e) { console.warn('[Context] relationship get failed:', e); return { persons: [], relations: [] }; }
-      })();
-    }
-
-    // 等待所有并行检索完成
-    const results = {};
-    await Promise.all(
-      Object.entries(promises).map(async ([key, promise]) => {
-        try { results[key] = await promise; } catch (e) { results[key] = null; }
-      })
-    );
-
-    // 组装 SystemRole
-    if (results.notebook?.length) {
-      sources.push(`记事本×${results.notebook.length}`);
-      parts.push('【记事本】\n' + results.notebook.map((n, i) =>
-        `${i + 1}. ${n.title}\n${n.content}`
-      ).join('\n'));
-    }
-
-    if (results.memory?.length) {
-      sources.push(`记忆×${results.memory.length}`);
-      parts.push('【记忆】\n' + results.memory.map((m, i) =>
-        `${i + 1}. ${m.category ? `[${m.category}] ` : ''}${m.content}`
-      ).join('\n'));
-    }
-
-    if (results.profile && Object.keys(results.profile).length > 0) {
-      sources.push('画像');
-      const p = results.profile;
-      const profileParts = [];
-      if (p.name) profileParts.push(`姓名: ${p.name}`);
-      if (p.role) profileParts.push(`角色: ${p.role}`);
-      if (p.company) profileParts.push(`公司: ${p.company}`);
-      if (p.projects?.length) profileParts.push(`项目: ${p.projects.join(', ')}`);
-      if (p.skills?.length) profileParts.push(`技能: ${p.skills.join(', ')}`);
-      if (p.preferences) profileParts.push(`偏好: ${typeof p.preferences === 'string' ? p.preferences : JSON.stringify(p.preferences)}`);
-      if (profileParts.length) parts.push('【用户画像】\n' + profileParts.join('\n'));
-    }
-
-    if (results.tasks?.length) {
-      sources.push(`任务×${results.tasks.length}`);
-      parts.push('【待办任务】\n' + results.tasks.map((t, i) => {
-        let line = `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 16).replace('T', ' ')})` : ''} [${t.priority}/${t.status}]`;
-        if (t.description) line += `\n   备注: ${t.description}`;
-        return line;
-      }).join('\n'));
-    }
-
-    if (results.knowledge?.length) {
-      sources.push(`知识×${results.knowledge.length}`);
-      parts.push('【知识文章】\n' + results.knowledge.map((k, i) =>
-        `${i + 1}. ${k.title}${k.domain ? ` [${k.domain}]` : ''}\n${k.content}`
-      ).join('\n'));
-    }
-
-    if (results.relationship?.persons?.length) {
-      sources.push(`人脉×${results.relationship.persons.length}`);
-      const relParts = ['【人脉图谱】'];
-      relParts.push('### 人物信息');
-      results.relationship.persons.forEach((p, i) => {
-        let line = `${i + 1}. **${p.name}**`;
-        if (p.role) line += ` · ${p.role}`;
-        if (p.company) line += ` @ ${p.company}`;
-        if (p.relation) line += ` (与用户: ${p.relation})`;
-        if (p.projects?.length) line += ` [项目: ${p.projects.join('/')}]`;
-        if (p.interactionCount) line += ` (${p.interactionCount}次交互)`;
-        relParts.push(line);
-        if (p.recentMemories?.length) {
-          p.recentMemories.forEach(m => relParts.push(`   - ${m}`));
-        }
-      });
-      if (results.relationship.relations?.length) {
-        relParts.push('### 人物关系');
-        results.relationship.relations.forEach(r => {
-          const strength = r.strength ? ` (强度${r.strength.toFixed(1)})` : '';
-          relParts.push(`- ${r.source} ↔ ${r.target}: ${r.label || r.type}${strength}`);
-        });
-      }
-      parts.push(relParts.join('\n'));
-    }
-
-    // Token 预算控制：~2000 token ≈ 6000 中文字符
-    let systemRole = parts.join('\n\n');
-    const MAX_CHARS = 6000;
-    if (systemRole.length > MAX_CHARS) {
-      systemRole = systemRole.substring(0, MAX_CHARS) + '\n...(上下文过长，已截断)';
-    }
-
-    if (systemRole) {
-      systemRole = `[用户本地上下文]\n${systemRole}\n\n请基于以上用户上下文回答问题。如果上下文中没有相关信息，请如实说明。`;
-    }
-
-    return { systemRole, sources };
-  },
-
-  /**
-   * 本地上下文注入：兜底策略（分类失败时使用）
-   */
-  async _retrieveLocalContextFallback() {
-    const sources = [];
-    const parts = [];
-
-    // 始终带 profile（轻量，始终有价值）
-    try {
-      const profile = await window.electronAPI.profile.get();
-      if (profile && Object.keys(profile).length > 0) {
-        sources.push('画像');
-        const profileParts = [];
-        if (profile.name) profileParts.push(`姓名: ${profile.name}`);
-        if (profile.role) profileParts.push(`角色: ${profile.role}`);
-        if (profile.company) profileParts.push(`公司: ${profile.company}`);
-        if (profile.projects?.length) profileParts.push(`项目: ${profile.projects.join(', ')}`);
-        if (profileParts.length) parts.push('【用户画像】\n' + profileParts.join('\n'));
-      }
-    } catch (e) { /* ignore */ }
-
-    // 默认带最近 3 条 pending 任务
-    try {
-      const tasks = Store.getTasks().filter(t => t.status !== 'completed').slice(0, 3);
-      if (tasks.length) {
-        sources.push(`任务×${tasks.length}`);
-        parts.push('【待办任务】\n' + tasks.map((t, i) =>
-          `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 10)})` : ''}`
-        ).join('\n'));
-      }
-    } catch (e) { /* ignore */ }
-
-    let systemRole = parts.join('\n\n');
-    if (systemRole) {
-      systemRole = `[用户本地上下文]\n${systemRole}\n\n请基于以上用户上下文回答问题。如果上下文中没有相关信息，请如实说明。`;
-    }
-    return { systemRole, sources };
-  },
-
-  /** AI 小助手任务：执行 - 将任务内容作为 prompt 提交给 AI 助手 */
-  async _executeAITask(task) {
-    console.log('[AI Task] Executing scheduled task:', task.title);
-    
-    // 🔧 修复：使用与正常聊天相同的 _retrieveLocalContext 获取完整本地数据
-    // 构建强制分类，确保获取今日待办、今日笔记、用户画像等完整上下文
-    const forcedClassification = {
-      need_profile: true,
-      need_tasks: true,
-      task_filter: 'pending',
-      task_time_range: '7d',
-      need_notebook: true,
-      notebook_query: '',
-      notebook_time_range: 'today',
-      need_memory: false,
-      need_knowledge: false,
-      need_relationship: false,
-      intent_summary: `定时任务：${task.title}`
-    };
-    
-    let localContextSystemRole = '';
-    let localContextSources = [];
-    try {
-      const contextData = await this._retrieveLocalContext(forcedClassification);
-      localContextSystemRole = contextData.systemRole;
-      localContextSources = contextData.sources;
-      console.log('[AI Task] Local context retrieved, sources:', localContextSources.join(', '));
-    } catch (e) {
-      console.warn('[AI Task] _retrieveLocalContext failed, trying fallback:', e.message);
-      try {
-        const fallbackData = await this._retrieveLocalContextFallback();
-        localContextSystemRole = fallbackData.systemRole;
-        localContextSources = fallbackData.sources;
-      } catch (e2) {
-        console.error('[AI Task] Fallback context also failed:', e2.message);
-      }
-    }
-    
-    // 只将任务本身的 prompt 作为消息内容（不含本地上下文，上下文通过 systemRole 注入）
-    const basePrompt = task.description
-      ? `${task.title}\n\n${task.description}`
-      : task.title;
-    
-    // 切换到 AI 助手视图（确保 DOM 可用）
-    this.showAIAssistantView();
-    
-    // 创建新对话会话
-    this.createNewChatSession();
-    
-    // 标记为定时任务会话
-    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
-    if (session) {
-      session.taskType = 'scheduled';
-      session.taskId = task.id;
-      session.title = `⏰ ${task.title}`;
-      if (task.expertId) {
-        session.expertId = task.expertId;
-        session.expertName = task.expertName || '';
-      }
-      this._saveChatSessions();
-      this._renderChatSessionList();
-    }
-    
-    // 设置专家（需在 createNewChatSession 之后，确保 ADP ConversationId 已重置）
-    const expertId = task.expertId;
-    if (expertId && window.ExpertSystem) {
-      const expert = window.ExpertSystem.getExpertById?.(expertId);
-      if (expert) {
-        // 🔧 修复：不能使用 handleCardClick，因为它有"点击已激活卡片→取消选中"的逻辑
-        // 直接设置专家状态，模拟选中但跳过取消逻辑
-        window.ExpertSystem._activeExpertId = expertId;
-        window.ExpertSystem._activeGroupId = null;
-        window.ExpertSystem._groupChatActive = false;
-        // 更新 UI
-        document.querySelectorAll('.feature-card').forEach(c => c.classList.remove('active'));
-        const cardEl = document.querySelector(`.feature-card[data-type="expert"][data-id="${expertId}"]`);
-        if (cardEl) cardEl.classList.add('active');
-        // 更新快捷访问
-        if (typeof window.ExpertSystem._renderQuickAccess === 'function') {
-          window.ExpertSystem._renderQuickAccess(expert.quickAccesses || []);
-        }
-        // 更新 header
-        if (typeof window.ExpertSystem._updateChatHeader === 'function') {
-          window.ExpertSystem._updateChatHeader(expert.name || 'AI 助手', false);
-        }
-        // 更新当前对话会话的专家关联
-        if (this._activeSessionId) {
-          const curSession = this._chatSessions?.find(s => s.id === this._activeSessionId);
-          if (curSession && !curSession.isGroupChat) {
-            curSession.expertId = expertId;
-            curSession.expertName = expert.name || '';
-            curSession.taskType = 'scheduled';
-            this._saveChatSessions?.();
-          }
-        }
-      }
-    } else {
-      // 无指定专家时，清除专家设置，使用默认助手
-      if (window.ExpertSystem) {
-        window.ExpertSystem._activeExpertId = null;
-        window.ExpertSystem._activeGroupId = null;
-        // 清除卡片选中状态
-        document.querySelectorAll('.feature-card.active').forEach(c => c.classList.remove('active'));
-        // 恢复默认快捷访问
-        if (typeof window.ExpertSystem._renderQuickAccess === 'function') {
-          window.ExpertSystem._renderQuickAccess(window.ExpertSystem._getDefaultQuickAccesses());
-        }
-        if (typeof window.ExpertSystem._updateChatHeader === 'function') {
-          window.ExpertSystem._updateChatHeader('通用 AI 助手', false);
-        }
-      }
-    }
-    
-    // 🔧 关键修复：将 prompt 写入输入框，再调用 sendAIMessage（无参数）
-    // 原因：sendAIMessage 从 #aiChatInput 读取消息内容，传参会当作 forceMode
-    // 本地上下文通过 options.systemRole 注入，不拼接到消息文本中
-    const input = document.getElementById('aiChatInput');
-    if (input) {
-      input.value = basePrompt;
-    } else {
-      console.error('[AI Task] Chat input not found, cannot send message');
-      return;
-    }
-    
-    try {
-      // 使用 Promise.race 添加超时保护：如果 5 分钟内 AI 未完成，仍然更新任务状态
-      await Promise.race([
-        this.sendAIMessage(undefined, { systemRole: localContextSystemRole, sources: localContextSources }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('AI 响应超时（5分钟）')), 300000))
-      ]);
-    } catch (e) {
-      console.error('[AI Task] sendAIMessage failed or timed out:', e);
-      // 确保停止任何正在进行的流式输出
-      if (this._adpStreaming) this.stopADPGeneration();
-    }
-    
-    // 更新任务状态（无论成功或超时都更新）
-    Store.updateTask(task.id, {
-      status: 'completed',
-      completedAt: new Date().toISOString()
-    });
-    this.renderTaskList();
-    Calendar.render();
-  },
-
-  /** 应用启动时恢复所有 AI 小助手定时任务 */
-  _restoreAITaskSchedulers() {
-    const tasks = Store.getTasks().filter(t => 
-      t.status !== 'completed' && 
-      t.taskType === 'ai_scheduled' && 
-      t.dueDate
-    );
-    tasks.forEach(task => this._scheduleAITask(task));
-    if (tasks.length > 0) {
-      console.log(`[AI Task] Restored ${tasks.length} scheduled AI tasks`);
-    }
-  },
-
-  /**
-   * 🔧 新增：为 AI 小助手任务构建本地知识上下文
-   * 将待办任务、记事本等关键信息注入 prompt，让 AI 了解用户当前状态
-   */
-  async _buildAITaskLocalContext(task) {
-    const parts = [];
-    
-    // 用户画像
-    try {
-      const profile = await window.electronAPI?.profile?.get?.();
-      if (profile && Object.keys(profile).length > 0) {
-        const profileParts = [];
-        if (profile.name) profileParts.push(`姓名: ${profile.name}`);
-        if (profile.role) profileParts.push(`角色: ${profile.role}`);
-        if (profile.company) profileParts.push(`公司: ${profile.company}`);
-        if (profile.projects?.length) profileParts.push(`项目: ${profile.projects.join(', ')}`);
-        if (profileParts.length) parts.push('【用户画像】\n' + profileParts.join('\n'));
-      }
-    } catch (e) { /* ignore */ }
-    
-    // 今日待办任务
-    try {
-      const allTasks = Store.getTasks();
-      const today = new Date().toISOString().split('T')[0];
-      const todayTasks = allTasks.filter(t => {
-        if (t.status === 'completed' || t.id === task.id) return false; // 排除自身和已完成
-        if (!t.dueDate) return false;
-        return t.dueDate.startsWith(today);
-      });
-      const pendingTasks = allTasks.filter(t => t.status !== 'completed' && t.id !== task.id).slice(0, 5);
-      const taskList = todayTasks.length > 0 ? todayTasks : pendingTasks;
-      if (taskList.length > 0) {
-        parts.push('【当前待办任务】\n' + taskList.map((t, i) =>
-          `${i + 1}. ${t.title}${t.dueDate ? ` (截止: ${t.dueDate.substring(0, 16).replace('T', ' ')})` : ''} [${t.priority || '中'}优先级]`
-        ).join('\n'));
-      }
-    } catch (e) { /* ignore */ }
-    
-    // 最近记事本
-    try {
-      const notes = Store.getNotes().slice(0, 3);
-      if (notes.length > 0) {
-        parts.push('【最近笔记】\n' + notes.map((n, i) =>
-          `${i + 1}. ${n.title || '无标题'} (${n.createdAt?.substring(0, 10) || ''})`
-        ).join('\n'));
-      }
-    } catch (e) { /* ignore */ }
-    
-    if (parts.length === 0) return '';
-    return `[当前用户本地上下文]\n${parts.join('\n\n')}\n\n请基于以上上下文信息来回答用户的问题。`;
-  },
+  // === AI 小助手任务模块（已提取到 app-ai-tasks.js）===
 
   _renderThemeGrid() {
     const grid = document.getElementById('themeGrid');
