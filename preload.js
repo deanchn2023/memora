@@ -577,4 +577,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('asr:error');
     ipcRenderer.removeAllListeners('asr:started');
   },
+
+  // ===== v3.1 多任务并发 =====
+  // 任务生命周期管理
+  taskStart: (data) => ipcRenderer.invoke('task:start', data),
+  taskStop: (taskId) => ipcRenderer.invoke('task:stop', { taskId }),
+  taskList: (sessionId) => ipcRenderer.invoke('task:list', { sessionId }),
+  // 任务流式事件（带 taskId 路由）
+  onTaskStream: (callback) => {
+    ipcRenderer.on('task:stream', (event, data) => callback(data));
+  },
+  removeTaskStreamListeners: () => {
+    ipcRenderer.removeAllListeners('task:stream');
+  },
 });

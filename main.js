@@ -4161,6 +4161,11 @@ ipcMain.handle('cc:stop', async () => {
     ccAbortController.abort();
     ccAbortController = null;
   }
+  // v3.1: 同时清理任务控制器
+  for (const [id, ctrl] of taskControllers) {
+    try { ctrl.abort(); } catch (_) {}
+  }
+  taskControllers.clear();
   return { success: true };
 });
 
@@ -4281,7 +4286,7 @@ ipcMain.handle('cc:openrouter-stop-proxy', async () => {
   return { success: true };
 });
 
-ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill, connectorIds, openRouterModel, providerId }) => {
+ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill, connectorIds, openRouterModel, providerId, taskId }) => {
   const sdk = await loadClaudeAgentSDK();
   if (!sdk) {
     return { success: false, error: 'Claude Agent SDK 未加载，请检查依赖安装' };
@@ -4477,8 +4482,10 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   // 每次对话前刷新 CLAUDE.md（将 memora 最新记忆同步到 CC 工作目录）
   syncCLAUDEMdToCC(ccWorkdir);
 
-  ccAbortController = new AbortController();
-  options.abortController = ccAbortController;
+  // v3.1: 支持 per-task 控制器
+  const _ccController = new AbortController();
+  if (taskId) { taskControllers.set(taskId, _ccController); } else { ccAbortController = _ccController; }
+  options.abortController = _ccController;
   ccHasText = false; // 重置文本标志
 
   let newSessionId = sessionId || null;
@@ -4487,18 +4494,25 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   const CC_TIMEOUT_MS = 10 * 60 * 1000;
   let ccTimeoutHandle = setTimeout(() => {
     console.warn('[CC] Query timeout, aborting...');
-    ccAbortController?.abort();
+    _ccController?.abort();
   }, CC_TIMEOUT_MS);
 
   // 异步消费流，逐消息推送到渲染进程
   (async () => {
-    // 通用发送辅助（定义在循环外部，确保循环结束后仍可调用）
-    const send = (data) => { if (mainWindow) mainWindow.webContents.send('cc:stream', data); };
+    // v3.1: 多任务事件路由
+    const send = (data) => {
+      if (!mainWindow) return;
+      if (taskId) {
+        mainWindow.webContents.send('task:stream', { taskId, event: data.event, ...data });
+      } else {
+        mainWindow.webContents.send('cc:stream', data);
+      }
+    };
     try {
       const messageStream = query({ prompt, options });
 
       for await (const msg of messageStream) {
-        if (ccAbortController?.signal.aborted) break;
+        if (_ccController?.signal.aborted) break;
 
         // 全量日志（便于调试）
         console.log('[CC] msg:', msg.type, msg.subtype || '', msg.event?.type || '');
@@ -4707,17 +4721,13 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
     } catch (e) {
       if (e.name !== 'AbortError') {
         console.error('[CC] Stream error:', e);
-        if (mainWindow) {
-          mainWindow.webContents.send('cc:stream', { event: 'error', error: e.message });
-        }
+        send({ event: 'error', error: e.message });
       } else {
-        if (mainWindow) {
-          mainWindow.webContents.send('cc:stream', { event: 'done', sessionId: newSessionId, aborted: true });
-        }
+        send({ event: 'done', sessionId: newSessionId, aborted: true });
       }
     } finally {
       clearTimeout(ccTimeoutHandle);
-      ccAbortController = null;
+      if (taskId) { taskControllers.delete(taskId); } else { ccAbortController = null; }
     }
   })();
 
@@ -7204,6 +7214,9 @@ ipcMain.handle('config:sync', async () => {
 let activeChatADPController = null;
 let currentADPConversationId = null; // 持久化会话ID，同一对话内复用
 
+// v3.1 多任务并发：per-task AbortController 映射
+const taskControllers = new Map(); // taskId → AbortController
+
 // 修复 ADP URL：config-server 可能只返回域名无路径，自动补全 ADP V2 端点
 function normalizeADPUrl(url) {
   if (!url) return 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
@@ -7286,6 +7299,20 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   // 记录当前使用的 appKey 用于审计（脱敏）
   const _adpChatAppKey = appKey;
   const _adpChatModel = `adp_v2${configSource !== 'default' ? `(${configSource})` : ''}`;
+  
+  // v3.1 多任务并发支持：提取 taskId，创建事件路由辅助函数
+  const _taskId = data?.taskId || null;
+  const _sendEvent = (payload) => {
+    if (_taskId) {
+      mainWindow?.webContents?.send('task:stream', { taskId: _taskId, ...payload });
+    } else {
+      mainWindow?.webContents?.send('adp:sse-event', payload);
+    }
+  };
+  const _clearCtrl = () => {
+    if (_taskId) { taskControllers.delete(_taskId); }
+    else { activeChatADPController = null; }
+  };
   
   // 复用同一会话的 ConversationId，保持上下文连续性
   // 🔧 关键修复：当同一对话中上次文件上传失败（ADP 误解为图片/没收到文档），
@@ -7626,7 +7653,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
     const httpUrl = normalizeADPUrl(url).replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
 
     const controller = new AbortController();
-    activeChatADPController = controller;
+    if (_taskId) { taskControllers.set(_taskId, controller); } else { activeChatADPController = controller; }
 
     const response = await fetch(httpUrl, {
       method: 'POST',
@@ -7636,7 +7663,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
     });
 
     if (!response.ok) {
-      activeChatADPController = null;
+      _clearCtrl();
       // 审计日志：HTTP 错误
       if (auditLogger) {
         auditLogger.record({
@@ -7702,8 +7729,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
                       latencyMs: Date.now() - _adpChatStartTime,
                     });
                   }
-                  mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource });
-                  activeChatADPController = null;
+                  _sendEvent({ event: 'done', data: null, configSource });
+                  _clearCtrl();
                   return;
                 }
                 try {
@@ -7724,7 +7751,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
                     console.error('[ADP Chat] ❌ First error event:', JSON.stringify(parsed).substring(0, 300));
                   }
                   // 推送完整的 {event, data} 给前端，让前端处理渲染
-                  mainWindow.webContents.send('adp:sse-event', {
+                  _sendEvent({
                     event: currentEvent || parsed.Type || '',
                     data: parsed,
                     configSource
@@ -7743,7 +7770,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
         if (currentData && currentData !== '[DONE]') {
           try {
             const parsed = JSON.parse(currentData);
-            mainWindow.webContents.send('adp:sse-event', {
+            _sendEvent({
               event: currentEvent || parsed.Type || '',
               data: parsed,
               configSource
@@ -7763,7 +7790,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
             latencyMs: Date.now() - _adpChatStartTime,
           });
         }
-        mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource });
+        _sendEvent({ event: 'done', data: null, configSource });
       } catch (e) {
         if (e.name === 'AbortError') {
           // 审计日志：用户中止
@@ -7779,17 +7806,17 @@ ipcMain.handle('send-adp-message', async (event, data) => {
               latencyMs: Date.now() - _adpChatStartTime,
             });
           }
-          mainWindow.webContents.send('adp:sse-event', { event: 'done', data: null, configSource, aborted: true });
+          _sendEvent({ event: 'done', data: null, configSource, aborted: true });
         } else {
-          mainWindow.webContents.send('adp:sse-event', { event: 'error', data: { Error: { Message: e.message } }, configSource });
+          _sendEvent({ event: 'error', data: { Error: { Message: e.message } }, configSource });
         }
       }
-      activeChatADPController = null;
+      _clearCtrl();
     })();
 
     return { success: true, streaming: true, configSource, conversationId: convId };
   } catch (error) {
-    activeChatADPController = null;
+    _clearCtrl();
     if (error.name === 'AbortError') {
       return { success: false, error: '请求超时', configSource };
     }
@@ -7805,6 +7832,29 @@ ipcMain.handle('adp:stop-message', async () => {
     return { success: true };
   }
   return { success: false, error: '没有进行中的请求' };
+});
+
+// v3.1 多任务并发：停止指定任务
+ipcMain.handle('task:stop', async (event, { taskId }) => {
+  if (!taskId) return { success: false, error: '缺少 taskId' };
+  const controller = taskControllers.get(taskId);
+  if (controller) {
+    controller.abort();
+    taskControllers.delete(taskId);
+    return { success: true };
+  }
+  return { success: false, error: '任务不存在或已完成' };
+});
+
+// v3.1 多任务并发：列出活跃任务
+ipcMain.handle('task:list', async (event, { sessionId }) => {
+  const tasks = [];
+  for (const [taskId, controller] of taskControllers) {
+    if (!controller.signal.aborted) {
+      tasks.push({ taskId, aborted: false });
+    }
+  }
+  return { success: true, tasks };
 });
 
 // ===== 专家系统 IPC 通道 =====
@@ -11864,6 +11914,11 @@ app.on('before-quit', () => {
     try { ccAbortController.abort(); } catch (_) {}
     ccAbortController = null;
   }
+  // v3.1: 清理所有多任务控制器
+  for (const [id, ctrl] of taskControllers) {
+    try { ctrl.abort(); } catch (_) {}
+  }
+  taskControllers.clear();
   // 清理 OpenRouter 代理
   if (anthropicProxy) {
     anthropicProxy.stop();

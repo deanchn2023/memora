@@ -37,6 +37,11 @@ const App = {
   _activeSessionId: null,   // 当前活跃的会话ID
   _chatMsgData: new WeakMap(), // 聊天消息数据缓存（事件委托用，key=messageContent el）
 
+  // v3.1 多任务并发
+  _parallelMode: false,             // 并行模式开关
+  _activeParallelTasks: new Map(),   // taskId → { mode, cardEl, contentEl, statusEl, timerEl, completed }
+  _taskStreamRegistered: false,      // task:stream 监听器是否已注册
+
   init() {
     console.log('[App] init() starting...');
     this.updateInitTest('[App] Initializing...');
@@ -121,6 +126,9 @@ const App = {
     } catch (e) {
       console.error('[App] setupClipboardListener() failed:', e);
     }
+
+    // v3.1: 注册多任务流式事件监听
+    this._registerTaskStreamListener();
 
     try {
       Audit.init();
@@ -914,6 +922,9 @@ const App = {
     }
     // AI 聊天语音输入按钮
     document.getElementById('chatVoiceBtn')?.addEventListener('click', () => this._toggleChatVoiceInput());
+
+    // v3.1 并行模式切换
+    document.getElementById('parallelToggleBtn')?.addEventListener('click', () => this._toggleParallelMode());
 
     document.getElementById('sendAIMessageBtn')?.addEventListener('click', () => {
       // 用户首次交互时初始化/解锁 AudioContext（规避 autoplay policy）
@@ -3131,6 +3142,11 @@ const App = {
   async sendAIMessage(forceMode, options = {}) {
     const input = document.getElementById('aiChatInput');
     const message = input.value.trim();
+
+    // v3.1: 并行模式 — 同时调用多个 AI
+    if (this._parallelMode && !forceMode) {
+      return this._sendParallelMessage(message, options);
+    }
     
     // 需要有消息或附件
     if (!message && this._chatAttachments.length === 0) return;
@@ -8386,7 +8402,7 @@ const App = {
 
   createNewChatSession() {
     // 如果正在流式，先停止
-    if (this._adpStreaming || this._ccStreaming) {
+    if (this._adpStreaming || this._ccStreaming || this._activeParallelTasks.size > 0) {
       this.stopADPGeneration();
     }
 
@@ -8448,7 +8464,7 @@ const App = {
     if (sessionId === this._activeSessionId) return;
 
     // 如果正在流式，先停止
-    if (this._adpStreaming) {
+    if (this._adpStreaming || this._activeParallelTasks.size > 0) {
       this.stopADPGeneration();
     }
 
@@ -8925,6 +8941,12 @@ const App = {
 
   // 停止 ADP 生成
   stopADPGeneration() {
+    // v3.1: 先停止所有并行任务
+    if (this._activeParallelTasks.size > 0) {
+      this._stopAllParallelTasks();
+      return;
+    }
+
     // CC 模式停止
     if (this._ccStreaming) {
       this._ccStreaming = false;
@@ -8967,7 +8989,609 @@ const App = {
     }
   },
 
-  _formatChatTime(date) {
+  // ===== v3.1 多任务并发实现 =====
+
+  /**
+   * 切换并行模式
+   */
+  _toggleParallelMode() {
+    this._parallelMode = !this._parallelMode;
+    const btn = document.getElementById('parallelToggleBtn');
+    if (btn) {
+      btn.classList.toggle('active', this._parallelMode);
+    }
+    // 显示/隐藏并行模式选择面板
+    this._showToast(
+      this._parallelMode ? '并行模式已开启：发送消息将同时调用多个 AI' : '并行模式已关闭',
+      'info'
+    );
+    console.log('[Parallel] Mode:', this._parallelMode ? 'ON' : 'OFF');
+  },
+
+  /**
+   * 注册 task:stream 事件监听器（全局只注册一次）
+   */
+  _registerTaskStreamListener() {
+    if (this._taskStreamRegistered) return;
+    if (!window.electronAPI?.onTaskStream) return;
+
+    window.electronAPI.onTaskStream((evt) => {
+      this._handleTaskStream(evt);
+    });
+    this._taskStreamRegistered = true;
+    console.log('[TaskStream] Listener registered');
+  },
+
+  /**
+   * 处理 task:stream 事件 — 路由到对应任务
+   */
+  _handleTaskStream(evt) {
+    const { taskId } = evt;
+    if (!taskId) return;
+
+    const taskInfo = this._activeParallelTasks.get(taskId);
+    if (!taskInfo) return;
+
+    const { mode, contentEl, cardEl, statusEl } = taskInfo;
+    const event = evt.event || evt.type;
+
+    // ADP 事件处理
+    if (mode === 'adp' || mode === 'agent') {
+      this._handleADPTaskEvent(taskId, taskInfo, evt, event);
+      return;
+    }
+
+    // CC 事件处理
+    if (mode === 'cc') {
+      this._handleCCTaskEvent(taskId, taskInfo, evt, event);
+      return;
+    }
+
+    // LLM 事件处理
+    if (mode === 'llm') {
+      this._handleLLMTaskEvent(taskId, taskInfo, evt, event);
+      return;
+    }
+  },
+
+  /**
+   * 处理 ADP 任务事件
+   */
+  _handleADPTaskEvent(taskId, taskInfo, evt, event) {
+    const { contentEl, cardEl, statusEl, textBuffer } = taskInfo;
+
+    switch (event) {
+      case 'text.delta':
+      case 'content.added':
+      case 'message.added': {
+        const data = evt.data || {};
+        const delta = data.Text || data.Content?.[0]?.Text || data.payload?.content?.[0]?.text || '';
+        if (delta) {
+          taskInfo.textBuffer = (textBuffer || '') + delta;
+          this._updateTaskContent(taskId, taskInfo);
+        }
+        break;
+      }
+      case 'text.replace': {
+        // 替换整个文本
+        const data = evt.data || {};
+        const newText = data.Text || data.Content?.[0]?.Text || '';
+        if (newText) {
+          taskInfo.textBuffer = newText;
+          this._updateTaskContent(taskId, taskInfo);
+        }
+        break;
+      }
+      case 'thought': {
+        // 思考过程（不直接显示在内容区，可扩展）
+        break;
+      }
+      case 'done': {
+        this._completeTask(taskId, evt.aborted ? 'cancelled' : 'completed');
+        break;
+      }
+      case 'error': {
+        const errMsg = evt.data?.Error?.Message || 'ADP 请求失败';
+        this._failTask(taskId, errMsg);
+        break;
+      }
+    }
+  },
+
+  /**
+   * 处理 CC 任务事件
+   */
+  _handleCCTaskEvent(taskId, taskInfo, evt, event) {
+    const { contentEl, cardEl, statusEl, textBuffer } = taskInfo;
+
+    switch (event) {
+      case 'delta':
+      case 'text': {
+        const delta = evt.content || '';
+        if (delta) {
+          taskInfo.textBuffer = (textBuffer || '') + delta;
+          this._updateTaskContent(taskId, taskInfo);
+        }
+        break;
+      }
+      case 'thinking': {
+        // 显示思考状态
+        if (statusEl && !taskInfo.completed) {
+          statusEl.innerHTML = '<span class="live-dot"></span>思考中';
+        }
+        break;
+      }
+      case 'tool_use':
+      case 'tool_result': {
+        // 显示工具调用步骤
+        const toolName = evt.name || evt.content?.name || '工具';
+        this._addTaskStep(taskId, taskInfo, `🔧 ${toolName}`);
+        break;
+      }
+      case 'done': {
+        this._completeTask(taskId, evt.aborted ? 'cancelled' : 'completed', { sessionId: evt.sessionId });
+        break;
+      }
+      case 'error': {
+        this._failTask(taskId, evt.error || 'CC 调用失败');
+        break;
+      }
+    }
+  },
+
+  /**
+   * 处理 LLM 任务事件
+   */
+  _handleLLMTaskEvent(taskId, taskInfo, evt, event) {
+    switch (event) {
+      case 'delta':
+      case 'text': {
+        const delta = evt.content || '';
+        if (delta) {
+          taskInfo.textBuffer = (taskInfo.textBuffer || '') + delta;
+          this._updateTaskContent(taskId, taskInfo);
+        }
+        break;
+      }
+      case 'done': {
+        this._completeTask(taskId, 'completed');
+        break;
+      }
+      case 'error': {
+        this._failTask(taskId, evt.error || 'LLM 调用失败');
+        break;
+      }
+    }
+  },
+
+  /**
+   * 更新任务卡片内容（使用 requestAnimationFrame 批量更新）
+   */
+  _updateTaskContent(taskId, taskInfo) {
+    if (taskInfo._rafPending) return;
+    taskInfo._rafPending = true;
+
+    requestAnimationFrame(() => {
+      taskInfo._rafPending = false;
+      const { contentEl } = taskInfo;
+      if (!contentEl) return;
+
+      // 第一次有内容时，清除加载动画
+      if (contentEl.querySelector('.agent-thinking')) {
+        contentEl.innerHTML = '';
+      }
+
+      // 渲染 Markdown/文本
+      const html = this._renderTaskText(taskInfo.textBuffer || '');
+      contentEl.innerHTML = html;
+    });
+  },
+
+  /**
+   * 添加任务步骤显示
+   */
+  _addTaskStep(taskId, taskInfo, stepText) {
+    const { contentEl } = taskInfo;
+    if (!contentEl) return;
+
+    let stepsEl = contentEl.querySelector('.task-steps');
+    if (!stepsEl) {
+      contentEl.insertAdjacentHTML('afterbegin', '<div class="task-steps"></div>');
+      stepsEl = contentEl.querySelector('.task-steps');
+    }
+    stepsEl.insertAdjacentHTML('beforeend', `<div class="task-step-item">${this.escapeHtml(stepText)}</div>`);
+  },
+
+  /**
+   * 渲染任务文本（简化版 Markdown）
+   */
+  _renderTaskText(text) {
+    if (!text) return '<div class="agent-thinking"><div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-text">等待响应...</span></div>';
+    // 基础 Markdown 渲染
+    let html = this.escapeHtml(text);
+    // 代码块
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+      return `<pre class="code-block"><code>${code.trim()}</code></pre>`;
+    });
+    // 行内代码
+    html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+    // 加粗
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // 标题
+    html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+    // 列表
+    html = html.replace(/^\- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)/g, '<ul>$1</ul>');
+    // 换行
+    html = html.replace(/\n/g, '<br>');
+    return `<div class="task-output-text">${html}</div>`;
+  },
+
+  /**
+   * 完成任务
+   */
+  _completeTask(taskId, status = 'completed', extra = {}) {
+    const taskInfo = this._activeParallelTasks.get(taskId);
+    if (!taskInfo || taskInfo.completed) return;
+
+    taskInfo.completed = true;
+    taskInfo.status = status;
+    if (taskInfo._timerInterval) {
+      clearInterval(taskInfo._timerInterval);
+      taskInfo._timerInterval = null;
+    }
+
+    const { cardEl, statusEl, contentEl } = taskInfo;
+    if (cardEl) {
+      cardEl.classList.remove('running');
+      cardEl.classList.add(status === 'completed' ? 'completed' : 'error');
+    }
+    if (statusEl) {
+      const elapsed = taskInfo._timerStart ? Math.floor((Date.now() - taskInfo._timerStart) / 1000) : 0;
+      statusEl.className = `task-status ${status === 'completed' ? 'done' : 'error'}`;
+      statusEl.innerHTML = `<span class="live-dot"></span>${status === 'completed' ? '已完成' : '已取消'} · ${elapsed}s`;
+    }
+    // 移除停止按钮
+    const stopBtn = cardEl?.querySelector('.task-stop-btn');
+    if (stopBtn) stopBtn.remove();
+
+    // 如果内容为空，显示空状态
+    if (contentEl && !taskInfo.textBuffer && status === 'completed') {
+      contentEl.innerHTML = '<div class="task-empty">（无内容返回）</div>';
+    } else if (contentEl && taskInfo.textBuffer) {
+      // 最终渲染
+      contentEl.innerHTML = this._renderTaskText(taskInfo.textBuffer);
+    }
+
+    // 保存 CC sessionId
+    if (extra.sessionId && this._activeSessionId) {
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (session) {
+        session.ccSessionId = extra.sessionId;
+        this._saveChatSessions();
+      }
+    }
+
+    // 检查是否所有任务都完成了
+    this._checkAllTasksComplete();
+  },
+
+  /**
+   * 任务失败
+   */
+  _failTask(taskId, errorMessage) {
+    const taskInfo = this._activeParallelTasks.get(taskId);
+    if (!taskInfo || taskInfo.completed) return;
+
+    taskInfo.completed = true;
+    taskInfo.status = 'error';
+
+    if (taskInfo._timerInterval) {
+      clearInterval(taskInfo._timerInterval);
+      taskInfo._timerInterval = null;
+    }
+
+    const { cardEl, statusEl, contentEl } = taskInfo;
+    if (cardEl) {
+      cardEl.classList.remove('running');
+      cardEl.classList.add('error');
+    }
+    if (statusEl) {
+      statusEl.className = 'task-status error';
+      statusEl.innerHTML = `<span class="live-dot"></span>错误`;
+    }
+    if (contentEl) {
+      contentEl.innerHTML = `<div class="task-error-msg">❌ ${this.escapeHtml(errorMessage)}</div>`;
+    }
+    const stopBtn = cardEl?.querySelector('.task-stop-btn');
+    if (stopBtn) stopBtn.remove();
+
+    console.error(`[Task ${taskId}] Error:`, errorMessage);
+    this._checkAllTasksComplete();
+  },
+
+  /**
+   * 检查所有并行任务是否完成
+   */
+  _checkAllTasksComplete() {
+    let allDone = true;
+    for (const task of this._activeParallelTasks.values()) {
+      if (!task.completed) {
+        allDone = false;
+        break;
+      }
+    }
+    if (allDone) {
+      this._updateStreamingUI(false);
+      document.getElementById('aiChatInput')?.focus();
+
+      // 清理已完成任务的引用（延迟，保留 UI）
+      setTimeout(() => {
+        for (const [id, task] of this._activeParallelTasks) {
+          if (task.completed) {
+            this._activeParallelTasks.delete(id);
+          }
+        }
+      }, 5000);
+    }
+  },
+
+  /**
+   * 停止所有并行任务
+   */
+  _stopAllParallelTasks() {
+    for (const [taskId, taskInfo] of this._activeParallelTasks) {
+      if (!taskInfo.completed) {
+        window.electronAPI?.taskStop?.(taskId);
+        this._completeTask(taskId, 'cancelled');
+      }
+    }
+    this._updateStreamingUI(false);
+    document.getElementById('aiChatInput')?.focus();
+  },
+
+  /**
+   * 停止单个任务
+   */
+  _stopTask(taskId) {
+    window.electronAPI?.taskStop?.(taskId);
+    this._completeTask(taskId, 'cancelled');
+  },
+
+  /**
+   * 发送并行消息 — 同时调用多个 AI
+   */
+  async _sendParallelMessage(message, options = {}) {
+    const input = document.getElementById('aiChatInput');
+    if (!message && this._chatAttachments.length === 0) return;
+
+    // 解析文件引用
+    const resolvedMessage = this._resolveFileRefs(message);
+
+    // 确保有会话
+    if (!this._activeSessionId) {
+      this.createNewChatSession();
+    }
+
+    const chatMessages = document.getElementById('chatMessages');
+    const attachments = [...this._chatAttachments];
+
+    // 添加用户消息
+    const userMessage = document.createElement('div');
+    userMessage.className = 'message user';
+    userMessage.dataset.sendTime = new Date().toISOString();
+    let attachmentsHtml = '';
+    if (attachments.length > 0) {
+      attachmentsHtml = '<div class="message-attachments">';
+      for (const att of attachments) {
+        const icon = this.getFileIcon(att.type, att.name);
+        attachmentsHtml += `<span class="message-attachment-item"><span class="msg-att-icon">${icon}</span>${this.escapeHtml(att.name)}</span>`;
+      }
+      attachmentsHtml += '</div>';
+    }
+    userMessage.innerHTML = `
+      <div class="message-avatar">${this._userAvatarSvg}</div>
+      <div class="message-content">
+        <p>${this.escapeHtml(message || '发送了文件')}</p>
+        ${attachmentsHtml}
+        <span class="message-time">${this._formatChatTime(new Date())}</span>
+      </div>`;
+    chatMessages.appendChild(userMessage);
+
+    input.value = '';
+    input.style.height = 'auto';
+    this.clearChatAttachments();
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // 更新会话标题
+    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+    if (session && session.title === '新对话' && message) {
+      session.title = message.length > 30 ? message.slice(0, 30) + '...' : message;
+      session.updatedAt = new Date().toISOString();
+      this._saveChatSessions();
+      this._renderChatSessionList();
+    }
+
+    // 构建默认上下文
+    const defaultContext = await this._buildDefaultContext();
+    const sendMessage = defaultContext ? (defaultContext + '\n' + resolvedMessage) : resolvedMessage;
+    const attachmentData = await this.buildAttachmentData(attachments);
+
+    // 确定要调用的 AI 模式
+    const modes = this._getParallelModes();
+    if (modes.length === 0) {
+      this._showToast('请至少选择一个 AI 模式', 'warning');
+      return;
+    }
+
+    // 创建并行响应组容器
+    const responseGroup = document.createElement('div');
+    responseGroup.className = 'message assistant ai-response-group';
+    responseGroup.innerHTML = `<div class="message-avatar">${this._assistantAvatarSvg}</div><div class="ai-response-cards" style="flex:1;"></div>`;
+    chatMessages.appendChild(responseGroup);
+    const cardsContainer = responseGroup.querySelector('.ai-response-cards');
+
+    // 锁定 UI
+    this._updateStreamingUI(true);
+
+    // 为每个模式创建任务卡片并启动
+    const tasks = [];
+    for (const mode of modes) {
+      const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const cardEl = this._createTaskCard(mode, taskId, cardsContainer);
+      const taskInfo = {
+        mode,
+        cardEl,
+        contentEl: cardEl.querySelector('.task-content'),
+        statusEl: cardEl.querySelector('.task-status'),
+        timerEl: cardEl.querySelector('.task-timer'),
+        completed: false,
+        textBuffer: '',
+        _rafPending: false,
+        _timerStart: Date.now(),
+        _timerInterval: null,
+      };
+      this._activeParallelTasks.set(taskId, taskInfo);
+
+      // 启动计时器
+      taskInfo._timerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - taskInfo._timerStart) / 1000);
+        if (taskInfo.timerEl) taskInfo.timerEl.textContent = elapsed + 's';
+      }, 1000);
+
+      tasks.push({ taskId, mode, cardEl, taskInfo });
+    }
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // 并行启动所有任务
+    await Promise.all(tasks.map(({ taskId, mode }) => this._startParallelTask(taskId, mode, sendMessage, attachmentData, options)));
+  },
+
+  /**
+   * 获取并行模式下要调用的 AI 模式列表
+   */
+  _getParallelModes() {
+    // 默认调用 ADP + CC（如果可用）
+    const modes = [];
+    if (this._aiAssistantMode === 'cc' && window.electronAPI?.ccInvoke) {
+      modes.push('cc');
+      modes.push('adp'); // CC 模式下并行调用 ADP
+    } else if (this._aiAssistantMode === 'agent') {
+      modes.push('adp');
+    } else if (this._aiAssistantMode === 'llm') {
+      modes.push('adp');
+      modes.push('llm');
+    } else {
+      // 默认：ADP + CC
+      modes.push('adp');
+      if (window.electronAPI?.ccInvoke) modes.push('cc');
+    }
+    return modes;
+  },
+
+  /**
+   * 启动单个并行任务
+   */
+  async _startParallelTask(taskId, mode, message, attachmentData, options) {
+    try {
+      if (mode === 'adp' || mode === 'agent') {
+        // ADP 模式
+        const expertConfig = window.ExpertSystem?.getActiveADPConfig?.();
+        const data = {
+          message,
+          attachments: attachmentData,
+          taskId,
+        };
+        if (expertConfig?.appKey) {
+          data.appKey = expertConfig.appKey;
+          data.adpUrl = expertConfig.url;
+          data._expertMode = true;
+        }
+        if (options.systemRole) {
+          data.systemRole = options.systemRole;
+        }
+        const result = await window.electronAPI.sendADPMessage(data);
+        if (!result.success) {
+          this._failTask(taskId, result.error || 'ADP 调用失败');
+        }
+      } else if (mode === 'cc') {
+        // CC 模式
+        const activeSession = this._activeSessionId
+          ? this._chatSessions.find(s => s.id === this._activeSessionId)
+          : null;
+        const ccSessionId = activeSession?.ccSessionId || null;
+        const result = await window.electronAPI.ccInvoke({
+          message,
+          attachments: attachmentData,
+          sessionId: ccSessionId,
+          systemRole: options.systemRole || '',
+          workdir: this._getCCWorkdir(),
+          skill: document.getElementById('ccSkillSelect')?.value || '',
+          connectorIds: this._getSelectedConnectorIds(),
+          openRouterModel: document.getElementById('ccOpenRouterSelect')?.value || '',
+          providerId: document.getElementById('ccProviderSelect')?.value || '',
+          taskId,
+        });
+        if (!result.success) {
+          this._failTask(taskId, result.error || 'CC 调用失败');
+        }
+      } else if (mode === 'llm') {
+        // LLM 模式 — 复用 agent:invoke
+        const result = await window.electronAPI.agent.invoke(message, 'chat', attachmentData);
+        if (!result.success) {
+          this._failTask(taskId, result.error || 'LLM 调用失败');
+        }
+        // LLM 通过 agent:stream 事件推送，需要额外处理
+        // TODO: 将 agent:stream 事件也路由到 task:stream
+      }
+    } catch (e) {
+      this._failTask(taskId, e.message || '未知错误');
+    }
+  },
+
+  /**
+   * 创建任务卡片 UI
+   */
+  _createTaskCard(mode, taskId, container) {
+    const modeLabels = {
+      cc: 'M-Agent',
+      adp: 'Agent',
+      agent: 'Agent',
+      llm: 'LLM',
+    };
+    const modeLabel = modeLabels[mode] || mode;
+
+    const card = document.createElement('div');
+    card.className = 'task-card running';
+    card.dataset.taskId = taskId;
+    card.innerHTML = `
+      <div class="task-header">
+        <span class="task-mode-badge ${mode}">${modeLabel}</span>
+        <span class="task-status running"><span class="live-dot"></span>运行中</span>
+        <span class="task-timer">0s</span>
+        <button class="task-stop-btn" data-task-id="${taskId}">停止</button>
+      </div>
+      <div class="task-content">
+        <div class="agent-thinking">
+          <div class="thinking-dots"><span></span><span></span><span></span></div>
+          <span class="thinking-text">等待响应...</span>
+        </div>
+      </div>
+      <div class="task-meta">
+        <span class="task-token">Token: 0</span>
+      </div>
+    `;
+    container.appendChild(card);
+
+    // 绑定停止按钮
+    const stopBtn = card.querySelector('.task-stop-btn');
+    stopBtn?.addEventListener('click', () => this._stopTask(taskId));
+
+    return card;
+  },
     const h = String(date.getHours()).padStart(2, '0');
     const m = String(date.getMinutes()).padStart(2, '0');
     return `${h}:${m}`;
