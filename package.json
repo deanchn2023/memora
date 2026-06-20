@@ -46,7 +46,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "extendedInfo": {
+      "extendInfo": {
         "NSMicrophoneUsageDescription": "Memora 需要访问麦克风以进行语音输入和实时语音识别。",
         "NSCameraUsageDescription": "Memora 需要访问摄像头以进行专注度检测。"
       }
