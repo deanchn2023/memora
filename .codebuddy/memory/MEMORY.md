@@ -56,6 +56,24 @@
 - 巨型单文件要拆分，CSS/JS/HTML 必须分离
 - backdrop-filter 毛玻璃大量使用影响滚动性能
 
+## 前端性能优化规则（2026-06-20 确立，适用于所有后续项目）
+**文档位置**：`docs/frontend-performance-rules.md`
+
+### 核心规则
+1. **渲染方法中禁止 addEventListener**：用容器级事件委托（`container.addEventListener('click', handler)` + `e.target.closest()` 分发）
+2. **hover 效果用 CSS `:hover`**，不用 JS `mouseenter/mouseleave`
+3. **聚焦效果用 CSS `:focus`**，不用 JS `focus/blur`
+4. **禁止 `transition: all`**：只声明实际变化的属性
+5. **单文件不超过 5000 行**：用 `Object.assign(App, {...})` 模式提取模块
+6. **数据关联用 `dataset` 或 `WeakMap`**：不用闭包捕获、不用 `_bound` 标志位 hack
+7. **动画用 `transform`**：不用 `left/top`（避免回流）
+8. **弹窗必须 cleanup**：移除 DOM + 移除 document 级监听器
+
+### Memora 优化记录
+- 初始：app.js 15610行 / 289 addEventListener / 221 transition:all
+- 优化后：app.js 14338行 / 240 addEventListener / 0 transition:all
+- 提取 3 个模块：app-prompt-manager.js(328行) + app-ai-tasks.js(569行) + app-clipboard-dialog.js(310行)
+
 ## ADP Claw 模式关键知识（2026-06-12 验证成功）
 - **Claw 模式 vs 标准模式文件传递差异（核心！）**：Claw 模式用 Markdown 链接嵌入 Type:text（文档 `[文件名](COS_URL)\n\n请阅读以上文档`，图片 `![](COS_URL)`）；标准模式用 Type:file + DocId（需 docParse）。Claw 模式**不需要 docParse**！不需要 DocId！不需要等待解析！
 - **Claw 模式文件上传完整流程**：DescribeStorageCredential(BotBizId) → PUT COS → Markdown 链接嵌入 Contents Type:text → 发送 V2 Chat。图片 IsPublic=true，文档 IsPublic=false。

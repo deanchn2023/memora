@@ -1,0 +1,2493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>忆境 Memora v3.0 — 功能列表</title>
+    <style>
+        :root {
+            --bg-primary: #f5f5f7;
+            --bg-card: rgba(255, 255, 255, 0.7);
+            --bg-header: rgba(0, 122, 255, 0.1);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --text-tertiary: #aeaeb2;
+            --border-color: rgba(0, 0, 0, 0.08);
+            --accent-blue: #007AFF;
+            --accent-green: #34C759;
+            --accent-orange: #FF9500;
+            --accent-red: #FF3B30;
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.12);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        
+        .hero {
+            background: linear-gradient(135deg, rgba(0, 122, 255, 0.08) 0%, rgba(52, 199, 89, 0.05) 100%);
+            padding: 60px 24px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(0, 122, 255, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        
+        .hero h1 {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            position: relative;
+        }
+        
+        .hero p {
+            font-size: 18px;
+            color: var(--text-secondary);
+            position: relative;
+        }
+        
+        .version-badge {
+            display: inline-block;
+            background: var(--bg-header);
+            color: var(--accent-blue);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            margin-top: 16px;
+            border: 1px solid rgba(0, 122, 255, 0.2);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 48px 24px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 48px;
+        }
+        
+        .stat-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 0.5px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .stat-number {
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .section {
+            margin-bottom: 48px;
+        }
+        
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        
+        .section-icon {
+            width: 44px;
+            height: 44px;
+            background: var(--bg-header);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .section-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .section-desc {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .category-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 0.5px solid var(--border-color);
+            border-radius: 16px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        
+        .category-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .category-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px;
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .category-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .category-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, rgba(0, 122, 255, 0.15), rgba(0, 122, 255, 0.05));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+        
+        .category-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .category-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+        
+        .toggle-icon {
+            width: 24px;
+            height: 24px;
+            color: var(--text-tertiary);
+            transition: transform 0.3s ease;
+        }
+        
+        .category-card.expanded .toggle-icon {
+            transform: rotate(180deg);
+        }
+        
+        .feature-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        
+        .category-card.expanded .feature-list {
+            max-height: 2000px;
+        }
+        
+        .feature-item {
+            border-top: 0.5px solid var(--border-color);
+        }
+        
+        .feature-item:first-child {
+            border-top: none;
+        }
+        
+        .feature-row {
+            display: grid;
+            grid-template-columns: 40px 1fr 1.5fr 1fr;
+            align-items: center;
+            padding: 16px 24px;
+            gap: 16px;
+        }
+        
+        .feature-index {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            font-weight: 500;
+        }
+        
+        .feature-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .feature-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        .feature-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            text-align: center;
+        }
+        
+        .tag-new {
+            background: rgba(52, 199, 89, 0.15);
+            color: var(--accent-green);
+        }
+        
+        .tag-hot {
+            background: rgba(255, 149, 0, 0.15);
+            color: var(--accent-orange);
+        }
+        
+        .tag-ai {
+            background: rgba(0, 122, 255, 0.15);
+            color: var(--accent-blue);
+        }
+        
+        .tag-core {
+            background: rgba(142, 142, 147, 0.15);
+            color: var(--text-secondary);
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-tertiary);
+            font-size: 13px;
+        }
+        
+        .footer p {
+            margin: 4px 0;
+        }
+        
+        /* 核心理念区域 */
+        .vision-section {
+            background: linear-gradient(135deg, rgba(0, 122, 255, 0.08) 0%, rgba(52, 199, 89, 0.05) 50%, rgba(255, 149, 0, 0.05) 100%);
+            border-radius: 24px;
+            padding: 48px 32px;
+            margin-bottom: 48px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .vision-section::before {
+            content: '';
+            position: absolute;
+            top: -100px;
+            right: -100px;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(0, 122, 255, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        
+        .vision-section::after {
+            content: '';
+            position: absolute;
+            bottom: -100px;
+            left: -100px;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(52, 199, 89, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        
+        .vision-header {
+            text-align: center;
+            margin-bottom: 40px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .vision-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+        
+        .vision-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        
+        .vision-subtitle {
+            font-size: 16px;
+            color: var(--text-secondary);
+        }
+        
+        .vision-flow {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .vision-step {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 0.5px solid var(--border-color);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .vision-step:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .vision-step-icon {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-green));
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin: 0 auto 12px;
+            color: white;
+        }
+        
+        .vision-step-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        
+        .vision-step-desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        
+        .vision-arrow {
+            text-align: center;
+            color: var(--text-tertiary);
+            font-size: 20px;
+            padding-top: 8px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .vision-flow-mobile {
+            display: none;
+        }
+        
+        .vision-detail {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 0.5px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            margin-top: 32px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .vision-detail-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .vision-detail-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        
+        .vision-detail-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 10px;
+        }
+        
+        .vision-detail-item-icon {
+            font-size: 16px;
+        }
+        
+        @media (max-width: 1024px) {
+            .vision-flow {
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .vision-arrow {
+                display: none;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .vision-flow {
+                display: none;
+            }
+            .vision-flow-mobile {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .vision-detail-list {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 32px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .feature-row {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+            
+            .feature-index {
+                grid-column: 1;
+                margin-bottom: 4px;
+            }
+            
+            .feature-name {
+                grid-column: 1;
+                font-size: 14px;
+            }
+            
+            .feature-desc {
+                grid-column: 1;
+                font-size: 12px;
+            }
+            
+            .feature-tag {
+                grid-column: 1;
+                justify-self: start;
+            }
+        }
+            .hero h1 {
+                font-size: 32px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .feature-row {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+            
+            .feature-index {
+                grid-column: 1;
+                margin-bottom: 4px;
+            }
+            
+            .feature-name {
+                grid-column: 1;
+                font-size: 14px;
+            }
+            
+            .feature-desc {
+                grid-column: 1;
+                font-size: 12px;
+            }
+            
+            .feature-tag {
+                grid-column: 1;
+                justify-self: start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1>忆境 Memora</h1>
+        <p>你的个人 AI 记忆助理，越用越懂你</p>
+        <span class="version-badge">v3.0 · 全功能清单</span>
+    </div>
+    
+    <div class="container">
+        <!-- 核心理念：知识体系形成 -->
+        <div class="vision-section">
+            <div class="vision-header">
+                <div class="vision-icon">🧠</div>
+                <div class="vision-title">个人知识体系构建</div>
+                <div class="vision-subtitle">从碎片到体系的进化之路</div>
+            </div>
+            
+            <div class="vision-flow">
+                <div class="vision-step">
+                    <div class="vision-step-icon">✂️</div>
+                    <div class="vision-step-title">碎片采集</div>
+                    <div class="vision-step-desc">剪贴板自动感知<br>网页/文档/对话<br>一键保存到笔记</div>
+                </div>
+                
+                <div class="vision-arrow">→</div>
+                
+                <div class="vision-step">
+                    <div class="vision-step-icon">🧬</div>
+                    <div class="vision-step-title">知识萃取</div>
+                    <div class="vision-step-desc">AI 提取知识原子<br>fact/rule/insight<br>自动分类打标签</div>
+                </div>
+                
+                <div class="vision-arrow">→</div>
+                
+                <div class="vision-step">
+                    <div class="vision-step-icon">🔗</div>
+                    <div class="vision-step-title">智能聚类</div>
+                    <div class="vision-step-desc">相似知识自动归组<br>形成知识簇<br>成熟度持续演进</div>
+                </div>
+                
+                <div class="vision-arrow">→</div>
+                
+                <div class="vision-step">
+                    <div class="vision-step-icon">📄</div>
+                    <div class="vision-step-title">文章生成</div>
+                    <div class="vision-step-desc">AI 合成结构化文章<br>可溯源原始笔记<br>支持编辑导出</div>
+                </div>
+                
+                <div class="vision-arrow">→</div>
+                
+                <div class="vision-step">
+                    <div class="vision-step-icon">📚</div>
+                    <div class="vision-step-title">知识体系</div>
+                    <div class="vision-step-desc">完整的知识图谱<br>语义搜索<br>持续迭代进化</div>
+                </div>
+            </div>
+            
+            <div class="vision-detail">
+                <div class="vision-detail-title">💡 核心设计思想</div>
+                <div class="vision-detail-list">
+                    <div class="vision-detail-item">
+                        <span class="vision-detail-item-icon">✨</span>
+                        <span><strong>零摩擦采集</strong> — 剪贴板自动感知，无需手动操作，知识随手即存</span>
+                    </div>
+                    <div class="vision-detail-item">
+                        <span class="vision-detail-item-icon">🤖</span>
+                        <span><strong>AI 自动处理</strong> — 从原子提取到聚类到文章，全流程 AI 驱动</span>
+                    </div>
+                    <div class="vision-detail-item">
+                        <span class="vision-detail-item-icon">🔄</span>
+                        <span><strong>渐进式构建</strong> — 碎片→原子→簇→文章→体系，层层递进</span>
+                    </div>
+                    <div class="vision-detail-item">
+                        <span class="vision-detail-item-icon">🔗</span>
+                        <span><strong>关联可追溯</strong> — 每篇文章可追溯到原始知识原子和笔记</span>
+                    </div>
+                    <div class="vision-detail-item">
+                        <span class="vision-detail-item-icon">📈</span>
+                        <span><strong>持续进化</strong> — 新知识自动融入体系，旧知识定期淘汰更新</span>
+                    </div>
+                    <div class="vision-detail-item">
+                        <span class="vision-detail-item-icon">🔍</span>
+                        <span><strong>智能检索</strong> — 语义搜索 + 关键词搜索，快速定位所需知识</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number">9</div>
+                <div class="stat-label">核心板块</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">42</div>
+                <div class="stat-label">功能模块</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">200+</div>
+                <div class="stat-label">功能点</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">100+</div>
+                <div class="stat-label">IPC 通道</div>
+            </div>
+        </div>
+        
+        <!-- 1. 日历与任务管理 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">📅</div>
+                <div>
+                    <div class="section-title">日历与任务管理</div>
+                    <div class="section-desc">智能排程、优先级管理、多视图展示</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">📋</div>
+                        <div>
+                            <div class="category-title">任务管理</div>
+                            <div class="category-desc">创建、编辑、删除、拖拽、批量操作</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">快速创建任务</span>
+                            <span class="feature-desc">点击"+"按钮或拖拽笔记快速创建任务，支持设置标题、描述、优先级</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">任务优先级</span>
+                            <span class="feature-desc">高/中/低三级优先级，高优先级任务在列表中置顶显示</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">任务状态流转</span>
+                            <span class="feature-desc">待办 → 进行中 → 已完成 状态自动流转，支持手动切换</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">任务拖拽排序</span>
+                            <span class="feature-desc">在日历视图中拖拽任务调整时间安排，支持跨日期拖拽</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">任务筛选与搜索</span>
+                            <span class="feature-desc">按状态、优先级、项目、人物等多维度筛选，关键词全文搜索</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">6</span>
+                            <span class="feature-name">任务批量操作</span>
+                            <span class="feature-desc">勾选多个任务进行批量删除、批量修改状态、批量调整优先级</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">7</span>
+                            <span class="feature-name">任务重复设置</span>
+                            <span class="feature-desc">支持每日/每周/每月/每年重复任务，自动创建后续任务</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">8</span>
+                            <span class="feature-name">任务与日历同步</span>
+                            <span class="feature-desc">一键添加到 macOS 系统日历，支持双向同步</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">9</span>
+                            <span class="feature-name">任务时长估算</span>
+                            <span class="feature-desc">AI 根据任务描述自动估算所需时间，支持手动调整</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">10</span>
+                            <span class="feature-name">任务关联人物/项目</span>
+                            <span class="feature-desc">自动识别任务涉及的人物和项目，建立关联关系</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🗓️</div>
+                        <div>
+                            <div class="category-title">日历视图</div>
+                            <div class="category-desc">日/周/月三种视图，时间轴展示</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">日视图</span>
+                            <span class="feature-desc">24 小时时间轴，显示当日所有任务和日历事件</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">周视图</span>
+                            <span class="feature-desc">一周时间轴，横向展示 7 天任务安排</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">月视图</span>
+                            <span class="feature-desc">月历网格，直观展示整月任务分布</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">视图导航</span>
+                            <span class="feature-desc">前后切换日期，快速跳转到今天，支持快捷键</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">任务悬浮预览</span>
+                            <span class="feature-desc">鼠标悬停任务卡片显示详情预览，点击进入编辑</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">6</span>
+                            <span class="feature-name">双击快速编辑</span>
+                            <span class="feature-desc">双击任务卡片直接进入编辑模式，快速修改</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">⏱️</div>
+                        <div>
+                            <div class="category-title">番茄钟</div>
+                            <div class="feature-desc">专注计时、休息提醒、历史记录</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">专注计时</span>
+                            <span class="feature-desc">25 分钟专注计时，支持自定义时长</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">短休息/长休息</span>
+                            <span class="feature-desc">完成专注后自动进入 5/15 分钟休息</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">番茄钟历史</span>
+                            <span class="feature-desc">记录每次专注时长、关联任务、完成时间</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">任务关联番茄钟</span>
+                            <span class="feature-desc">为任务启动番茄钟，自动记录专注时长到任务</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">专注统计</span>
+                            <span class="feature-desc">每日/每周专注时长统计，专注习惯分析</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 2. 记事本 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">📝</div>
+                <div>
+                    <div class="section-title">记事本</div>
+                    <div class="section-desc">富文本编辑、分类管理、图片支持</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">✏️</div>
+                        <div>
+                            <div class="category-title">笔记编辑</div>
+                            <div class="category-desc">富文本/Markdown 混排、图片插入、代码高亮</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">富文本编辑器</span>
+                            <span class="feature-desc">支持标题、列表、引用、代码块、表格等富文本格式</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">Markdown 语法</span>
+                            <span class="feature-desc">支持 Markdown 语法输入，实时渲染预览</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">图片插入</span>
+                            <span class="feature-desc">支持粘贴/拖拽/上传图片，自动生成缩略图</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">代码高亮</span>
+                            <span class="feature-desc">支持 50+ 编程语言语法高亮显示</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">离线编辑</span>
+                            <span class="feature-desc">本地数据库存储，断网时可正常编辑</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">6</span>
+                            <span class="feature-name">自动保存</span>
+                            <span class="feature-desc">编辑自动保存，防丢失</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">📁</div>
+                        <div>
+                            <div class="category-title">笔记管理</div>
+                            <div class="category-desc">分类、搜索、拖拽排序、批量操作</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">分类管理</span>
+                            <span class="feature-desc">自定义分类（工作/学习/生活等），支持重命名、删除、排序</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">全文搜索</span>
+                            <span class="feature-desc">标题和内容全文搜索，支持正则表达式</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">拖拽排序</span>
+                            <span class="feature-desc">在分类内拖拽调整笔记顺序</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">跨分类拖拽</span>
+                            <span class="feature-desc">拖拽笔记到其他分类</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">批量操作</span>
+                            <span class="feature-desc">勾选多篇笔记批量删除、移动、导出</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">6</span>
+                            <span class="feature-name">笔记收藏</span>
+                            <span class="feature-desc">收藏重要笔记，快速访问</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">7</span>
+                            <span class="feature-name">笔记分享</span>
+                            <span class="feature-desc">生成分享链接，支持公开/私密分享</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">⬇️</div>
+                        <div>
+                            <div class="category-title">导入导出</div>
+                            <div class="category-desc">Markdown、HTML、PDF 多格式导出</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">Markdown 导出</span>
+                            <span class="feature-desc">单篇或多篇笔记导出为 Markdown 文件</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">HTML 导出</span>
+                            <span class="feature-desc">导出为富文本 HTML，保留样式和图片</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">PDF 导出</span>
+                            <span class="feature-desc">导出为 PDF 文档，适合打印和分享</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">笔记导入</span>
+                            <span class="feature-desc">导入 Markdown 文件到笔记</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">剪贴板导入</span>
+                            <span class="feature-desc">从剪贴板内容快速创建笔记</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 3. AI 助手 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">🤖</div>
+                <div>
+                    <div class="section-title">AI 助手</div>
+                    <div class="section-desc">多模式对话、专家群聊、智能分析</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">💬</div>
+                        <div>
+                            <div class="category-title">对话模式</div>
+                            <div class="category-desc">Agent/LLM/CC 三模式切换</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">Agent 模式</span>
+                            <span class="feature-desc">调用 ADP 智能体平台，支持流式 SSE 对话</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">LLM 模式</span>
+                            <span class="feature-desc">直接调用 DeepSeek 等 LLM，适合结构化分析</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">CC 模式（Claude Code）</span>
+                            <span class="feature-desc">调用 Claude Code 兼容接口，支持代码生成和执行</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">模式切换</span>
+                            <span class="feature-desc">一键切换三种对话模式，全局生效</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">会话管理</span>
+                            <span class="feature-desc">多会话切换、新会话、历史会话查看</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">6</span>
+                            <span class="feature-name">停止生成</span>
+                            <span class="feature-desc">随时停止 AI 回复生成</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">7</span>
+                            <span class="feature-name">代码块工具栏</span>
+                            <span class="feature-desc">AI 回复中的代码块支持：复制、保存、打开、预览、执行</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">8</span>
+                            <span class="feature-name">文件路径引用</span>
+                            <span class="feature-desc">输入框中插入 📎文件名 引用，发送时自动替换为完整路径</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">9</span>
+                            <span class="feature-name">默认上下文注入</span>
+                            <span class="feature-desc">自动注入当前时间、用户画像信息，让 AI 更了解上下文</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">👥</div>
+                        <div>
+                            <div class="category-title">专家团群聊</div>
+                            <div class="category-desc">多专家协作、后台执行、结果汇总</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">专家配置</span>
+                            <span class="feature-desc">自定义专家角色、Prompt、模型，支持导入导出</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">专家组管理</span>
+                            <span class="feature-desc">将多个专家组成团队，协同处理复杂任务</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">后台群聊</span>
+                            <span class="feature-desc">专家在后台异步讨论，完成后汇总结果</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">群聊记录</span>
+                            <span class="feature-desc">查看历史群聊记录，支持搜索和重新发起</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">主持提示词优化</span>
+                            <span class="feature-desc">AI 优化主持专家的 Prompt，提升协作效果</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🔗</div>
+                        <div>
+                            <div class="category-title">MCP 连接器</div>
+                            <div class="category-desc">Model Context Protocol 集成</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">连接器管理</span>
+                            <span class="feature-desc">添加、编辑、删除、启用/禁用 MCP 连接器</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">工具调用</span>
+                            <span class="feature-desc">通过 MCP 协议调用外部工具能力</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">数据同步</span>
+                            <span class="feature-desc">通过 MCP 同步数据到外部系统</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🎤</div>
+                        <div>
+                            <div class="category-title">语音输入</div>
+                            <div class="feature-desc">麦克风录音、实时识别、文本输入</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">语音录制</span>
+                            <span class="feature-desc">点击麦克风按钮开始录音，实时显示音量</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">语音识别</span>
+                            <span class="feature-desc">支持火山引擎 ASR 和腾讯云 ASR</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">实时转写</span>
+                            <span class="feature-desc">录音时实时显示识别文本，支持边录边改</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">保存到笔记</span>
+                            <span class="feature-desc">语音识别结果一键保存到记事本</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 4. 知识图谱 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">🧠</div>
+                <div>
+                    <div class="section-title">知识图谱</div>
+                    <div class="section-desc">知识萃取、聚类、文章生成</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🧬</div>
+                        <div>
+                            <div class="category-title">知识萃取</div>
+                            <div class="category-desc">从笔记中提取知识原子、自动聚类</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">知识原子提取</span>
+                            <span class="feature-desc">AI 从笔记中提取最小知识单元（fact/rule/insight/procedure/question）</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">知识聚类</span>
+                            <span class="feature-desc">AI 按主题智能分组知识原子，自动合并相似簇</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">一键萃取</span>
+                            <span class="feature-desc">串联执行：合并相似 → 清理空簇 → AI 聚类 → 生成文章</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">知识簇管理</span>
+                            <span class="feature-desc">查看、编辑、删除知识簇，查看成熟度状态</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">知识原子编辑</span>
+                            <span class="feature-desc">查看和编辑单个知识原子的详细信息</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">📄</div>
+                        <div>
+                            <div class="category-title">知识文章</div>
+                            <div class="category-desc">AI 合成结构化文章，可溯源</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">文章生成</span>
+                            <span class="feature-desc">AI 将成熟知识簇（≥5个原子）合成为结构化 Markdown 文章</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">来源溯源</span>
+                            <span class="feature-desc">每段文章标注来源原子，可追溯原始笔记</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">文章编辑</span>
+                            <span class="feature-desc">查看和编辑 AI 生成的文章内容</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">文章导出</span>
+                            <span class="feature-desc">导出为 Markdown 或 PDF</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🔍</div>
+                        <div>
+                            <div class="category-title">知识搜索</div>
+                            <div class="category-desc">语义搜索、关键词搜索、多源融合</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">关键词提炼</span>
+                            <span class="feature-desc">AI 将自然语言查询提炼为核心关键词（≤7字）</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">ADP 语义搜索</span>
+                            <span class="feature-desc">调用腾讯 ADP 智能体，理解查询意图，返回精准知识</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">本地记忆检索</span>
+                            <span class="feature-desc">在记忆库中进行关键词匹配搜索</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">公开资源搜索</span>
+                            <span class="feature-desc">在知识图谱、文章库中检索</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">结果聚合</span>
+                            <span class="feature-desc">多路搜索结果智能聚合展示</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 5. 剪贴板智能感知 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">✂️</div>
+                <div>
+                    <div class="section-title">剪贴板智能感知</div>
+                    <div class="section-desc">自动识别、分类、提取待办和信息</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">👁️</div>
+                        <div>
+                            <div class="category-title">智能感知</div>
+                            <div class="category-desc">实时监听、去重、预分类</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">实时监听</span>
+                            <span class="feature-desc">后台持续监听剪贴板变化，3 秒内完成分析</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">内容去重</span>
+                            <span class="feature-desc">相同内容在冷却期内不重复触发 AI 分析</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">预分类过滤</span>
+                            <span class="feature-desc">规则过滤纯代码/URL/JSON/超长文本，节省 80% Token</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">状态检测</span>
+                            <span class="feature-desc">屏幕锁定/应用切换时暂停监听，节省资源</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">聚合暂存</span>
+                            <span class="feature-desc">快速多次复制时聚合为一次分析</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🧠</div>
+                        <div>
+                            <div class="category-title">AI 分析</div>
+                            <div class="category-desc">三重判断：待办/有效信息/知识推荐</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">待办识别</span>
+                            <span class="feature-desc">识别 @提及、行动要求，自动创建待办任务</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">信息有效性判断</span>
+                            <span class="feature-desc">判断信息是否有保存价值，自动分类</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">知识推荐触发</span>
+                            <span class="feature-desc">识别知识查询意图，触发 ADP 知识搜索</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">置信度分级</span>
+                            <span class="feature-desc">高置信度(≥0.9)弹窗建议，低置信度(0.7-0.9)静默候选</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">上下文注入</span>
+                            <span class="feature-desc">AI 分析时参考用户画像（高频人物、活跃项目、优先级偏好）</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">💾</div>
+                        <div>
+                            <div class="category-title">快速保存</div>
+                            <div class="category-desc">一键保存到笔记、记忆、待办</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">保存到笔记</span>
+                            <span class="feature-desc">剪贴板内容一键保存为新笔记</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">保存到记忆</span>
+                            <span class="feature-desc">AI 提取结构化记忆，自动分类存储</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">转为待办任务</span>
+                            <span class="feature-desc">将剪贴板内容转为待办任务，自动设置优先级</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">保存为问题</span>
+                            <span class="feature-desc">将问题保存到知识库，待后续解答</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 6. 用户画像与设置 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">👤</div>
+                <div>
+                    <div class="section-title">用户画像与设置</div>
+                    <div class="section-desc">个人信息、偏好设置、远程配置</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🪪</div>
+                        <div>
+                            <div class="category-title">用户画像</div>
+                            <div class="category-desc">个人信息、职业、活跃项目、高频人物</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">基本信息</span>
+                            <span class="feature-desc">姓名、昵称、职业、组织、行业、地区</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">活跃项目</span>
+                            <span class="feature-desc">管理当前活跃的项目，影响待办优先级判定</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">高频人物</span>
+                            <span class="feature-desc">系统自动学习高频联系人，影响记忆分层</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">AI 导入画像</span>
+                            <span class="feature-desc">粘贴文本让 AI 自动提取并填充画像信息</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">工作规则</span>
+                            <span class="feature-desc">设置工作时段、优先级偏好等规则</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">⚙️</div>
+                        <div>
+                            <div class="category-title">系统设置</div>
+                            <div class="category-desc">外观、语言、通知、隐私设置</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">主题切换</span>
+                            <span class="feature-desc">浅色/深色主题切换，跟随系统设置</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">语言设置</span>
+                            <span class="feature-desc">多语言支持，中英文切换</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">通知设置</span>
+                            <span class="feature-desc">系统通知开关、声音开关</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">隐私设置</span>
+                            <span class="feature-desc">数据本地存储、云端同步开关</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">数据备份</span>
+                            <span class="feature-desc">导出/导入本地数据文件</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">☁️</div>
+                        <div>
+                            <div class="category-title">远程配置</div>
+                            <div class="category-desc">登录、服务器地址、通知推送</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">账号登录</span>
+                            <span class="feature-desc">邮箱+密码登录，JWT Token 认证</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">服务器地址</span>
+                            <span class="feature-desc">配置 ADPToolkit/Config Server 服务器地址</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">通知推送</span>
+                            <span class="feature-desc">接收服务端推送的通知消息</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">数据同步</span>
+                            <span class="feature-desc">与云端同步任务、笔记、记忆等数据</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">检查更新</span>
+                            <span class="feature-desc">自动检查应用更新</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 7. AI 模型配置 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">🔧</div>
+                <div>
+                    <div class="section-title">AI 模型配置</div>
+                    <div class="section-desc">API 配置、供应商管理、Prompt 管理</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🔑</div>
+                        <div>
+                            <div class="category-title">API 配置</div>
+                            <div class="category-desc">DeepSeek、OpenAI、Anthropic 等</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">DeepSeek 配置</span>
+                            <span class="feature-desc">配置 API Key、Base URL，支持 deepseek-v4-flash/pro</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">OpenAI 配置</span>
+                            <span class="feature-desc">配置 API Key，支持 GPT-4/4o/3.5</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">Anthropic 配置</span>
+                            <span class="feature-desc">配置 API Key，支持 Claude 3.5/3</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">连接测试</span>
+                            <span class="feature-desc">一键测试 API 连接是否正常</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">使用统计</span>
+                            <span class="feature-desc">查看每日 Token 消耗和调用次数</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🌍</div>
+                        <div>
+                            <div class="category-title">国内模型</div>
+                            <div class="category-desc">DeepSeek、腾讯云、火山引擎</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">DeepSeek 国内</span>
+                            <span class="feature-desc">配置国内 DeepSeek API，支持直连</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">腾讯云</span>
+                            <span class="feature-desc">配置 SecretId/SecretKey，支持混元大模型</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">火山引擎</span>
+                            <span class="feature-desc">配置 API Key，支持豆包大模型</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">OpenRouter</span>
+                            <span class="feature-desc">统一接口访问多家模型，支持代理模式</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">模型列表解析</span>
+                            <span class="feature-desc">自动解析供应商支持的模型列表</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">📝</div>
+                        <div>
+                            <div class="category-title">Prompt 管理</div>
+                            <div class="category-desc">模板编辑、变量注入、在线生效</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">Prompt 模板</span>
+                            <span class="feature-desc">18+ 个 Prompt 模板，覆盖各类 AI 功能</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">在线编辑</span>
+                            <span class="feature-desc">可视化编辑 Prompt，实时生效无需重启</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">变量注入</span>
+                            <span class="feature-desc">支持 {{variable}} 模板变量，自动填充用户画像/上下文</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">正负样本注入</span>
+                            <span class="feature-desc">自动注入最近 N 条正/负样本作为 few-shot 示例</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">远程下发</span>
+                            <span class="feature-desc">组织管理员可通过配置服务统一管理 Prompt</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 8. 洞察与分析 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">📊</div>
+                <div>
+                    <div class="section-title">洞察与分析</div>
+                    <div class="section-desc">仪表盘、知识演化、人脉图谱</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">📈</div>
+                        <div>
+                            <div class="category-title">仪表盘</div>
+                            <div class="category-desc">数据概览、趋势分析、效率统计</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">任务统计</span>
+                            <span class="feature-desc">待办/进行中/已完成任务数量和趋势</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">专注统计</span>
+                            <span class="feature-desc">番茄钟使用情况、每日专注时长</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">知识统计</span>
+                            <span class="feature-desc">知识原子/簇/文章数量和增长趋势</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">AI 使用统计</span>
+                            <span class="feature-desc">Token 消耗、调用次数、成本分析</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🔄</div>
+                        <div>
+                            <div class="category-title">知识演化</div>
+                            <div class="feature-desc">记忆分层、知识成熟度、自动演进</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">记忆分层</span>
+                            <span class="feature-desc">瞬时→短期→长期记忆自动演进，AI 判定晋升/降级</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">知识成熟度</span>
+                            <span class="feature-desc">知识簇状态：growing → mature → distilled</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">记忆淘汰</span>
+                            <span class="feature-desc">3 个月未访问或内容过时的记忆自动降级</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">记忆合并</span>
+                            <span class="feature-desc">相似记忆自动合并，避免重复</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">👥</div>
+                        <div>
+                            <div class="category-title">人脉图谱</div>
+                            <div class="category-desc">人物关系、交互频率、影响力分析</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">人物档案</span>
+                            <span class="feature-desc">查看人物详细信息：公司、职位、关系、互动历史</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">关系图谱</span>
+                            <span class="feature-desc">可视化展示人物之间的关系网络</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">交互频率</span>
+                            <span class="feature-desc">统计与每个人物的交互频率和最近互动时间</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">文本导入</span>
+                            <span class="feature-desc">从文本中批量提取人物关系信息</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 9. 文档与资产 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">📁</div>
+                <div>
+                    <div class="section-title">文档与资产</div>
+                    <div class="section-desc">云端资料、本地文件、Agent 产物</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">☁️</div>
+                        <div>
+                            <div class="category-title">云端资料</div>
+                            <div class="category-desc">COS 存储、文件上传下载</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">文件上传</span>
+                            <span class="feature-desc">上传本地文件到云端存储</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">文件下载</span>
+                            <span class="feature-desc">下载云端文件到本地</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">文件预览</span>
+                            <span class="feature-desc">在线预览 PDF、图片、Office 文档</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">文档解析</span>
+                            <span class="feature-desc">上传 Word/PPT/Excel 自动解析为文本</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">💻</div>
+                        <div>
+                            <div class="category-title">本地文件</div>
+                            <div class="category-desc">文件选择、拖拽、附件管理</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">文件选择器</span>
+                            <span class="feature-desc">选择本地文件发送给 AI 分析</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">拖拽上传</span>
+                            <span class="feature-desc">拖拽文件到输入框自动添加为附件</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">附件管理</span>
+                            <span class="feature-desc">查看、删除、预览已添加的附件</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">文件引用</span>
+                            <span class="feature-desc">📎文件名 引用显示，发送时自动替换为完整路径</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🎨</div>
+                        <div>
+                            <div class="category-title">Agent 产物</div>
+                            <div class="category-desc">AI 生成的 HTML/JSON/CSS 等文件</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">自动保存</span>
+                            <span class="feature-desc">AI 生成的代码/HTML 自动保存到 Agent 产物目录</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">产物列表</span>
+                            <span class="feature-desc">查看所有已保存的 Agent 产物，按日期分组</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">预览/打开</span>
+                            <span class="feature-desc">在浏览器中预览或打开 HTML 文件</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">删除管理</span>
+                            <span class="feature-desc">删除不需要的产物，释放存储空间</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">🔌</div>
+                        <div>
+                            <div class="category-title">SkillHub 市场</div>
+                            <div class="category-desc">技能搜索、安装、管理</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">技能搜索</span>
+                            <span class="feature-desc">搜索 SkillHub 市场中的技能</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">一键安装</span>
+                            <span class="feature-desc">一键安装技能到 CC 工作目录</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">技能管理</span>
+                            <span class="feature-desc">查看已安装技能，卸载不需要的技能</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">技能上传</span>
+                            <span class="feature-desc">上传自定义技能到市场</span>
+                            <span class="feature-tag tag-new">新功能</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 10. 报告与导出 -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">📄</div>
+                <div>
+                    <div class="section-title">报告与导出</div>
+                    <div class="section-desc">日报、周报、自定义报告</div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">📊</div>
+                        <div>
+                            <div class="category-title">日报周报</div>
+                            <div class="category-desc">AI 自动生成，任务完成情况、洞察、建议</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">自动生成日报</span>
+                            <span class="feature-desc">AI 汇总当日任务完成情况、关键事件、明日建议</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">自动生成周报</span>
+                            <span class="feature-desc">AI 汇总本周工作成果、知识沉淀、下周计划</span>
+                            <span class="feature-tag tag-ai">AI</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">报告历史</span>
+                            <span class="feature-desc">查看历史日报/周报，支持搜索和筛选</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">报告导出</span>
+                            <span class="feature-desc">导出报告为 HTML 或 PDF</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="category-card">
+                <div class="category-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="category-info">
+                        <div class="category-icon">⬇️</div>
+                        <div>
+                            <div class="category-title">数据导出</div>
+                            <div class="category-desc">Markdown、HTML、PDF 多格式</div>
+                        </div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">1</span>
+                            <span class="feature-name">Markdown 导出</span>
+                            <span class="feature-desc">笔记、文章、报告导出为 Markdown</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">2</span>
+                            <span class="feature-name">HTML 导出</span>
+                            <span class="feature-desc">导出为富文本 HTML，保留样式</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">3</span>
+                            <span class="feature-name">PDF 导出</span>
+                            <span class="feature-desc">导出为 PDF 文档，适合打印</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">4</span>
+                            <span class="feature-name">批量导出</span>
+                            <span class="feature-desc">多篇笔记/文章批量导出为 ZIP</span>
+                            <span class="feature-tag tag-hot">热门</span>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-row">
+                            <span class="feature-index">5</span>
+                            <span class="feature-name">数据备份</span>
+                            <span class="feature-desc">导出全部本地数据为备份文件</span>
+                            <span class="feature-tag tag-core">核心</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>忆境 Memora v3.0 — 让 AI 成为你的第二大脑</p>
+            <p>© 2024-2026 Memora Team · All rights reserved</p>
+        </div>
+    </div>
+    
+    <script>
+        // 默认展开所有卡片
+        document.querySelectorAll('.category-card').forEach(card => {
+            card.classList.add('expanded');
+        });
+    </script>
+</body>
+</html>

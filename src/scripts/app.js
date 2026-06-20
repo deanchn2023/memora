@@ -7,6 +7,7 @@ const App = {
   newNoteCount: 0, // 记事本角标：不在记事本页时新笔记的累加计数
   dbSyncTimer: null, // 数据库同步定时器
   _chatAttachments: [], // 聊天文件附件列表
+  _chatFileRefs: {}, // 文件引用映射：📎文件名 → 完整路径
   _aiAssistantMode: null, // AI 助手模式：'agent' 或 'llm'（全局控制）
   _agentStreamTimerStart: 0, // Agent 流式计时起点
   _agentStreamTimerInterval: null, // Agent 流式计时器
@@ -661,6 +662,26 @@ const App = {
       await this._handleChatClick(e);
     });
 
+    // 任务列表事件委托（避免每次渲染重复绑定 N×7 个监听器）
+    const taskListEl = document.getElementById('taskList');
+    if (taskListEl) {
+      taskListEl.addEventListener('click', (e) => this._handleTaskListClick(e));
+      taskListEl.addEventListener('mouseover', (e) => this._handleTaskListMouseOver(e));
+      taskListEl.addEventListener('mouseout', (e) => this._handleTaskListMouseOut(e));
+      taskListEl.addEventListener('mousemove', (e) => this._handleTaskListMouseMove(e));
+    }
+    const sortToggleEl = document.getElementById('taskSortToggle');
+    if (sortToggleEl) {
+      sortToggleEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.sort-btn');
+        if (!btn) return;
+        this._taskSortBy = btn.dataset.sort;
+        sortToggleEl.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.renderTaskList();
+      });
+    }
+
     // 通知铃铛
     document.getElementById('notificationBellBtn')?.addEventListener('click', () => this._toggleNotificationPanel());
     document.getElementById('notificationMarkAllBtn')?.addEventListener('click', () => this._markAllNotificationsRead());
@@ -673,6 +694,212 @@ const App = {
       if (panel && !panel.classList.contains('hidden') && !panel.contains(e.target) && !bellBtn?.contains(e.target)) {
         panel.classList.add('hidden');
       }
+    });
+
+    // 通知列表事件委托（点击标记已读 + 删除）
+    document.getElementById('notificationPanelBody')?.addEventListener('click', async (e) => {
+      const delBtn = e.target.closest('.notification-item-delete');
+      if (delBtn) {
+        e.stopPropagation();
+        const id = delBtn.dataset.id;
+        const body = document.getElementById('notificationPanelBody');
+        const item = delBtn.closest('.notification-item');
+        if (item) {
+          item.style.transition = 'opacity 0.15s, transform 0.15s';
+          item.style.opacity = '0';
+          item.style.transform = 'translateX(20px)';
+          setTimeout(() => {
+            item.remove();
+            if (body && body.querySelectorAll('.notification-item').length === 0) {
+              body.innerHTML = `<div class="notification-empty">${window.i18n?.t('notification.empty') || '暂无通知'}</div>`;
+            }
+          }, 150);
+        }
+        const currentBadge = document.getElementById('notificationBadge');
+        const unreadItems = body ? body.querySelectorAll('.notification-item.unread') : [];
+        const unreadCount = Math.max(0, unreadItems.length - 1);
+        if (currentBadge) {
+          if (unreadCount > 0) {
+            currentBadge.textContent = unreadCount;
+            currentBadge.classList.remove('hidden');
+          } else {
+            currentBadge.classList.add('hidden');
+          }
+        }
+        if (window.electronAPI?.notificationsMarkRead) {
+          window.electronAPI.notificationsMarkRead(id).catch(() => {});
+        }
+        return;
+      }
+      const unreadItem = e.target.closest('.notification-item.unread');
+      if (unreadItem) {
+        if (e.target.closest('.notification-item-delete')) return;
+        const id = unreadItem.dataset.id;
+        if (window.electronAPI?.notificationsMarkRead) {
+          await window.electronAPI.notificationsMarkRead(id);
+        }
+        unreadItem.classList.remove('unread');
+        unreadItem.classList.add('read');
+        const currentBadge = document.getElementById('notificationBadge');
+        const count = Math.max(0, parseInt(currentBadge?.textContent || '0') - 1);
+        if (currentBadge) {
+          if (count > 0) {
+            currentBadge.textContent = count;
+          } else {
+            currentBadge.classList.add('hidden');
+          }
+        }
+      }
+    });
+
+    // SkillHub 搜索结果事件委托（安装/卸载）
+    document.getElementById('skillhubResults')?.addEventListener('click', async (e) => {
+      const installBtn = e.target.closest('.skillhub-install-btn');
+      if (installBtn) {
+        await this._skillhubInstallSkill(installBtn.dataset.slug, installBtn);
+        return;
+      }
+      const uninstallBtn = e.target.closest('.skillhub-uninstall-btn');
+      if (uninstallBtn) {
+        await this._skillhubUninstallSkill(uninstallBtn.dataset.slug, uninstallBtn);
+      }
+    });
+
+    // 连接器网格事件委托（toggle/edit/delete）
+    document.getElementById('connectorGrid')?.addEventListener('click', (e) => {
+      const editBtn = e.target.closest('[data-edit-id]');
+      if (editBtn) { this._openConnectorModal(editBtn.dataset.editId); return; }
+      const delBtn = e.target.closest('[data-delete-id]');
+      if (delBtn) { this._deleteConnector(delBtn.dataset.deleteId); return; }
+    });
+    document.getElementById('connectorGrid')?.addEventListener('change', (e) => {
+      const toggle = e.target.closest('[data-toggle-id]');
+      if (toggle) { this._toggleConnector(toggle.dataset.toggleId, toggle.checked); }
+    });
+
+    // CC 连接器列表事件委托（checkbox change）
+    document.getElementById('ccConnectorList')?.addEventListener('change', () => {
+      this._updateCCConnectorLabel();
+    });
+
+    // 聊天附件事件委托（移除/下载）
+    document.getElementById('chatAttachments')?.addEventListener('click', (e) => {
+      const removeBtn = e.target.closest('.attachment-remove');
+      if (removeBtn) {
+        const idx = parseInt(removeBtn.dataset.idx);
+        this._chatAttachments.splice(idx, 1);
+        this.renderChatAttachments();
+        return;
+      }
+      const nameEl = e.target.closest('.attachment-name');
+      if (nameEl) {
+        const idx = parseInt(nameEl.dataset.idx);
+        const att = this._chatAttachments[idx];
+        if (att) this.downloadAttachment(att);
+      }
+    });
+
+    // 笔记列表拖拽事件委托（dragstart/dragend）
+    document.getElementById('notebookList')?.addEventListener('dragstart', (e) => {
+      const item = e.target.closest('.note-item[draggable="true"]');
+      if (!item) return;
+      if (e.target.classList.contains('note-checkbox')) { e.preventDefault(); return; }
+      this._dragNoteId = item.dataset.id;
+      this._dragNoteCategory = item.dataset.category;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.dataset.id);
+      const title = item.querySelector('.note-title')?.textContent || '';
+      const category = item.querySelector('.note-category')?.textContent || '';
+      const ghost = document.createElement('div');
+      ghost.className = 'note-drag-ghost';
+      ghost.innerHTML = `<span class="ghost-category">${category}</span><span class="ghost-title">${title}</span>`;
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 8, 12);
+      requestAnimationFrame(() => {
+        item.classList.add('dragging-active');
+        requestAnimationFrame(() => ghost.remove());
+      });
+    });
+    document.getElementById('notebookList')?.addEventListener('dragend', (e) => {
+      const item = e.target.closest('.note-item[draggable="true"]');
+      if (!item) return;
+      item.classList.remove('dragging', 'dragging-active');
+      this._dragNoteId = null;
+      this._dragNoteCategory = null;
+      document.querySelectorAll('.category-item, .category-item-wrapper').forEach(c => {
+        c.classList.remove('drop-target', 'drop-hover');
+      });
+    });
+
+    // 笔记列表复选框事件委托
+    document.getElementById('notebookList')?.addEventListener('change', (e) => {
+      const cb = e.target.closest('.note-checkbox');
+      if (!cb) return;
+      e.stopPropagation();
+      const noteItem = cb.closest('.note-item');
+      if (cb.checked) noteItem?.classList.add('note-selected');
+      else noteItem?.classList.remove('note-selected');
+      this.updateNotebookBatchBar();
+    });
+
+    // 分类列表拖放目标事件委托（dragover/dragenter/dragleave/drop）
+    document.getElementById('categoryList')?.addEventListener('dragover', (e) => {
+      const target = e.target.closest('.category-item-wrapper, .category-item');
+      if (!target) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    document.getElementById('categoryList')?.addEventListener('dragenter', (e) => {
+      const target = e.target.closest('.category-item-wrapper, .category-item');
+      if (!target) return;
+      const categoryKey = target.dataset.category;
+      if (!categoryKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (categoryKey !== 'all' && categoryKey !== this._dragNoteCategory) {
+        target.classList.add('drop-hover');
+        const innerItem = target.querySelector('.category-item');
+        if (innerItem) innerItem.classList.add('drop-hover');
+      }
+    });
+    document.getElementById('categoryList')?.addEventListener('dragleave', (e) => {
+      const target = e.target.closest('.category-item-wrapper, .category-item');
+      if (!target) return;
+      if (!target.contains(e.relatedTarget)) {
+        target.classList.remove('drop-hover');
+        const innerItem = target.querySelector('.category-item');
+        if (innerItem) innerItem.classList.remove('drop-hover');
+      }
+    });
+    document.getElementById('categoryList')?.addEventListener('drop', async (e) => {
+      const target = e.target.closest('.category-item-wrapper, .category-item');
+      if (!target) return;
+      e.preventDefault();
+      e.stopPropagation();
+      target.classList.remove('drop-hover');
+      const innerItem = target.querySelector('.category-item');
+      if (innerItem) innerItem.classList.remove('drop-hover');
+      const noteId = this._dragNoteId;
+      const targetCategory = target.dataset.category;
+      const oldCategory = this._dragNoteCategory;
+      if (!noteId || !targetCategory || targetCategory === 'all' || targetCategory === oldCategory) return;
+      try {
+        if (window.electronAPI) {
+          const result = await window.electronAPI.notebookUpdateNote(noteId, { category: targetCategory });
+          if (result.success) {
+            this.showToast(`已移至「${this.getNoteCategoryLabel(targetCategory)}」`, 'success');
+            const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+            this.loadNotes(activeCat);
+          }
+        }
+      } catch (error) {
+        console.error('拖拽修改分类失败:', error);
+        this.showToast('修改分类失败', 'error');
+      }
+      this._dragNoteId = null;
+      this._dragNoteCategory = null;
     });
 
     // 监听服务端通知推送
@@ -2242,68 +2469,7 @@ const App = {
         <button class="notification-item-delete" data-id="${n.id}" title="删除">✕</button>
       </div>
     `).join('');
-
-    // 点击标记已读
-    body.querySelectorAll('.notification-item.unread').forEach(el => {
-      el.addEventListener('click', async (e) => {
-        // 忽略删除按钮的点击
-        if (e.target.classList.contains('notification-item-delete')) return;
-        const id = el.dataset.id;
-        if (window.electronAPI?.notificationsMarkRead) {
-          await window.electronAPI.notificationsMarkRead(id);
-        }
-        el.classList.remove('unread');
-        el.classList.add('read');
-        // 更新 badge
-        const currentBadge = document.getElementById('notificationBadge');
-        const count = Math.max(0, parseInt(currentBadge?.textContent || '0') - 1);
-        if (currentBadge) {
-          if (count > 0) {
-            currentBadge.textContent = count;
-          } else {
-            currentBadge.classList.add('hidden');
-          }
-        }
-      });
-    });
-
-    // 删除按钮
-    body.querySelectorAll('.notification-item-delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id;
-        // 乐观更新：先移除 DOM
-        const item = btn.closest('.notification-item');
-        if (item) {
-          item.style.transition = 'opacity 0.15s, transform 0.15s';
-          item.style.opacity = '0';
-          item.style.transform = 'translateX(20px)';
-          setTimeout(() => {
-            item.remove();
-            // 如果列表为空，显示空状态
-            if (body.querySelectorAll('.notification-item').length === 0) {
-              body.innerHTML = `<div class="notification-empty">${window.i18n?.t('notification.empty') || '暂无通知'}</div>`;
-            }
-          }, 150);
-        }
-        // 更新 badge
-        const currentBadge = document.getElementById('notificationBadge');
-        const unreadItems = body.querySelectorAll('.notification-item.unread');
-        const unreadCount = Math.max(0, unreadItems.length - 1);
-        if (currentBadge) {
-          if (unreadCount > 0) {
-            currentBadge.textContent = unreadCount;
-            currentBadge.classList.remove('hidden');
-          } else {
-            currentBadge.classList.add('hidden');
-          }
-        }
-        // 后台异步标记已读
-        if (window.electronAPI?.notificationsMarkRead) {
-          window.electronAPI.notificationsMarkRead(id).catch(() => {});
-        }
-      });
-    });
+    // 事件委托已在 bindEvents() 中绑定，无需逐元素 addEventListener
   },
 
   _toggleNotificationPanel() {
@@ -2512,6 +2678,13 @@ const App = {
     // 恢复 CC 模式 UI（工作目录栏 + skill 下拉 + 连接器下拉）
     // 切到其他标签再切回来时，ccWorkdirBar 可能未被正确恢复
     this._updateCCWorkdirBar();
+
+    // 确保供应商选择器已初始化（首次进入 AI 助手页面时自动加载）
+    const providerSelect = document.getElementById('ccProviderSelect');
+    if (providerSelect && providerSelect.options.length <= 1) {
+      this._initProviderSelector();
+    }
+
     if (this._aiAssistantMode === 'cc') {
       this._refreshCCConnectorSelect();
     }
@@ -2962,6 +3135,9 @@ const App = {
     // 需要有消息或附件
     if (!message && this._chatAttachments.length === 0) return;
 
+    // 解析文件引用：将 📎文件名 替换为完整路径
+    const resolvedMessage = this._resolveFileRefs(message);
+
     // v2.6: 专家团群聊模式
     if (window.ExpertSystem?.isGroupChatActive?.() || window.ExpertSystem?.getActiveGroup?.()) {
       const group = window.ExpertSystem.getActiveGroup();
@@ -3023,7 +3199,7 @@ const App = {
         this.clearChatAttachments();
 
         // v2.6.1: 使用 IPC 后台执行引擎（传递附件数据，主进程处理上传）
-        this._startBackgroundGroupChat(message, group, attachmentData);
+        this._startBackgroundGroupChat(resolvedMessage, group, attachmentData);
         return;
       }
       // 群聊进行中，不允许发送新消息
@@ -3130,6 +3306,10 @@ const App = {
       let result;
       // 构建附件数据（读取文件内容）
       const attachmentData = await this.buildAttachmentData(attachments);
+
+      // 构建默认上下文信息（当前时间 + 用户画像），注入到发送给 AI 的消息中
+      const defaultContext = await this._buildDefaultContext();
+      const sendMessage = defaultContext ? (defaultContext + '\n' + resolvedMessage) : resolvedMessage;
       
       // 根据 AI 助手模式决定调用路径：
       // - agent 模式：使用 ADP 智能体（工具调用、多步推理等）
@@ -3241,7 +3421,7 @@ const App = {
         // v2.7: 本地上下文注入 systemRole
         const expertConfig = window.ExpertSystem?.getActiveADPConfig?.();
         const adpMessageData = {
-          message: message,
+          message: sendMessage,
           attachments: attachmentData
         };
         if (expertConfig?.appKey) {
@@ -3388,7 +3568,7 @@ const App = {
         });
 
         const ccResult = await window.electronAPI.ccInvoke({
-          message,
+          message: sendMessage,
           attachments: attachmentData,
           sessionId: ccSessionId,
           systemRole: options.systemRole || '',
@@ -3448,7 +3628,7 @@ const App = {
           }
         });
 
-        result = await window.electronAPI.agent.invoke(message, agentType, attachmentData);
+        result = await window.electronAPI.agent.invoke(sendMessage, agentType, attachmentData);
         
         if (result.success && result.streaming) {
           // 流式模式：处理缓冲事件 + 后续事件
@@ -5174,16 +5354,34 @@ const App = {
       // 无语言标记时，根据内容推断
       const rawContent = codeEl.textContent || '';
       if (!lang) {
-        if (rawContent.trim().startsWith('<!DOCTYPE') || rawContent.trim().startsWith('<html')) {
+        const trimmed = rawContent.trim();
+        if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
           lang = 'html';
-        } else if (rawContent.trim().startsWith('<svg') || rawContent.includes('xmlns="http://www.w3.org/2000/svg"')) {
+        } else if (trimmed.startsWith('<svg') || rawContent.includes('xmlns="http://www.w3.org/2000/svg"')) {
           lang = 'svg';
-        } else if (rawContent.trim().startsWith('{') || rawContent.trim().startsWith('[')) {
+        } else if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
           lang = 'json';
-        } else if (rawContent.trim().startsWith('<')) {
+        } else if (trimmed.startsWith('<')) {
           lang = 'xml';
         } else {
-          lang = 'txt';
+          // 检测是否为文件路径：单行内容包含路径分隔符且有文件扩展名
+          const isFilePath = /^\/[^\s]*\.\w+$/.test(trimmed) || /^[A-Za-z]:[\\/][^\s]*\.\w+$/.test(trimmed);
+          if (isFilePath) {
+            const fileExt = trimmed.split('.').pop().toLowerCase();
+            const extToLang = {
+              html: 'html', htm: 'html',
+              svg: 'svg', xml: 'xml', json: 'json',
+              md: 'md', markdown: 'md',
+              js: 'javascript', mjs: 'javascript',
+              ts: 'typescript', css: 'css',
+              yaml: 'yaml', yml: 'yml',
+              py: 'python', sql: 'sql', csv: 'csv',
+              sh: 'bash', bash: 'bash',
+            };
+            lang = extToLang[fileExt] || 'txt';
+          } else {
+            lang = 'txt';
+          }
         }
       }
 
@@ -5693,18 +5891,7 @@ const App = {
         <div class="skillhub-grid">
           ${skills.map(s => this._renderSkillHubCard(s)).join('')}
         </div>`;
-
-      // 绑定安装/卸载按钮
-      resultsEl.querySelectorAll('.skillhub-install-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          await this._skillhubInstallSkill(btn.dataset.slug, btn);
-        });
-      });
-      resultsEl.querySelectorAll('.skillhub-uninstall-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          await this._skillhubUninstallSkill(btn.dataset.slug, btn);
-        });
-      });
+      // 事件委托已在 bindEvents() 中绑定
     } catch (e) {
       resultsEl.innerHTML = `
         <div class="skillhub-empty">
@@ -5867,19 +6054,7 @@ const App = {
         </div>
       `;
     }).join('');
-
-    // 绑定事件
-    grid.querySelectorAll('[data-toggle-id]').forEach(el => {
-      el.addEventListener('change', (e) => {
-        this._toggleConnector(e.target.dataset.toggleId, e.target.checked);
-      });
-    });
-    grid.querySelectorAll('[data-edit-id]').forEach(el => {
-      el.addEventListener('click', () => this._openConnectorModal(el.dataset.editId));
-    });
-    grid.querySelectorAll('[data-delete-id]').forEach(el => {
-      el.addEventListener('click', () => this._deleteConnector(el.dataset.deleteId));
-    });
+    // 事件委托已在 bindEvents() 中绑定
   },
 
   _escapeHtml(text) {
@@ -6116,11 +6291,7 @@ const App = {
         </label>
       `;
     }).join('');
-
-    list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-      cb.addEventListener('change', () => this._updateCCConnectorLabel());
-    });
-
+    // 事件委托已在 bindEvents() 中绑定
     this._updateCCConnectorLabel();
   },
 
@@ -7661,6 +7832,8 @@ const App = {
         type: fileType,
         file: file // 保留 File 对象，发送时读取
       });
+      // 将文件路径引用插入输入框（显示为文件名，发送时替换为完整路径）
+      this._insertFileRefIntoInput(file.name, file.path || '');
     }
     
     this.renderChatAttachments();
@@ -7696,6 +7869,8 @@ const App = {
           type: fileType,
           file: file
         });
+        // 将文件路径引用插入输入框（显示为文件名，发送时替换为完整路径）
+        this._insertFileRefIntoInput(name, file.path || '');
       }
     }
     if (hasFiles) {
@@ -7762,26 +7937,7 @@ const App = {
         <button class="attachment-remove" data-idx="${idx}" title="移除">&times;</button>
       </div>`;
     }).join('');
-    
-    // 绑定移除按钮
-    container.querySelectorAll('.attachment-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const idx = parseInt(e.currentTarget.dataset.idx);
-        this._chatAttachments.splice(idx, 1);
-        this.renderChatAttachments();
-      });
-    });
-
-    // 绑定文件名点击下载
-    container.querySelectorAll('.attachment-name').forEach(nameEl => {
-      nameEl.style.cursor = 'pointer';
-      nameEl.addEventListener('click', (e) => {
-        const idx = parseInt(e.currentTarget.dataset.idx);
-        const att = this._chatAttachments[idx];
-        if (!att) return;
-        this.downloadAttachment(att);
-      });
-    });
+    // 事件委托已在 bindEvents() 中绑定
   },
 
   downloadAttachment(att) {
@@ -7811,7 +7967,94 @@ const App = {
 
   clearChatAttachments() {
     this._chatAttachments = [];
+    this._chatFileRefs = {};
     this.renderChatAttachments();
+  },
+
+  /**
+   * 将文件路径引用插入到输入框中
+   * 显示为 📎文件名 格式，发送时替换为完整路径
+   */
+  _insertFileRefIntoInput(fileName, filePath) {
+    if (!filePath) return;
+    const input = document.getElementById('aiChatInput');
+    if (!input) return;
+    const refKey = `📎${fileName}`;
+    // 存储映射
+    this._chatFileRefs[refKey] = filePath;
+    // 在当前光标位置插入引用
+    const start = input.selectionStart || input.value.length;
+    const end = input.selectionEnd || input.value.length;
+    const before = input.value.substring(0, start);
+    const after = input.value.substring(end);
+    // 如果前面有内容且不以空格/换行结尾，添加空格
+    const prefix = (before && !/\s$/.test(before)) ? ' ' : '';
+    const insertText = `${prefix}${refKey} `;
+    input.value = before + insertText + after;
+    // 调整光标位置
+    const newCursorPos = start + insertText.length;
+    input.setSelectionRange(newCursorPos, newCursorPos);
+    // 触发 auto-resize
+    input.style.height = 'auto';
+    input.style.height = input.scrollHeight + 'px';
+    input.focus();
+  },
+
+  /**
+   * 解析消息中的文件引用，将 📎文件名 替换为完整路径
+   */
+  _resolveFileRefs(message) {
+    let resolved = message;
+    for (const [refKey, filePath] of Object.entries(this._chatFileRefs)) {
+      // 转义正则特殊字符
+      const escapedKey = refKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      resolved = resolved.replace(new RegExp(escapedKey, 'g'), filePath);
+    }
+    return resolved;
+  },
+
+  /**
+   * 构建默认上下文信息（当前时间 + 用户画像）
+   * 注入到发送给 AI 的消息中，不影响 UI 显示
+   */
+  async _buildDefaultContext() {
+    const parts = [];
+    // 当前时间
+    const now = new Date();
+    const timeStr = now.toLocaleString('zh-CN', { hour12: false });
+    const weekday = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
+    parts.push(`当前时间: ${timeStr} 星期${weekday}`);
+
+    // 用户画像
+    try {
+      const profile = await window.electronAPI?.profile?.get?.();
+      if (profile) {
+        const userInfo = profile.user || {};
+        const profileParts = [];
+        if (userInfo.name) profileParts.push(`姓名: ${userInfo.name}`);
+        if (userInfo.nickname) profileParts.push(`昵称: ${userInfo.nickname}`);
+        if (userInfo.profession) profileParts.push(`职业: ${userInfo.profession}`);
+        if (userInfo.organization) profileParts.push(`组织: ${userInfo.organization}`);
+        if (userInfo.industry) profileParts.push(`行业: ${userInfo.industry}`);
+        if (userInfo.region) profileParts.push(`地区: ${userInfo.region}`);
+        // 活跃项目
+        const projects = profile.active_projects?.filter(p => p.status === 'active') || [];
+        if (projects.length > 0) {
+          profileParts.push(`活跃项目: ${projects.map(p => p.name).join(', ')}`);
+        }
+        // 高频人物
+        const persons = (profile.frequent_persons || []).slice(0, 5);
+        if (persons.length > 0) {
+          profileParts.push(`高频联系人: ${persons.map(p => p.name).join(', ')}`);
+        }
+        if (profileParts.length > 0) {
+          parts.push(`用户画像: ${profileParts.join(' | ')}`);
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    if (parts.length === 0) return '';
+    return `[上下文信息]\n${parts.join('\n')}\n`;
   },
 
   async buildAttachmentData(attachments) {
@@ -10304,16 +10547,17 @@ ${JSON.stringify(reportData, null, 2)}`;
         </div>
       `;
       
-      overlay.querySelectorAll('.delete-reason-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+      overlay.addEventListener('click', (e) => {
+        const btn = e.target.closest('.delete-reason-btn');
+        if (btn) {
           overlay.remove();
           resolve(btn.dataset.reason);
-        });
-      });
-      
-      overlay.querySelector('.delete-reason-cancel').addEventListener('click', () => {
-        overlay.remove();
-        resolve(null);
+          return;
+        }
+        if (e.target.closest('.delete-reason-cancel')) {
+          overlay.remove();
+          resolve(null);
+        }
       });
       
       document.body.appendChild(overlay);
@@ -10357,144 +10601,16 @@ ${JSON.stringify(reportData, null, 2)}`;
   _dragNoteId: null,
   _dragNoteCategory: null,
 
-  // 绑定笔记项拖拽事件
-  bindNoteDragEvents() {
-    const noteItems = document.querySelectorAll('.note-item[draggable="true"]');
-    noteItems.forEach(item => {
-      item.addEventListener('dragstart', (e) => {
-        // 复选框区域不触发拖拽
-        if (e.target.classList.contains('note-checkbox')) {
-          e.preventDefault();
-          return;
-        }
-        this._dragNoteId = item.dataset.id;
-        this._dragNoteCategory = item.dataset.category;
-        item.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', item.dataset.id);
+  // 事件委托已在 bindEvents() 中绑定，无需逐元素绑定
+  bindNoteDragEvents() {},
 
-        // 创建缩小版拖拽预览
-        const title = item.querySelector('.note-title')?.textContent || '';
-        const category = item.querySelector('.note-category')?.textContent || '';
-        const ghost = document.createElement('div');
-        ghost.className = 'note-drag-ghost';
-        ghost.innerHTML = `<span class="ghost-category">${category}</span><span class="ghost-title">${title}</span>`;
-        document.body.appendChild(ghost);
-        e.dataTransfer.setDragImage(ghost, 8, 12);
-
-        // 需要延迟添加，否则拖拽预览也会半透明
-        requestAnimationFrame(() => {
-          item.classList.add('dragging-active');
-          // 清理 ghost 元素
-          requestAnimationFrame(() => ghost.remove());
-        });
-      });
-
-      item.addEventListener('dragend', () => {
-        item.classList.remove('dragging', 'dragging-active');
-        this._dragNoteId = null;
-        this._dragNoteCategory = null;
-        // 清除所有分类高亮（包括 wrapper 和 category-item）
-        document.querySelectorAll('.category-item, .category-item-wrapper').forEach(c => {
-          c.classList.remove('drop-target', 'drop-hover');
-        });
-      });
-    });
-  },
-
-  // 绑定侧边栏分类为拖放目标
-  bindCategoryDropTargets() {
-    // 绑定到 .category-item-wrapper（包含按钮的整行区域，更可靠的 drop 目标）
-    // 和独立的 .category-item（如"全部"）
-    const dropTargets = document.querySelectorAll('.category-item-wrapper, .category-item:not(.category-item-wrapper .category-item)');
-    dropTargets.forEach(target => {
-      const categoryKey = target.dataset.category;
-      if (!categoryKey) return;
-
-      target.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = 'move';
-      });
-
-      target.addEventListener('dragenter', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // 只高亮非当前分类（"全部"分类不可拖入）
-        if (categoryKey !== 'all' && categoryKey !== this._dragNoteCategory) {
-          target.classList.add('drop-hover');
-          // 同时高亮内部的 category-item
-          const innerItem = target.querySelector('.category-item');
-          if (innerItem) innerItem.classList.add('drop-hover');
-        }
-      });
-
-      target.addEventListener('dragleave', (e) => {
-        // 只在真正离开目标时移除高亮
-        if (!target.contains(e.relatedTarget)) {
-          target.classList.remove('drop-hover');
-          const innerItem = target.querySelector('.category-item');
-          if (innerItem) innerItem.classList.remove('drop-hover');
-        }
-      });
-
-      target.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        target.classList.remove('drop-hover');
-        const innerItem = target.querySelector('.category-item');
-        if (innerItem) innerItem.classList.remove('drop-hover');
-
-        const noteId = this._dragNoteId;
-        const targetCategory = categoryKey;
-        const oldCategory = this._dragNoteCategory;
-
-        if (!noteId || !targetCategory || targetCategory === 'all' || targetCategory === oldCategory) {
-          return;
-        }
-
-        try {
-          if (window.electronAPI) {
-            const result = await window.electronAPI.notebookUpdateNote(noteId, {
-              category: targetCategory
-            });
-            if (result.success) {
-              this.showToast(`已移至「${this.getNoteCategoryLabel(targetCategory)}」`, 'success');
-              const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
-              this.loadNotes(activeCat);
-            }
-          }
-        } catch (error) {
-          console.error('拖拽修改分类失败:', error);
-          this.showToast('修改分类失败', 'error');
-        }
-
-        this._dragNoteId = null;
-        this._dragNoteCategory = null;
-      });
-    });
-  },
+  // 事件委托已在 bindEvents() 中绑定，无需逐元素绑定
+  bindCategoryDropTargets() {},
 
   // ===== 记事本批量选择与发送给 ADP =====
 
-  // 绑定记事项复选框事件
-  bindNoteCheckboxEvents() {
-    const checkboxes = document.querySelectorAll('.note-checkbox');
-    checkboxes.forEach(cb => {
-      cb.addEventListener('change', (e) => {
-        e.stopPropagation();
-        const noteItem = cb.closest('.note-item');
-        if (cb.checked) {
-          noteItem.classList.add('note-selected');
-        } else {
-          noteItem.classList.remove('note-selected');
-        }
-        this.updateNotebookBatchBar();
-      });
-      // 阻止复选框的点击冒泡到 note-item（避免展开预览）
-      cb.addEventListener('click', (e) => e.stopPropagation());
-    });
-  },
+  // 事件委托已在 bindEvents() 中绑定，无需逐元素绑定
+  bindNoteCheckboxEvents() {},
 
   // 更新批量操作工具栏状态
   updateNotebookBatchBar() {
@@ -10779,35 +10895,35 @@ ${JSON.stringify(reportData, null, 2)}`;
     };
     setTimeout(() => document.addEventListener('click', closePopup), 0);
 
-    // 处理分类选择
-    popup.querySelectorAll('.category-popup-item').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        popup.remove();
-        document.removeEventListener('click', closePopup);
+    // 处理分类选择 → 事件委托
+    popup.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.category-popup-item');
+      if (!btn) return;
+      e.stopPropagation();
+      popup.remove();
+      document.removeEventListener('click', closePopup);
 
-        const newCategory = btn.dataset.key;
-        if (newCategory === currentCategory) {
-          this.showToast('分类未变更');
-          return;
-        }
+      const newCategory = btn.dataset.key;
+      if (newCategory === currentCategory) {
+        this.showToast('分类未变更');
+        return;
+      }
 
-        try {
-          if (window.electronAPI) {
-            const result = await window.electronAPI.notebookUpdateNote(noteId, {
-              category: newCategory
-            });
-            if (result.success) {
-              this.showToast(`分类已修改为「${this.getNoteCategoryLabel(newCategory)}」`);
-              const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
-              this.loadNotes(activeCat);
-            }
+      try {
+        if (window.electronAPI) {
+          const result = await window.electronAPI.notebookUpdateNote(noteId, {
+            category: newCategory
+          });
+          if (result.success) {
+            this.showToast(`分类已修改为「${this.getNoteCategoryLabel(newCategory)}」`);
+            const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+            this.loadNotes(activeCat);
           }
-        } catch (error) {
-          console.error('修改分类失败:', error);
-          this.showToast('修改分类失败', 'error');
         }
-      });
+      } catch (error) {
+        console.error('修改分类失败:', error);
+        this.showToast('修改分类失败', 'error');
+      }
     });
   },
   incrementNewNoteCount() {
@@ -11393,180 +11509,8 @@ ${JSON.stringify(reportData, null, 2)}`;
     this.showToast('已自动保存为草稿');
   },
 
-  showClipboardDetector() {
-    document.getElementById('clipboardDetector')?.classList.remove('hidden');
-  },
+  // === 剪贴板处理 + 弹窗方法已提取到 app-clipboard-dialog.js ===
 
-  hideClipboardDetector() {
-    document.getElementById('clipboardDetector')?.classList.add('hidden');
-    this.pendingClipboardTask = null;
-    
-    if (this.autoSaveTimer) {
-      clearInterval(this.autoSaveTimer);
-      this.autoSaveTimer = null;
-    }
-    
-    const countdownEl = document.getElementById('countdownDisplay');
-    if (countdownEl) {
-      countdownEl.remove();
-    }
-  },
-
-  async saveClipboardToNote() {
-    if (!this.pendingClipboardTask) return;
-    
-    const content = this.pendingClipboardTask.rawText;
-    
-    try {
-      if (window.electronAPI) {
-        const category = this.autoClassifyNote(content);
-        
-        const result = await window.electronAPI.notebookAddNote({
-          content: content,
-          category: category
-        });
-        
-        if (result.success) {
-          if (result.duplicate) {
-            this.showToast('今天已有相同内容，已跳过', 'info');
-          } else {
-            this.incrementNewNoteCount();
-            this.showToast(`已保存到笔记（${this.getNoteCategoryLabel(category)}）`);
-          }
-          this.hideClipboardDetector();
-        }
-      }
-    } catch (error) {
-      console.error('保存到笔记失败:', error);
-      this.showToast('保存到笔记失败', 'error');
-    }
-  },
-
-  async saveClipboardToMemory() {
-    if (!this.pendingClipboardTask) return;
-    
-    const content = this.pendingClipboardTask.rawText;
-    
-    try {
-      if (window.electronAPI) {
-        const memoryResult = await window.electronAPI.extractMemory(content);
-        
-        if (memoryResult.success && memoryResult.memory) {
-          this.showToast('已保存到记忆');
-          this.hideClipboardDetector();
-        } else {
-          this.showToast('保存到记忆失败', 'error');
-        }
-      }
-    } catch (error) {
-      console.error('保存到记忆失败:', error);
-      this.showToast('保存到记忆失败', 'error');
-    }
-  },
-
-  async saveClipboardAsQuestion() {
-    if (!this.pendingClipboardTask) return;
-    const content = this.pendingClipboardTask.rawText;
-
-    try {
-      if (window.electronAPI?.knowledgeAddAtom) {
-        const result = await window.electronAPI.knowledgeAddAtom({
-          content: content.trim(),
-          domain: '通用',
-          type: 'question',
-          importance: 0.7
-        });
-        if (result.success) {
-          this.showToast('❓ 问题已记录到知识库');
-          this.hideClipboardDetector();
-        } else {
-          this.showToast('记录问题失败');
-        }
-      }
-    } catch (error) {
-      console.error('记录问题失败:', error);
-      this.showToast('记录问题失败');
-    }
-  },
-
-  createTaskFromClipboard() {
-    if (!this.pendingClipboardTask) return;
-    
-    const taskData = this.pendingClipboardTask.task;
-    const dueDate = taskData.dueDate ? new Date(taskData.dueDate) : this.getDefaultDueDate();
-    
-    const task = Store.addTask({
-      title: taskData.title,
-      description: taskData.description || '',
-      estimatedDuration: taskData.estimatedDuration || 60,
-      priority: taskData.priority || 'medium',
-      dueDate: dueDate.toISOString(),
-      source: 'clipboard',
-      rawText: this.pendingClipboardTask.rawText,
-      taskType: taskData.taskType || 'manual',
-      recurrence: taskData.recurrence || null
-    });
-    
-    task.reminders = Reminder.calculateReminders(task);
-    Store.updateTask(task.id, { reminders: task.reminders });
-    
-    if (document.getElementById('syncCalendar').checked && window.electronAPI) {
-      window.electronAPI.addToCalendar(task);
-    }
-    
-    this.hideClipboardDetector();
-    this.renderTaskList();
-    Calendar.render();
-    
-    this.showToast('任务已创建');
-  },
-
-  editClipboardTask() {
-    if (!this.pendingClipboardTask) return;
-    
-    const taskData = this.pendingClipboardTask.task;
-    const dueDate = taskData.dueDate ? new Date(taskData.dueDate) : this.getDefaultDueDate();
-    
-    this.showTaskModal({
-      title: taskData.title,
-      description: taskData.description || '',
-      estimatedDuration: taskData.estimatedDuration || 60,
-      priority: taskData.priority || 'medium',
-      dueDate: dueDate.toISOString(),
-      taskType: taskData.taskType || 'manual',
-      recurrence: taskData.recurrence || null
-    });
-    
-    this.hideClipboardDetector();
-  },
-
-  getDefaultDueDate(taskType) {
-    const now = new Date();
-    const hour = now.getHours();
-    
-    // 默认截止时间：22 点前默认当天，22 点后默认次天
-    if (hour < 12) {
-      // 上午 → 默认今天下午17:00
-      now.setHours(17, 0, 0, 0);
-    } else if (hour < 18) {
-      // 下午 → 默认今天晚上20:00
-      now.setHours(20, 0, 0, 0);
-    } else if (hour < 22) {
-      // 晚上22点前 → 默认今天22:00
-      now.setHours(22, 0, 0, 0);
-    } else {
-      // 22点后 → 默认明天上午10:00
-      now.setDate(now.getDate() + 1);
-      now.setHours(10, 0, 0, 0);
-    }
-    return now;
-  },
-
-  // 将 Date 对象格式化为 datetime-local 输入框所需的本地时间字符串 (YYYY-MM-DDTHH:mm)
-  formatDateTimeLocal(date) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  },
 
   showCreateMenu(e) {
     // 移除已有菜单
@@ -11615,16 +11559,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     overlay.appendChild(menu);
     document.body.appendChild(overlay);
 
-    // 悬停效果
-    menu.querySelectorAll('.create-menu-item').forEach(item => {
-      item.addEventListener('mouseenter', () => {
-        item.style.background = 'var(--bg-tertiary)';
-      });
-      item.addEventListener('mouseleave', () => {
-        item.style.background = 'transparent';
-      });
-    });
-
+    // hover 效果 → CSS :hover
     // 点击选项
     const close = () => overlay.remove();
     overlay.addEventListener('click', (ev) => {
@@ -12205,12 +12140,11 @@ ${JSON.stringify(reportData, null, 2)}`;
       </div>`;
     }).join('');
 
-    // 点击切换关联
-    container.querySelectorAll('.linked-person-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        chip.classList.toggle('active');
-      });
-    });
+    // 点击切换关联 → 事件委托
+    container.onclick = (e) => {
+      const chip = e.target.closest('.linked-person-chip');
+      if (chip) chip.classList.toggle('active');
+    };
   },
 
   _getRelationClass(relation) {
@@ -12701,81 +12635,81 @@ ${JSON.stringify(reportData, null, 2)}`;
     });
     
     container.innerHTML = sortedTasks.map(task => this.renderTaskItem(task)).join('');
-    
-    // 绑定排序切换按钮
-    const sortToggle = document.getElementById('taskSortToggle');
-    if (sortToggle) {
-      sortToggle.querySelectorAll('.sort-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          this._taskSortBy = btn.dataset.sort;
-          sortToggle.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          this.renderTaskList();
-        });
-      });
+    // 事件委托已在 bindEvents() 中绑定，无需逐元素 addEventListener
+  },
+
+  // === 任务列表事件委托处理 ===
+  _handleTaskListClick(e) {
+    const item = e.target.closest('.task-item');
+    if (!item) return;
+    const taskId = item.dataset.id;
+
+    // 复选框
+    if (e.target.closest('.task-checkbox')) {
+      e.stopPropagation();
+      this.completeTask(taskId);
+      return;
     }
-    
-    container.querySelectorAll('.task-item').forEach(item => {
-      const taskId = item.dataset.id;
-      
-      // hover 预览浮层
-      item.addEventListener('mouseenter', (e) => {
-        this._showTaskHoverPreview(item, e);
-      });
-      item.addEventListener('mouseleave', () => {
-        this._hideTaskHoverPreview();
-      });
-      item.addEventListener('mousemove', (e) => {
-        this._moveTaskHoverPreview(e);
-      });
-      
-      item.querySelector('.task-checkbox').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.completeTask(taskId);
-      });
-      
-      item.addEventListener('click', () => {
-        const task = Store.getTasks().find(t => t.id === taskId);
-        if (task) this.showTaskModal(task);
-      });
-      
-      item.querySelector('.start-pomodoro').addEventListener('click', (e) => {
-        e.stopPropagation();
-        const task = Store.getTasks().find(t => t.id === taskId);
-        if (task) {
-          // 每次点击增加一个计划番茄数
-          const plannedCount = Pomodoro.addPlannedSession(taskId, task.title);
-          this.showToast(`已添加番茄钟（计划${plannedCount}个）`);
-          
-          // 如果番茄钟未运行，立即启动
-          if (!Pomodoro.state.isRunning) {
-            Pomodoro.start(taskId);
-          }
+    // 番茄钟
+    if (e.target.closest('.start-pomodoro')) {
+      e.stopPropagation();
+      const task = Store.getTasks().find(t => t.id === taskId);
+      if (task) {
+        const plannedCount = Pomodoro.addPlannedSession(taskId, task.title);
+        this.showToast(`已添加番茄钟（计划${plannedCount}个）`);
+        if (!Pomodoro.state.isRunning) {
+          Pomodoro.start(taskId);
         }
-      });
-      
-      item.querySelector('.delete-task-btn').addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const task = Store.getTasks().find(t => t.id === taskId);
-        if (task) {
-          // 周期性任务：显示选择删除范围
-          if (task.recurrence && (task.recurrence.isTemplate || task.recurrence.isInstance)) {
-            this._showRecurrenceDeleteDialog(task);
-          } else {
-            const confirmed = await this.showConfirmDialog('删除确认', `确定要删除任务"${task.title}"吗？`);
+      }
+      return;
+    }
+    // 删除
+    if (e.target.closest('.delete-task-btn')) {
+      e.stopPropagation();
+      const task = Store.getTasks().find(t => t.id === taskId);
+      if (task) {
+        if (task.recurrence && (task.recurrence.isTemplate || task.recurrence.isInstance)) {
+          this._showRecurrenceDeleteDialog(task);
+        } else {
+          this.showConfirmDialog('删除确认', `确定要删除任务"${task.title}"吗？`).then(confirmed => {
             if (confirmed) {
               Store.deleteTask(taskId);
-              // 同步删除系统日历事件
               if (window.electronAPI?.removeFromCalendar) {
                 window.electronAPI.removeFromCalendar(task.title);
               }
               this.renderTaskList();
               Calendar.render();
             }
-          }
+          });
         }
-      });
-    });
+      }
+      return;
+    }
+    // 点击任务项本身 → 打开编辑
+    const task = Store.getTasks().find(t => t.id === taskId);
+    if (task) this.showTaskModal(task);
+  },
+
+  _handleTaskListMouseOver(e) {
+    const item = e.target.closest('.task-item');
+    if (!item) return;
+    const related = e.relatedTarget?.closest?.('.task-item');
+    if (related === item) return; // 仍在同一 item 内移动
+    this._showTaskHoverPreview(item, e);
+  },
+
+  _handleTaskListMouseOut(e) {
+    const item = e.target.closest('.task-item');
+    if (!item) return;
+    const related = e.relatedTarget?.closest?.('.task-item');
+    if (related === item) return; // 仍在同一 item 内移动
+    this._hideTaskHoverPreview();
+  },
+
+  _handleTaskListMouseMove(e) {
+    const item = e.target.closest('.task-item');
+    if (!item) return;
+    this._moveTaskHoverPreview(e);
   },
 
   renderTaskItem(task) {
@@ -12952,166 +12886,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     }, 2000);
   },
 
-  // 自定义输入弹窗（替代 prompt()，在 Electron contextIsolation 下 prompt 不可用）
-  showInputDialog(title, message, defaultValue = '') {
-    return new Promise((resolve) => {
-      // 移除已有弹窗
-      const existing = document.querySelector('.input-dialog-overlay');
-      if (existing) existing.remove();
-
-      const overlay = document.createElement('div');
-      overlay.className = 'input-dialog-overlay';
-      overlay.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
-        display: flex; align-items: center; justify-content: center;
-        z-index: 5000; animation: fadeIn 0.2s ease;
-      `;
-
-      const dialog = document.createElement('div');
-      dialog.style.cssText = `
-        width: 380px; max-width: 90%; background: var(--bg-card);
-        border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
-      `;
-
-      dialog.innerHTML = `
-        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: var(--text-primary);">${title}</div>
-        <div style="padding: 4px 24px 16px; font-size: 13px; color: var(--text-secondary);">${message}</div>
-        <div style="padding: 0 24px 20px;">
-          <input type="text" class="input-dialog-field" value="${defaultValue.replace(/"/g, '&quot;')}"
-            style="width: 100%; padding: 10px 14px; border: 1.5px solid var(--border-color);
-            border-radius: 10px; font-size: 14px; outline: none; font-family: inherit;
-            color: var(--text-primary); background: var(--bg-input);
-            transition: border-color 0.2s, box-shadow 0.2s;"
-            placeholder="请输入..." />
-        </div>
-        <div style="display: flex; border-top: 0.5px solid var(--border-light);">
-          <button class="input-dialog-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
-            border-right: 0.5px solid var(--border-light); transition: background 0.15s;">取消</button>
-          <button class="input-dialog-confirm" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 600; color: var(--primary-color); cursor: pointer;
-            transition: background 0.15s;">确定</button>
-        </div>
-      `;
-
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-
-      const input = dialog.querySelector('.input-dialog-field');
-      const cancelBtn = dialog.querySelector('.input-dialog-cancel');
-      const confirmBtn = dialog.querySelector('.input-dialog-confirm');
-
-      // 聚焦输入框
-      setTimeout(() => { input.focus(); input.select(); }, 50);
-
-      // 输入框聚焦样式
-      input.addEventListener('focus', () => {
-        input.style.borderColor = 'var(--primary-color)';
-        input.style.boxShadow = '0 0 0 3px var(--input-focus-glow)';
-        input.style.background = 'var(--bg-input)';
-      });
-      input.addEventListener('blur', () => {
-        input.style.borderColor = 'var(--border-color)';
-        input.style.boxShadow = 'none';
-        input.style.background = 'var(--bg-input)';
-      });
-
-      const cleanup = () => {
-        overlay.style.animation = 'fadeOut 0.15s ease';
-        setTimeout(() => overlay.remove(), 150);
-      };
-
-      const onConfirm = () => {
-        const val = input.value.trim();
-        cleanup();
-        resolve(val || null);
-      };
-
-      const onCancel = () => {
-        cleanup();
-        resolve(null);
-      };
-
-      confirmBtn.addEventListener('click', onConfirm);
-      cancelBtn.addEventListener('click', onCancel);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') onConfirm();
-        if (e.key === 'Escape') onCancel();
-      });
-      overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) onCancel();
-      });
-
-      // hover 样式
-      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--bg-tertiary)'; });
-      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
-      confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = 'rgba(79,142,247,0.06)'; });
-      confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.background = 'transparent'; });
-    });
-  },
-
-  // 自定义确认弹窗（替代 confirm()）
-  showConfirmDialog(title, message) {
-    return new Promise((resolve) => {
-      const existing = document.querySelector('.confirm-dialog-overlay');
-      if (existing) existing.remove();
-
-      const overlay = document.createElement('div');
-      overlay.className = 'confirm-dialog-overlay';
-      overlay.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
-        display: flex; align-items: center; justify-content: center;
-        z-index: 5000; animation: fadeIn 0.2s ease;
-      `;
-
-      const dialog = document.createElement('div');
-      dialog.style.cssText = `
-        width: 340px; max-width: 90%; background: var(--bg-card);
-        border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        overflow: hidden; animation: panelFadeIn 0.25s cubic-bezier(0.2,0.8,0.2,1);
-      `;
-
-      dialog.innerHTML = `
-        <div style="padding: 20px 24px 8px; font-size: 17px; font-weight: 600; color: var(--text-primary);">${title}</div>
-        <div style="padding: 4px 24px 20px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">${message}</div>
-        <div style="display: flex; border-top: 0.5px solid var(--border-light);">
-          <button class="confirm-dialog-cancel" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
-            border-right: 0.5px solid var(--border-light); transition: background 0.15s;">取消</button>
-          <button class="confirm-dialog-ok" style="flex:1; padding: 14px; border: none; background: transparent;
-            font-size: 14px; font-weight: 600; color: var(--danger-color); cursor: pointer;
-            transition: background 0.15s;">确定</button>
-        </div>
-      `;
-
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-
-      const cancelBtn = dialog.querySelector('.confirm-dialog-cancel');
-      const okBtn = dialog.querySelector('.confirm-dialog-ok');
-
-      const cleanup = () => {
-        overlay.style.animation = 'fadeOut 0.15s ease';
-        setTimeout(() => overlay.remove(), 150);
-      };
-
-      cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
-      okBtn.addEventListener('click', () => { cleanup(); resolve(true); });
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) { cleanup(); resolve(false); } });
-      document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Escape') { cleanup(); resolve(false); document.removeEventListener('keydown', handler); }
-        if (e.key === 'Enter') { cleanup(); resolve(true); document.removeEventListener('keydown', handler); }
-      });
-
-      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--bg-tertiary)'; });
-      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
-      okBtn.addEventListener('mouseenter', () => { okBtn.style.background = 'rgba(255,59,48,0.06)'; });
-      okBtn.addEventListener('mouseleave', () => { okBtn.style.background = 'transparent'; });
-    });
-  },
+  // === 自定义弹窗方法已提取到 app-clipboard-dialog.js ===
 
   // === 文件卡片按钮绑定（保存 + 打开）===
   _bindFileCardActions(container) {
@@ -13166,103 +12941,9 @@ ${JSON.stringify(reportData, null, 2)}`;
     });
   },
 
-  // === Agent 产物保存按钮绑定 ===
+  // === Agent 产物保存按钮绑定（已由 chatMessages 事件委托统一处理，此方法保留兼容空壳）===
   _bindArtifactSaveButtons(container) {
-    if (!container) return;
-    container.querySelectorAll('.agent-save-artifact-btn').forEach(btn => {
-      if (btn._artifactBound) return;
-      btn._artifactBound = true;
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const pre = btn.closest('pre') || btn.previousElementSibling;
-        if (!pre) return;
-        const codeEl = pre.querySelector('code');
-        if (!codeEl) return;
-        const content = codeEl.textContent || '';
-        const lang = btn.dataset.lang || '';
-        // 推断文件名
-        let fileName = '';
-        const lowerLang = lang.toLowerCase();
-        if (lowerLang === 'html' || lowerLang === 'htm') {
-          const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
-          fileName = titleMatch ? titleMatch[1].trim().replace(/[<>:"/\\|?*]/g, '_') + '.html' : 'page.html';
-        } else if (lowerLang === 'json') {
-          fileName = 'data.json';
-        } else if (lowerLang === 'css') {
-          fileName = 'style.css';
-        } else if (lowerLang === 'xml') {
-          fileName = 'data.xml';
-        } else if (lowerLang === 'svg') {
-          fileName = 'image.svg';
-        } else if (lowerLang === 'md' || lowerLang === 'markdown') {
-          fileName = 'document.md';
-        } else {
-          fileName = `artifact.${lowerLang || 'txt'}`;
-        }
-        if (window.electronAPI?.artifactsSave) {
-          btn.textContent = '⏳ 保存中...';
-          btn.disabled = true;
-          try {
-            const result = await window.electronAPI.artifactsSave({ content, fileName, source: 'ai-assistant' });
-            if (result.success) {
-              btn.textContent = '✅ 已保存';
-              btn.disabled = true;
-              btn.dataset.savedPath = result.path || '';
-              // 显示打开按钮
-              const openBtn = btn.parentElement?.querySelector('.agent-open-artifact-btn');
-              if (openBtn) {
-                openBtn.style.display = '';
-                openBtn.dataset.savedPath = result.path || '';
-                openBtn.dataset.fileName = result.name || fileName;
-              }
-              this.showToast(`已保存到 Agent 产物: ${result.name}`, 'success');
-            } else {
-              btn.textContent = '💾 保存';
-              btn.disabled = false;
-              this.showToast('保存失败: ' + (result.error || ''), 'error');
-            }
-          } catch (err) {
-            btn.textContent = '💾 保存';
-            btn.disabled = false;
-            this.showToast('保存出错: ' + err.message, 'error');
-          }
-        } else {
-          this.showToast('产物保存功能不可用', 'error');
-        }
-      });
-    });
-    // 绑定打开按钮
-    container.querySelectorAll('.agent-open-artifact-btn').forEach(btn => {
-      if (btn._openBound) return;
-      btn._openBound = true;
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const savedPath = btn.dataset.savedPath;
-        if (savedPath && window.electronAPI?.artifactsRead) {
-          try {
-            const result = await window.electronAPI.artifactsRead({ filePath: savedPath });
-            if (result.success && result.content) {
-              const lang = btn.dataset.lang?.toLowerCase() || '';
-              if (['html', 'htm', 'svg'].includes(lang)) {
-                const blob = new Blob([result.content], { type: lang === 'svg' ? 'image/svg+xml' : 'text/html' });
-                const blobUrl = URL.createObjectURL(blob);
-                window.electronAPI?.openExternal(blobUrl);
-              } else {
-                window.electronAPI?.artifactsShowInFolder?.(savedPath);
-              }
-            } else {
-              this.showToast('读取文件失败', 'error');
-            }
-          } catch (err) {
-            this.showToast('打开出错: ' + err.message, 'error');
-          }
-        } else {
-          this.showToast('请先保存后再打开', 'info');
-        }
-      });
-    });
+    // no-op: 由 _handleChatClick 事件委托统一处理
   },
 
   // === 下载文件到 Agent 产物 ===

@@ -2309,6 +2309,31 @@
   box-shadow: 0 2px 8px rgba(91, 168, 247, 0.25);
 }
 
+/* ============= 对话框按钮 hover 效果（替代 JS mouseenter/mouseleave）============= */
+.input-dialog-cancel:hover,
+.confirm-dialog-cancel:hover {
+  background: var(--bg-tertiary) !important;
+}
+.input-dialog-confirm:hover {
+  background: rgba(79, 142, 247, 0.06) !important;
+}
+.confirm-dialog-ok:hover {
+  background: rgba(255, 59, 48, 0.06) !important;
+}
+.input-dialog-field:focus {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 0 3px var(--input-focus-glow) !important;
+  background: var(--bg-input) !important;
+}
+.create-menu-item:hover {
+  background: var(--bg-tertiary) !important;
+}
+
+/* ============= 关联人物标签 ============= */
+.linked-person-chip {
+  cursor: pointer;
+}
+
 /* 移动端适配 */
 @media (max-width: 480px) {
   #updateNotification {

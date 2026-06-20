@@ -3593,7 +3593,8 @@ body {
   transition: background-color 0.2s var(--transition), color 0.2s var(--transition), border-color 0.2s var(--transition), box-shadow 0.2s var(--transition), transform 0.2s var(--transition), opacity 0.2s var(--transition);
   resize: none;
   overflow-y: auto;
-  max-height: calc(1.5em * 3 + 24px); /* 3 lines + padding */
+  min-height: calc(1.5em * 2 + 24px); /* 2 lines + padding */
+  max-height: calc(1.5em * 8 + 24px); /* 8 lines + padding */
   font-family: inherit;
 }
 

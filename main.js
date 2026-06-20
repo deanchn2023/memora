@@ -153,10 +153,9 @@ function isProviderConfigured(providerId) {
     .every(f => config[f.key] && config[f.key].trim() !== '');
 }
 
-// 获取可用供应商列表
+// 获取所有供应商列表（含未配置的，前端按 configured 字段标记禁用）
 function getAvailableProviders() {
   return Object.values(PROVIDER_REGISTRY)
-    .filter(p => isProviderConfigured(p.id) || p.id === 'volcano')
     .sort((a, b) => {
       if (a.region === 'cn' && b.region !== 'cn') return -1;
       if (a.region !== 'cn' && b.region === 'cn') return 1;
