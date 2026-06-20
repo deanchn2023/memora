@@ -546,3 +546,45 @@ class TaskLimiter {
 4. **向后兼容**: 现有单任务模式作为特例保留
 
 预计开发周期：3-4 周
+
+---
+
+## 八、实现记录 (v3.1 已完成)
+
+### 8.1 实际实现与设计文档的差异
+
+| 设计文档方案 | 实际实现 | 原因 |
+|-------------|---------|------|
+| Controller Pool + LRU 淘汰 | `taskControllers` Map + reject 新任务 | LRU 淘汰会中断运行中任务，reject 更安全 |
+| TaskManager.on() 无 off() | 增加 off() 和 destroy() | 防止内存泄漏 |
+| 三种模式（auto/parallel/queue） | 先实现 parallel 模式 | 渐进式开发，queue 模式后续迭代 |
+| 事件通道 task:stream 独立 | 复用现有 send-adp-message / cc:invoke，附加 taskId 路由 | 避免重复 500+ 行 ADP 处理逻辑 |
+| 建议 RAF 批量更新 | RAF 作为核心实现（非可选） | 高频 delta 必须批量更新避免卡顿 |
+
+### 8.2 已实现文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/scripts/task-manager.js` | **新增** TaskManager + TaskLimiter + RAF 批量更新 |
+| `main.js` | 修改 send-adp-message/cc:invoke 支持 taskId；新增 task:stop/task:list |
+| `preload.js` | 新增 taskStop/taskList/onTaskStream IPC 桥接 |
+| `src/scripts/app.js` | 新增并行模式切换、任务卡片 UI、事件分发、RAF 渲染 |
+| `src/index.html` | 新增 task-manager.js 引用、并行模式切换按钮 |
+| `src/styles/components.css` | 新增任务卡片、并行按钮、步骤列表样式 |
+
+### 8.3 性能优化措施
+
+1. **requestAnimationFrame 批量合并**: 高频流式 delta 合并为一次 DOM 更新
+2. **流式内容长度限制**: 最大 50KB，超出截断并提示
+3. **已完成任务延迟清理**: 5 秒后从 Map 中移除，保留 UI 显示
+4. **事件监听器 off() 清理**: 防止内存泄漏
+5. **计时器复用**: 每个任务独立计时器，完成后立即清理
+
+### 8.4 待实现（Phase 2+）
+
+- [ ] Queue 排队模式
+- [ ] 任务重试
+- [ ] 任务历史记录持久化
+- [ ] LLM 模式 task:stream 路由
+- [ ] 任务间上下文共享
+- [ ] 虚拟滚动（大量任务时）
