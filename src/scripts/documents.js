@@ -1838,7 +1838,13 @@ const KnowledgeBase = {
     try {
       const result = await window.electronAPI?.multimodalGenerateBook?.({});
       if (result?.ok || result?.success) {
-        this._showToast('知识体系已生成', 'success');
+        const book = result.book || result.asset;
+        const chapterCount = book?.chapters?.length || 0;
+        if (chapterCount === 0) {
+          this._showToast('书本已生成，但 AI 未返回章节内容（知识库数据可能太少）', 'warning');
+        } else {
+          this._showToast(`知识体系已生成，包含 ${chapterCount} 章`, 'success');
+        }
         this.loadMultimodal();
       } else {
         const errMsg = result?.error || '生成失败';
@@ -1905,10 +1911,19 @@ const KnowledgeBase = {
     try {
       const result = await window.electronAPI?.multimodalProcess?.(id);
       if (result?.ok || result?.success) {
-        this._showToast('处理完成', 'success');
+        if (result.updated === false) {
+          this._showToast('处理完成，但 AI 未返回有效内容（资产可能缺少文本数据）', 'warning');
+        } else {
+          this._showToast('处理完成', 'success');
+        }
         this.loadMultimodal();
       } else {
-        this._showToast(result?.error || '处理失败', 'error');
+        const errMsg = result?.error || '处理失败';
+        if (errMsg.includes('登录')) {
+          this._showToast('请先登录再使用 AI 功能', 'warning');
+        } else {
+          this._showToast(errMsg, 'error');
+        }
       }
     } catch (err) {
       this._showToast('处理失败：' + err.message, 'error');

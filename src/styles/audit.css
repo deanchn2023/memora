@@ -23,9 +23,9 @@
 
 .audit-panel {
   width: 90vw;
-  max-width: 1100px;
-  height: 80vh;
-  max-height: 720px;
+  max-width: 90vw;
+  height: 90vh;
+  max-height: 90vh;
   background: var(--bg-primary, #ffffff);
   border-radius: 16px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18);

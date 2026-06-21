@@ -42,15 +42,16 @@ const Calendar = {
           document.getElementById('documentsView')?.classList.remove('hidden');
           this.updateDateDisplay();
           if (window.Documents) Documents.onShow();
+          window.app?._setCurrentViewName?.('documents');
         } else {
           this.calendarActive = false;
           this.currentView = view;
           this.hideCalendarView();
           this.hideOtherViews(view);
           this.hideDateNavigator();
-          if (view === 'notebook') this.renderNotebookView();
-          else if (view === 'knowledge') this.renderKnowledgeView();
-          else if (view === 'insight') this.renderInsightView();
+          if (view === 'notebook') { this.renderNotebookView(); window.app?._setCurrentViewName?.('notebook'); }
+          else if (view === 'knowledge') { this.renderKnowledgeView(); window.app?._setCurrentViewName?.('knowledge'); }
+          else if (view === 'insight') { this.renderInsightView(); window.app?._setCurrentViewName?.('insight'); }
         }
       });
     });
@@ -81,6 +82,8 @@ const Calendar = {
     document.getElementById('knowledgeView')?.classList.add('hidden');
     document.getElementById('aiAssistantView')?.classList.add('hidden');
     document.getElementById('insightView')?.classList.add('hidden');
+    // 侧边栏：日历页展开
+    window.app?._setCurrentViewName?.('calendar');
     // 恢复日历子视图（currentView 可能被其他视图标签覆盖过）
     this.currentView = this.calendarSubView;
     // 同步子标签激活状态

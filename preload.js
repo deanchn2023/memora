@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ccGetConfig: () => ipcRenderer.invoke('cc:get-config'),
   ccSetConfig: (config) => ipcRenderer.invoke('cc:set-config', config),
   ccPickDirectory: () => ipcRenderer.invoke('cc:pick-directory'),
+  ccCheckEnv: (workdir) => ipcRenderer.invoke('cc:check-env', workdir),
+  ccInstallTool: (params) => ipcRenderer.invoke('cc:install-tool', params),
   // 供应商管理（v3.0 多供应商）
   ccGetProviders: () => ipcRenderer.invoke('cc:get-providers'),
   ccTestProvider: (params) => ipcRenderer.invoke('cc:test-provider', params),
@@ -50,6 +52,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillDelete: (data) => ipcRenderer.invoke('skill:delete', data),
   skillInstallToCC: (data) => ipcRenderer.invoke('skill:install-to-cc', data),
   skillUninstallFromCC: (data) => ipcRenderer.invoke('skill:uninstall-from-cc', data),
+  skillImportFromWorkdir: (data) => ipcRenderer.invoke('skill:import-from-workdir', data),
+  skillDeleteFromWorkdir: (data) => ipcRenderer.invoke('skill:delete-from-workdir', data),
   // SkillHub 市场（v2.8）
   skillhubCheck: () => ipcRenderer.invoke('skillhub:check'),
   skillhubInstallCli: () => ipcRenderer.invoke('skillhub:install-cli'),
@@ -63,6 +67,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ccOpenRouterGetModels: () => ipcRenderer.invoke('cc:openrouter-get-models'),
   ccOpenRouterTest: (params) => ipcRenderer.invoke('cc:openrouter-test', params),
   ccOpenRouterStopProxy: () => ipcRenderer.invoke('cc:openrouter-stop-proxy'),
+  // Agent Plan AFP 用量查询
+  arkGetAFPUsage: (providerId) => ipcRenderer.invoke('ark:get-afp-usage', providerId),
+  // Skill 详情（完整 SKILL.md）
+  skillDetail: (data) => ipcRenderer.invoke('skill:detail', data),
   // MCP 连接器管理
   connectorList: (params) => ipcRenderer.invoke('connector:list', params),
   connectorSave: (data) => ipcRenderer.invoke('connector:save', data),
@@ -80,6 +88,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   removeCCSubTaskListeners: () => {
     ipcRenderer.removeAllListeners('cc:subtask');
+  },
+  // 工具安装进度
+  onCCInstallProgress: (callback) => {
+    ipcRenderer.on('cc:install-progress', (event, data) => callback(data));
+  },
+  removeCCInstallProgressListeners: () => {
+    ipcRenderer.removeAllListeners('cc:install-progress');
   },
   
   // ADP配置

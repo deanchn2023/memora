@@ -129,6 +129,45 @@ const PROVIDER_REGISTRY = {
       upstreamAuthType: 'bearer',
     }),
   },
+
+  volcano_agent: {
+    id: 'volcano_agent',
+    name: '火山引擎 Agent Plan',
+    shortName: 'Agent Plan',
+    region: 'cn',
+    type: 'direct',           // Anthropic 兼容直连（与 Coding Plan 相同协议）
+    icon: '🌋',
+    plan: 'agent',            // 标记为 Agent Plan（用于区分 Coding Plan）
+    fields: [
+      { key: 'baseUrl', label: 'Base URL', type: 'text', default: 'https://ark.cn-beijing.volces.com/api/agent' },
+      { key: 'authToken', label: 'API Key', type: 'password', placeholder: 'ark-xxxxxxxx' },
+      { key: 'modelList', label: '模型列表', type: 'textarea', default: '' },
+      { key: 'model', label: '主模型', type: 'select', default: 'auto', options: [
+        { value: 'auto', label: 'Auto（智能调度）' },
+        { value: 'doubao-seed-1-6-vision', label: 'Doubao-Seed-1.6-Vision（代码+视觉）' },
+        { value: 'doubao-seed-1-6', label: 'Doubao-Seed-1.6（纯文本）' },
+        { value: 'deepseek-v3.1', label: 'DeepSeek-V3.1（推理）' },
+      ]},
+      // Agent Plan 专属：多模态模型路由
+      { key: 'imageGenModel', label: '图像生成模型', type: 'select', default: 'doubao-seedream-3-0', options: [
+        { value: 'doubao-seedream-3-0', label: 'Doubao-Seedream-3.0' },
+      ]},
+      { key: 'videoGenModel', label: '视频生成模型', type: 'select', default: 'seedance-2-0', options: [
+        { value: 'seedance-2-0', label: 'Seedance-2.0' },
+      ]},
+      { key: 'embeddingModel', label: '向量化模型', type: 'select', default: 'doubao-embedding-text', options: [
+        { value: 'doubao-embedding-text', label: 'Doubao-Embedding-Text' },
+      ]},
+      // Harness 开关
+      { key: 'enableDoubaoSearch', label: '启用豆包搜索', type: 'toggle', default: 'true' },
+      { key: 'enableAgentMemory', label: '启用 Agent 记忆', type: 'toggle', default: 'false' },
+    ],
+    envMap: (config) => ({
+      ANTHROPIC_BASE_URL: config.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: config.authToken,
+      ANTHROPIC_MODEL: config.model,
+    }),
+  },
 };
 
 // 读取供应商配置
@@ -204,7 +243,7 @@ const DEFAULT_CC_CONFIG = {
   baseUrl: 'https://ark.cn-beijing.volces.com/api/coding',
   authToken: 'ark-08382ce6-d0e9-4e92-af7a-234062ee6091-2d675',
   model: 'auto',
-  allowedTools: 'Read,Glob,Grep,WebSearch',
+  allowedTools: 'Read,Glob,Grep,WebSearch,Bash,Write,Edit',
   permissionMode: 'default',
   maxTurns: 50,
 };
@@ -3295,7 +3334,20 @@ function getCCConfig() {
     baseUrl: getSetting('cc_base_url') || DEFAULT_CC_CONFIG.baseUrl,
     authToken: getSetting('cc_auth_token') || DEFAULT_CC_CONFIG.authToken,
     model: getSetting('cc_model') || DEFAULT_CC_CONFIG.model,
-    allowedTools: getSetting('cc_allowed_tools') || DEFAULT_CC_CONFIG.allowedTools,
+    allowedTools: (() => {
+      let tools = getSetting('cc_allowed_tools') || DEFAULT_CC_CONFIG.allowedTools;
+      // 迁移：确保 Bash/Write/Edit 在允许列表中
+      const toolsList = tools.split(',').map(t => t.trim()).filter(Boolean);
+      for (const t of ['Bash', 'Write', 'Edit']) {
+        if (!toolsList.includes(t)) toolsList.push(t);
+      }
+      const migrated = toolsList.join(',');
+      if (migrated !== tools) {
+        setSetting('cc_allowed_tools', migrated);
+        console.log(`[CC] Migrated allowedTools: ${tools} → ${migrated}`);
+      }
+      return migrated;
+    })(),
     permissionMode: getSetting('cc_permission_mode') || DEFAULT_CC_CONFIG.permissionMode,
     maxTurns: parseInt(getSetting('cc_max_turns')) || DEFAULT_CC_CONFIG.maxTurns,
     defaultWorkdir: getSetting('cc_default_workdir') || path.join(userDataPath, 'cc-workspace'),
@@ -3714,6 +3766,196 @@ ipcMain.handle('cc:pick-directory', async () => {
   }
 });
 
+// ============ CC 环境检测 ============
+
+/**
+ * 检测 CC 工作目录的运行时环境
+ * 检查 Python/Node/Java/Go/Rust/git 等常见工具是否可用，返回版本和路径
+ */
+ipcMain.handle('cc:check-env', async (_event, workdir) => {
+  const { execFile } = require('child_process');
+  const config = getCCConfig();
+  const ccWorkdir = workdir || config.defaultWorkdir;
+
+  const tools = [
+    { name: 'Python3', cmd: 'python3', args: ['--version'], category: 'python', install: { brew: 'python@3.12', desc: 'Python 3 解释器' } },
+    { name: 'Python', cmd: 'python', args: ['--version'], category: 'python', install: null },
+    { name: 'pip3', cmd: 'pip3', args: ['--version'], category: 'python', install: { brew: 'python@3.12', desc: 'pip3 随 Python 3 安装' } },
+    { name: 'pip', cmd: 'pip', args: ['--version'], category: 'python', install: null },
+    { name: 'uv', cmd: 'uv', args: ['--version'], category: 'python', install: { brew: 'uv', desc: '极速 Python 包管理器' } },
+    { name: 'conda', cmd: 'conda', args: ['--version'], category: 'python', install: { brew: '--cask miniconda', desc: 'Conda 环境管理器' } },
+    { name: 'Node.js', cmd: 'node', args: ['--version'], category: 'node', install: { brew: 'node', desc: 'Node.js 运行时' } },
+    { name: 'npm', cmd: 'npm', args: ['--version'], category: 'node', install: { brew: 'node', desc: 'npm 随 Node.js 安装' } },
+    { name: 'pnpm', cmd: 'pnpm', args: ['--version'], category: 'node', install: { brew: 'pnpm', desc: '快速磁盘节省型包管理器' } },
+    { name: 'yarn', cmd: 'yarn', args: ['--version'], category: 'node', install: { brew: 'yarn', desc: 'Yarn 包管理器' } },
+    { name: 'bun', cmd: 'bun', args: ['--version'], category: 'node', install: { brew: 'oven-sh/bun/bun', desc: 'Bun 全栈运行时' } },
+    { name: 'Java', cmd: 'java', args: ['-version'], category: 'java', install: { brew: 'openjdk@21', desc: 'OpenJDK 21' } },
+    { name: 'Go', cmd: 'go', args: ['version'], category: 'go', install: { brew: 'go', desc: 'Go 语言工具链' } },
+    { name: 'Rust (cargo)', cmd: 'cargo', args: ['--version'], category: 'rust', install: { brew: 'rustup', desc: 'Rust 工具链管理器' } },
+    { name: 'Git', cmd: 'git', args: ['--version'], category: 'vcs', install: { brew: 'git', desc: '版本控制系统' } },
+    { name: 'curl', cmd: 'curl', args: ['--version'], category: 'net', install: { brew: 'curl', desc: 'HTTP 请求工具' } },
+    { name: 'jq', cmd: 'jq', args: ['--version'], category: 'util', install: { brew: 'jq', desc: '命令行 JSON 处理器' } },
+    { name: 'sqlite3', cmd: 'sqlite3', args: ['--version'], category: 'db', install: { brew: 'sqlite', desc: 'SQLite 数据库' } },
+    { name: 'make', cmd: 'make', args: ['--version'], category: 'build', install: { brew: 'make', desc: '构建工具' } },
+    { name: 'gcc', cmd: 'gcc', args: ['--version'], category: 'build', install: { brew: 'gcc', desc: 'GNU 编译器' } },
+  ];
+
+  function checkTool(tool) {
+    return new Promise((resolve) => {
+      execFile(tool.cmd, tool.args, { cwd: ccWorkdir, timeout: 5000, env: process.env }, (err, stdout, stderr) => {
+        if (err) {
+          resolve({ ...tool, available: false, version: '', path: '' });
+        } else {
+          // java -version 输出到 stderr
+          const output = (stdout + stderr).trim().split('\n')[0];
+          resolve({ ...tool, available: true, version: output, path: '' });
+        }
+      });
+    });
+  }
+
+  // 并行检测所有工具
+  const results = await Promise.all(tools.map(checkTool));
+
+  // 按类别分组
+  const grouped = {};
+  for (const r of results) {
+    if (!grouped[r.category]) grouped[r.category] = [];
+    grouped[r.category].push(r);
+  }
+
+  // 检测重要环境变量
+  const envVars = {};
+  const importantVars = [
+    'PYTHONPATH', 'VIRTUAL_ENV', 'PIP_INDEX_URL',
+    'NODE_PATH', 'npm_config_registry', 'NVM_DIR',
+    'JAVA_HOME', 'GOPATH', 'GOROOT',
+    'CARGO_HOME', 'RUSTUP_HOME',
+    'PKG_CONFIG_PATH', 'LIBRARY_PATH', 'DYLD_LIBRARY_PATH',
+    'SHELL', 'TMPDIR', 'LANG', 'TERM',
+  ];
+  for (const key of importantVars) {
+    if (process.env[key]) envVars[key] = process.env[key];
+  }
+
+  return {
+    success: true,
+    workdir: ccWorkdir,
+    tools: results,
+    grouped,
+    envVars,
+    platform: process.platform,
+  };
+});
+
+/**
+ * 一键安装缺失工具（macOS 用 Homebrew，Linux 用 apt）
+ * 通过 SSE 流式推送安装进度到前端
+ */
+ipcMain.handle('cc:install-tool', async (event, { toolName, brewPackage, workdir }) => {
+  const platform = process.platform;
+  const ccWorkdir = workdir || getCCConfig().defaultWorkdir;
+
+  // 检查 Homebrew 是否安装（macOS）
+  let hasBrew = false;
+  if (platform === 'darwin') {
+    try {
+      require('child_process').execSync('which brew', { timeout: 3000 });
+      hasBrew = true;
+    } catch (_) {}
+  }
+
+  let cmd, args, env;
+  if (platform === 'darwin' && hasBrew) {
+    // macOS: 使用 Homebrew
+    cmd = 'brew';
+    args = ['install', ...brewPackage.split(' ')];
+    env = process.env;
+  } else if (platform === 'darwin' && !hasBrew) {
+    // macOS 无 brew：先安装 Homebrew
+    return {
+      success: false,
+      error: '未检测到 Homebrew。请先安装 Homebrew：在终端运行 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+      needBrew: true,
+    };
+  } else if (platform === 'linux') {
+    // Linux: 使用 apt（Ubuntu/Debian）
+    const aptMap = {
+      'python@3.12': 'python3 python3-pip',
+      'python@3.11': 'python3 python3-pip',
+      'uv': 'python3-pip',
+      'node': 'nodejs npm',
+      'pnpm': 'npm',
+      'yarn': 'npm',
+      'openjdk@21': 'default-jdk',
+      'go': 'golang',
+      'rustup': 'rustc cargo',
+      'git': 'git',
+      'jq': 'jq',
+      'sqlite': 'sqlite3',
+      'make': 'make',
+      'gcc': 'gcc',
+    };
+    const aptPackage = aptMap[brewPackage] || brewPackage;
+    cmd = 'sudo';
+    args = ['apt-get', 'install', '-y', ...aptPackage.split(' ')];
+    env = process.env;
+  } else {
+    return {
+      success: false,
+      error: `暂不支持平台 ${platform} 的一键安装，请手动安装 ${toolName}`,
+    };
+  }
+
+  // 流式执行安装命令
+  const { spawn } = require('child_process');
+  const child = spawn(cmd, args, { cwd: ccWorkdir, env, shell: false });
+
+  let stdoutBuf = '';
+  let stderrBuf = '';
+
+  child.stdout.on('data', (data) => {
+    const text = data.toString();
+    stdoutBuf += text;
+    // 推送安装进度到前端
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('cc:install-progress', { toolName, stream: 'stdout', data: text });
+    }
+  });
+
+  child.stderr.on('data', (data) => {
+    const text = data.toString();
+    stderrBuf += text;
+    // brew/apt 进度信息走 stderr
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('cc:install-progress', { toolName, stream: 'stderr', data: text });
+    }
+  });
+
+  return new Promise((resolve) => {
+    child.on('close', (code) => {
+      const success = code === 0;
+      resolve({
+        success,
+        toolName,
+        exitCode: code,
+        stdout: stdoutBuf.slice(-2000),
+        stderr: stderrBuf.slice(-2000),
+        message: success ? `${toolName} 安装成功` : `${toolName} 安装失败 (exit ${code})`,
+      });
+    });
+
+    child.on('error', (err) => {
+      resolve({
+        success: false,
+        toolName,
+        error: err.message,
+        message: `${toolName} 安装异常: ${err.message}`,
+      });
+    });
+  });
+});
+
 // ============ MCP 连接器管理 ============
 
 // 危险命令黑名单（stdio 类型连接器）
@@ -3822,10 +4064,9 @@ ipcMain.handle('skill:upload', async (event, { filePath }) => {
     const zipPath = path.join(skillsDir, fileName);
     fs.copyFileSync(filePath, zipPath);
 
-    // 解压（macOS/Linux 用系统 unzip）
-    const { execSync } = require('child_process');
+    // 解压（macOS/Linux 用系统 unzip，异步避免阻塞主进程）
     try {
-      execSync(`unzip -o "${zipPath}" -d "${skillDir}"`, { timeout: 30000 });
+      await _execAsync(`unzip -o "${zipPath}" -d "${skillDir}"`, { timeout: 30000 });
     } catch (e) {
       console.warn('[Skill] unzip failed, keeping zip file:', e.message);
     }
@@ -3916,11 +4157,13 @@ ipcMain.handle('skill:list-with-status', async (event, { ccWorkdir }) => {
             }
           }
         }
+        // 判断来源：通过 lstat 检查是否为符号链接
+        const isSymlink = fs.lstatSync(skillPath).isSymbolicLink();
         skillsWithStatus.push({
           name: entry.name,
           path: skillPath,
-          description: description || 'SkillHub 安装',
-          source: 'skillhub',
+          description: description || 'CC 工作目录安装',
+          source: isSymlink ? 'symlink' : 'cc-workdir',
           installed: true
         });
       }
@@ -4018,9 +4261,188 @@ ipcMain.handle('skill:delete', async (event, { name }) => {
   }
 });
 
+// 导入 CC 工作目录中的 Skill 到持久存储（userData/cc-skills/）
+ipcMain.handle('skill:import-from-workdir', async (event, { skillName, ccWorkdir }) => {
+  try {
+    const workdir = ccWorkdir || getCCConfig().defaultWorkdir || '';
+    const srcPath = path.join(workdir, '.claude', 'skills', skillName);
+    if (!fs.existsSync(srcPath)) {
+      return { success: false, error: 'Skill 在工作目录中不存在' };
+    }
+    const skillsDir = getSkillsDir();
+    const destPath = path.join(skillsDir, skillName);
+    // 如果已存在，先删除
+    if (fs.existsSync(destPath)) {
+      fs.rmSync(destPath, { recursive: true, force: true });
+    }
+    // 复制到持久存储
+    fs.cpSync(srcPath, destPath, { recursive: true });
+    console.log(`[Skill] Imported from workdir: ${skillName} → ${destPath}`);
+    return { success: true, destPath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 从 CC 工作目录删除 Skill
+ipcMain.handle('skill:delete-from-workdir', async (event, { skillName, ccWorkdir }) => {
+  try {
+    const workdir = ccWorkdir || getCCConfig().defaultWorkdir || '';
+    const skillPath = path.join(workdir, '.claude', 'skills', skillName);
+    if (!fs.existsSync(skillPath)) return { success: false, error: 'Skill 不存在' };
+    // 安全检查：确保路径在 workdir/.claude/skills/ 内
+    const skillsDir = path.join(workdir, '.claude', 'skills');
+    if (!path.resolve(skillPath).startsWith(path.resolve(skillsDir))) {
+      return { success: false, error: '非法路径' };
+    }
+    fs.rmSync(skillPath, { recursive: true, force: true });
+    console.log(`[Skill] Deleted from workdir: ${skillName}`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 读取 Skill 详情（完整 SKILL.md + 文件列表 + 元数据解析）
+ipcMain.handle('skill:detail', async (event, { name, ccWorkdir }) => {
+  try {
+    const skillsDir = getSkillsDir();
+    let skillPath = path.join(skillsDir, name);
+    let source = 'upload';
+
+    // 如果在上传目录中找不到，尝试在 CC 工作目录中查找
+    if (!fs.existsSync(skillPath)) {
+      const workdir = ccWorkdir || getCCConfig().defaultWorkdir || '';
+      const workdirSkillPath = path.join(workdir, '.claude', 'skills', name);
+      if (fs.existsSync(workdirSkillPath)) {
+        skillPath = workdirSkillPath;
+        source = 'cc-workdir';
+      } else {
+        return { success: false, error: 'Skill 不存在' };
+      }
+    }
+
+    // 安全检查：确保路径在 skillsDir 或 workdir/.claude/skills/ 内
+    const isUploadPath = path.resolve(skillPath).startsWith(path.resolve(skillsDir));
+    const workdir = ccWorkdir || getCCConfig().defaultWorkdir || '';
+    const workdirSkillsDir = path.join(workdir, '.claude', 'skills');
+    const isWorkdirPath = path.resolve(skillPath).startsWith(path.resolve(workdirSkillsDir));
+    if (!isUploadPath && !isWorkdirPath) {
+      return { success: false, error: '非法路径' };
+    }
+
+    // 读取 SKILL.md 完整内容
+    let skillMdContent = '';
+    const skillMdPath = path.join(skillPath, 'SKILL.md');
+    if (fs.existsSync(skillMdPath)) {
+      skillMdContent = fs.readFileSync(skillMdPath, 'utf-8');
+    }
+
+    // 解析 SKILL.md frontmatter（YAML 头部）
+    let metadata = { name, description: '', version: '', author: '' };
+    if (skillMdContent) {
+      const fmMatch = skillMdContent.match(/^---\n([\s\S]*?)\n---/);
+      if (fmMatch) {
+        const yamlText = fmMatch[1];
+        // 简单 YAML 解析
+        for (const line of yamlText.split('\n')) {
+          const m = line.match(/^(\w+):\s*(.+)$/);
+          if (m) {
+            const key = m[1].trim();
+            const val = m[2].trim().replace(/^["']|["']$/g, '');
+            if (key === 'name' || key === 'description' || key === 'version' || key === 'author') {
+              metadata[key] = val;
+            }
+          }
+        }
+      }
+      // 如果没有 frontmatter，从第一段提取描述
+      if (!metadata.description) {
+        metadata.description = skillMdContent.split('\n\n')[0].replace(/^#\s*/, '').substring(0, 500);
+      }
+    }
+
+    // 列出 skill 目录中的文件
+    let files = [];
+    try {
+      const entries = fs.readdirSync(skillPath, { withFileTypes: true, recursive: false });
+      files = entries.map(e => ({
+        name: e.name,
+        type: e.isDirectory() ? 'dir' : 'file',
+      }));
+    } catch (_) {}
+
+    // 检查是否已安装到 CC 工作目录
+    const installedPath = path.join(workdir, '.claude', 'skills', name);
+    const installed = fs.existsSync(installedPath);
+
+    console.log(`[Skill] Detail: ${name} | source: ${source} | installed: ${installed}`);
+    return {
+      success: true,
+      name,
+      source,
+      installed,
+      path: skillPath,
+      skillMdContent,
+      metadata,
+      files,
+    };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// Agent Plan AFP 用量查询
+ipcMain.handle('ark:get-afp-usage', async (event, providerId) => {
+  const pid = providerId || 'volcano_agent';
+  const config = getProviderConfig(pid);
+  if (!config.authToken) return { success: false, error: 'API Key 未配置' };
+
+  try {
+    // 火山方舟用量查询 API（具体 endpoint 购买后确认）
+    const url = config.baseUrl.replace(/\/+$/, '') + '/usage';
+    const resp = await fetch(url, {
+      headers: {
+        'x-api-key': config.authToken,
+        'anthropic-version': '2023-06-01',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      return {
+        success: true,
+        plan: data.plan || 'unknown',
+        totalAFP: data.total_afp || 0,
+        usedAFP: data.used_afp || 0,
+        remainingAFP: data.remaining_afp || 0,
+        resetDate: data.reset_date || '',
+      };
+    }
+    return { success: false, error: `HTTP ${resp.status}` };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ===== SkillHub 市场集成 =====
 const SKILLHUB_CLI = path.join(os.homedir(), '.local', 'bin', 'skillhub');
 const EXEC_ENV = { ...process.env, PATH: `/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:${process.env.PATH || ''}` };
+
+/** 异步执行 shell 命令（不阻塞 Electron 主进程） */
+function _execAsync(cmd, options = {}) {
+  const { exec } = require('child_process');
+  return new Promise((resolve, reject) => {
+    exec(cmd, {
+      encoding: 'utf-8',
+      env: EXEC_ENV,
+      ...options,
+    }, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
+}
 
 // 检查 SkillHub CLI 是否已安装
 ipcMain.handle('skillhub:check', async () => {
@@ -4031,9 +4453,8 @@ ipcMain.handle('skillhub:check', async () => {
 // 安装 SkillHub CLI
 ipcMain.handle('skillhub:install-cli', async () => {
   try {
-    const { execSync } = require('child_process');
     const cmd = `curl -fsSL https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/install/install.sh | bash -s -- --cli-only`;
-    execSync(cmd, { encoding: 'utf-8', timeout: 60000, env: EXEC_ENV });
+    await _execAsync(cmd, { timeout: 60000 });
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -4061,10 +4482,9 @@ function _safeJsonParse(output) {
 // 搜索 SkillHub 市场技能
 ipcMain.handle('skillhub:search', async (event, { query, limit = 20 }) => {
   try {
-    const { execSync } = require('child_process');
     const escapedQuery = query ? query.replace(/"/g, '\\"') : '';
     const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade search --json --search-limit ${limit} ${escapedQuery ? `"${escapedQuery}"` : ''}`;
-    const output = execSync(cmd, { encoding: 'utf-8', timeout: 15000, env: EXEC_ENV });
+    const output = await _execAsync(cmd, { timeout: 15000 });
     const data = _safeJsonParse(output);
     // CLI 在无结果时返回纯文本 "No skills found."，此时 data 为 null
     if (!data) {
@@ -4081,11 +4501,10 @@ ipcMain.handle('skillhub:search', async (event, { query, limit = 20 }) => {
 // 安装技能到指定目录
 ipcMain.handle('skillhub:install', async (event, { slug, targetDir }) => {
   try {
-    const { execSync } = require('child_process');
     fs.mkdirSync(targetDir, { recursive: true });
     const escapedSlug = slug.replace(/"/g, '\\"');
     const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade install --json --dir "${targetDir}" "${escapedSlug}"`;
-    const output = execSync(cmd, { encoding: 'utf-8', timeout: 60000, env: EXEC_ENV });
+    const output = await _execAsync(cmd, { timeout: 60000 });
     const data = _safeJsonParse(output);
     if (!data) {
       // 非 JSON 输出视为成功（CLI 可能输出纯文本确认信息）
@@ -4100,9 +4519,8 @@ ipcMain.handle('skillhub:install', async (event, { slug, targetDir }) => {
 // 列出指定目录中已安装的 SkillHub 技能
 ipcMain.handle('skillhub:list', async (event, { dir }) => {
   try {
-    const { execSync } = require('child_process');
     const cmd = `"${SKILLHUB_CLI}" --skip-self-upgrade list --dir "${dir}"`;
-    const output = execSync(cmd, { encoding: 'utf-8', timeout: 10000, env: EXEC_ENV });
+    const output = await _execAsync(cmd, { timeout: 10000 });
     const trimmed = output.trim();
     if (!trimmed || trimmed.toLowerCase().includes('no skills')) {
       return { success: true, skills: [] };
@@ -4286,7 +4704,8 @@ ipcMain.handle('cc:openrouter-stop-proxy', async () => {
   return { success: true };
 });
 
-ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill, connectorIds, openRouterModel, providerId, taskId }) => {
+ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, systemRole, workdir, skill, connectorIds, openRouterModel, providerId, taskId, content: multimodalContent }) => {
+  let sendWarningImageFiltered = false;
   const sdk = await loadClaudeAgentSDK();
   if (!sdk) {
     return { success: false, error: 'Claude Agent SDK 未加载，请检查依赖安装' };
@@ -4360,14 +4779,43 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 
   const { query } = sdk;
 
-  // 附件处理：文本类拼入 prompt
+  // 附件处理：文本类拼入 prompt，图片类构建多模态 content blocks
   let prompt = message;
   if (attachments && attachments.length > 0) {
-    const fileTextParts = attachments
-      .filter(a => a.textContent)
-      .map(a => `[文件: ${a.name}]\n${a.textContent}`);
-    if (fileTextParts.length > 0) {
-      prompt = fileTextParts.join('\n\n') + '\n\n' + message;
+    // Agent Plan 供应商 + 图片附件 → 多模态 content blocks
+    const imageAttachments = attachments.filter(a => a.type === 'image' && a.base64);
+    if (imageAttachments.length > 0 && activeProviderId === 'volcano_agent') {
+      const content = [];
+      // 图片 → image content block
+      for (const img of imageAttachments.slice(0, 5)) { // 最多 5 张
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: img.mimeType || 'image/png',
+            data: img.base64,
+          }
+        });
+      }
+      // 文本附件 → text content block
+      for (const att of attachments.filter(a => a.type !== 'image' && a.textContent)) {
+        content.push({ type: 'text', text: `[文件: ${att.name}]\n${att.textContent}` });
+      }
+      // 用户消息
+      content.push({ type: 'text', text: message });
+      prompt = content; // SDK query() 接受 string 或 content blocks 数组
+    } else {
+      // 纯文本模式（现有逻辑）
+      // Coding Plan 供应商 + 图片 → 过滤图片并提示
+      if (imageAttachments.length > 0 && activeProviderId !== 'volcano_agent') {
+        sendWarningImageFiltered = true;
+      }
+      const fileTextParts = attachments
+        .filter(a => a.textContent)
+        .map(a => `[文件: ${a.name}]\n${a.textContent}`);
+      if (fileTextParts.length > 0) {
+        prompt = fileTextParts.join('\n\n') + '\n\n' + message;
+      }
     }
   }
 
@@ -4375,15 +4823,15 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   const allowedTools = config.allowedTools.split(',').map(t => t.trim()).filter(Boolean);
   // 危险工具黑名单：根据权限模式动态调整
   // - bypassPermissions：仅拦截 Agent（防止递归派生），允许 Bash/Write/Edit
-  // - acceptEdits：拦截 Bash + Agent，允许 Write/Edit
-  // - default/plan：拦截全部危险工具
+  // - acceptEdits：拦截 Monitor + Agent，允许 Bash/Write/Edit（Edit 自动批准，Bash 需确认）
+  // - default/plan：拦截 Monitor + Agent，允许 Bash/Write/Edit（均需用户确认）
   let disallowedTools;
   if (config.permissionMode === 'bypassPermissions') {
     disallowedTools = ['Agent'];
   } else if (config.permissionMode === 'acceptEdits') {
-    disallowedTools = ['Bash', 'Monitor', 'Agent'];
+    disallowedTools = ['Monitor', 'Agent'];
   } else {
-    disallowedTools = ['Bash', 'Write', 'Edit', 'Monitor', 'Agent'];
+    disallowedTools = ['Monitor', 'Agent'];
   }
   // 工作目录：优先用调用方指定的（对话级），否则用默认（设置级）
   const ccWorkdir = workdir || config.defaultWorkdir;
@@ -4411,12 +4859,47 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
     }
   }
 
+  // 打包后 Claude Agent SDK 无法通过 import.meta.url 正确定位原生 claude 二进制
+  // （路径穿过 app.asar 文件，spawn 返回 ENOTDIR），需显式指定解包后的路径
+  let pathToClaudeCodeExecutable = undefined;
+  if (app.isPackaged) {
+    const platformArch = `${process.platform}-${process.arch}`;
+    const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+    const unpackedPath = path.join(
+      process.resourcesPath, 'app.asar.unpacked', 'node_modules',
+      '@anthropic-ai', `claude-agent-sdk-${platformArch}`, binaryName
+    );
+    if (fs.existsSync(unpackedPath)) {
+      pathToClaudeCodeExecutable = unpackedPath;
+      try { fs.chmodSync(unpackedPath, 0o755); } catch (_) {}
+      console.log(`[CC] pathToClaudeCodeExecutable: ${unpackedPath}`);
+    }
+  }
+
+  // 构建系统提示词（合并传入的 systemRole 和默认约束）
+  const defaultSystemRole = `你是一个集成在 Memora 应用中的 AI 编程助手。
+
+## 环境约束
+- 你运行在 Claude Agent SDK 内，不是独立的 CLI 工具
+- **禁止使用 \`claude\` CLI 命令**（如 \`claude skill install\`、\claude config\` 等），因为 \`claude\` 二进制不在 PATH 中
+- 如需安装 Skill，引导用户在 Memora 的"文档 → Skill 管理"中操作
+- 如需修改配置，引导用户在 Memora 的设置面板中操作
+- 可以使用 Bash/Read/Write/Edit/Glob/Grep/WebSearch 等工具完成编程任务
+- Bash 工具可用：可执行 git、npm、npx 等命令
+- 工作目录是 CC 的工作区，可在其中创建和修改文件`;
+
+  const finalSystemRole = systemRole
+    ? `${defaultSystemRole}\n\n## 用户附加指令\n${systemRole}`
+    : defaultSystemRole;
+
   const options = {
     allowedTools: allowedTools.length > 0 ? allowedTools : undefined,
     disallowedTools,
     permissionMode: config.permissionMode,
     maxTurns: config.maxTurns,
     cwd: ccWorkdir,
+    systemPrompt: finalSystemRole,
+    ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
     // 只加载项目级配置，不污染用户全局 ~/.claude/settings.json
     settingSources: ['project'],
     // 捕获子进程 stderr，转发到 UI 便于调试
@@ -4429,20 +4912,18 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
         }
       }
     },
-    // 精简 env 白名单
+    // 传递完整开发环境（确保 Python/Node/Java 等工具链可用）
+    // 先展开系统环境，再用 CC 专用变量覆盖
     env: {
-      PATH: process.env.PATH,
-      HOME: process.env.HOME,
-      USER: process.env.USER,
-      LANG: process.env.LANG,
-      TERM: process.env.TERM,
-      // 供应商路由：直连用 provider env，代理用 localhost，默认用 Coding Plan
+      // ── 基础系统变量（继承宿主机完整环境）──
+      ...process.env,
+      // ── 供应商路由：直连用 provider env，代理用 localhost，默认用 Coding Plan ──
       ANTHROPIC_BASE_URL: providerEnv?.ANTHROPIC_BASE_URL || (useOpenRouter ? `http://127.0.0.1:${anthropicProxyPort}` : config.baseUrl),
       ANTHROPIC_AUTH_TOKEN: providerEnv?.ANTHROPIC_AUTH_TOKEN || (useOpenRouter ? 'dummy-proxy-not-used' : config.authToken),
       ANTHROPIC_MODEL: providerEnv?.ANTHROPIC_MODEL || (useOpenRouter ? (openRouterModel || getProviderConfig('openrouter').defaultModel) : config.model),
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'ANTHROPIC_API_KEY',
       ANTHROPIC_API_KEY: '',
-      // 注入用户配置的 Skill 环境变量 / API Key
+      // ── 注入用户配置的 Skill 环境变量 / API Key（最高优先级）──
       ...Object.fromEntries((config.envVars || []).filter(v => v.key).map(v => [v.key, v.value || ''])),
     },
     // 恢复会话（resume 需要首次 init 返回的 session_id）
@@ -4477,7 +4958,52 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
     console.log(`[CC] MCP servers: ${selectedConnectors.map(c => c.name).join(', ')}`);
   }
 
-  console.log(`[CC] Invoke | prompt: "${prompt.substring(0, 50)}..." | sessionId(resume): ${sessionId || 'null(新会话)'} | workdir: ${ccWorkdir} | provider: ${activeProvider?.name || activeProviderId} | route: ${useOpenRouter ? 'proxy' : (providerEnv ? 'direct' : 'default')}`);
+  // Agent Plan 专属 MCP Server 自动注入（豆包搜索 + 多模态生成）
+  if (activeProviderId === 'volcano_agent') {
+    const providerConfig = getProviderConfig('volcano_agent');
+    const arkApiKey = providerConfig.authToken;
+    const arkBaseUrl = providerConfig.baseUrl;
+    if (arkApiKey) {
+      const agentMcpServers = [];
+      // 豆包搜索 Harness
+      if (providerConfig.enableDoubaoSearch !== 'false') {
+        agentMcpServers.push({
+          'doubao-search': {
+            type: 'stdio',
+            command: 'node',
+            args: [path.join(__dirname, 'src', 'mcp', 'doubao-search-server.js')],
+            env: { ARK_API_KEY: arkApiKey, ARK_BASE_URL: arkBaseUrl }
+          }
+        });
+      }
+      // 多模态生成工具（图片/视频）
+      agentMcpServers.push({
+        'ark-multimodal': {
+          type: 'stdio',
+          command: 'node',
+          args: [path.join(__dirname, 'src', 'mcp', 'ark-multimodal-server.js')],
+          env: {
+            ARK_API_KEY: arkApiKey,
+            ARK_BASE_URL: arkBaseUrl,
+            IMAGE_MODEL: providerConfig.imageGenModel || 'doubao-seedream-3-0',
+            VIDEO_MODEL: providerConfig.videoGenModel || 'seedance-2-0',
+          }
+        }
+      });
+      options.mcpServers = [...(options.mcpServers || []), ...agentMcpServers];
+      console.log(`[CC] Agent Plan MCP servers injected: ${agentMcpServers.map(s => Object.keys(s)[0]).join(', ')}`);
+    }
+  }
+
+  // Coding Plan 供应商 + 图片附件 → 提示用户
+  if (sendWarningImageFiltered) {
+    if (mainWindow) {
+      mainWindow.webContents.send('cc:stream', { event: 'info', level: 'warning', content: '当前供应商不支持图片输入，已自动过滤。切换到 Agent Plan 可启用多模态。' });
+    }
+  }
+
+  const promptLogStr = typeof prompt === 'string' ? prompt.substring(0, 50) : `[multimodal: ${Array.isArray(prompt) ? prompt.length : 0} blocks]`;
+  console.log(`[CC] Invoke | prompt: "${promptLogStr}..." | sessionId(resume): ${sessionId || 'null(新会话)'} | workdir: ${ccWorkdir} | provider: ${activeProvider?.name || activeProviderId} | route: ${useOpenRouter ? 'proxy' : (providerEnv ? 'direct' : 'default')}`);
 
   // 每次对话前刷新 CLAUDE.md（将 memora 最新记忆同步到 CC 工作目录）
   syncCLAUDEMdToCC(ccWorkdir);
@@ -4490,8 +5016,8 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 
   let newSessionId = sessionId || null;
 
-  // 外层 timeout：防止 maxTurns 内跑飞（最长 10 分钟）
-  const CC_TIMEOUT_MS = 10 * 60 * 1000;
+  // 外层 timeout：防止 maxTurns 内跑飞（默认 30 分钟，复杂任务可能需要很长时间）
+  const CC_TIMEOUT_MS = 30 * 60 * 1000;
   let ccTimeoutHandle = setTimeout(() => {
     console.warn('[CC] Query timeout, aborting...');
     _ccController?.abort();
@@ -4751,6 +5277,17 @@ ipcMain.handle('cc:execute-command', async (event, { command, workdir }) => {
     if (pattern.test(cmdLower)) {
       return { success: false, error: '命令被安全策略拦截：包含危险操作', exitCode: -1 };
     }
+  }
+
+  // 友好提示：claude CLI 不可用
+  if (/^\s*claude\b/.test(cmdLower)) {
+    return {
+      success: false,
+      error: 'claude CLI 不在 PATH 中。Memora 通过 Claude Agent SDK 运行，不支持 claude CLI 命令。请在"文档 → Skill 管理"中安装/管理 Skill。',
+      exitCode: 127,
+      stdout: '',
+      stderr: '/bin/sh: claude: command not found',
+    };
   }
 
   try {
@@ -16895,16 +17432,32 @@ ipcMain.handle('multimodal:process', async (event, id) => {
     asset.processingStatus = 'processing';
     saveMultimodalIndex(index);
 
-    // 准备上下文
-    let contextStr = '';
-    if (asset.type === 'document' || asset.type === 'url' || asset.type === 'meeting') {
-      const textContent = asset.transcript || asset.ocrText || asset.description || asset.url || '';
-      contextStr = JSON.stringify({ type: asset.type, title: asset.title, content: textContent.substring(0, 3000) });
+    // 准备上下文（包含更丰富的资产信息）
+    const assetInfo = {
+      type: asset.type,
+      title: asset.title || asset.original_name || '',
+      originalName: asset.original_name || '',
+      description: asset.description || '',
+      url: asset.url || '',
+      tags: asset.tags || [],
+      transcript: (asset.transcript || '').substring(0, 3000),
+      ocrText: asset.ocrText || '',
+      fileSize: asset.file_size || 0,
+      createdAt: asset.created_at || ''
+    };
+    // 尽量提取更多文本内容
+    let textContent = '';
+    if (asset.type === 'url') {
+      textContent = asset.url || asset.description || '';
+    } else if (asset.type === 'meeting') {
+      textContent = asset.transcript || asset.description || '';
     } else if (asset.type === 'image') {
-      contextStr = JSON.stringify({ type: 'image', title: asset.title, ocrText: asset.ocrText || '' });
+      textContent = asset.ocrText || asset.description || '';
     } else {
-      contextStr = JSON.stringify({ type: asset.type, title: asset.title, transcript: (asset.transcript || '').substring(0, 3000) });
+      textContent = asset.transcript || asset.ocrText || asset.description || '';
     }
+    assetInfo.textContent = textContent.substring(0, 3000);
+    contextStr = JSON.stringify(assetInfo);
 
     // 调用 ADP 处理
     const config = await getInsightADPConfig('activation');
@@ -16922,15 +17475,16 @@ ${contextStr}`;
 
     const result = await callADPForInsight(config, processPrompt, contextStr, 'multimodal_process');
 
-    if (result.title) asset.title = result.title;
-    if (result.description) asset.description = result.description;
-    if (result.tags) asset.tags = result.tags;
+    let updated = false;
+    if (result.title && result.title !== asset.title) { asset.title = result.title; updated = true; }
+    if (result.description) { asset.description = result.description; updated = true; }
+    if (result.tags && Array.isArray(result.tags)) { asset.tags = result.tags; updated = true; }
     if (result.entities) asset.entityNames = result.entities;
     asset.processingStatus = 'completed';
     asset.updatedAt = new Date().toISOString();
     saveMultimodalIndex(index);
 
-    return { success: true, asset };
+    return { success: true, asset, updated };
   } catch (err) {
     // 标记失败
     try {
@@ -16955,13 +17509,30 @@ ipcMain.handle('multimodal:generate-book', async (event, options) => {
     const knowledgeAtoms = knowledgeStore ? knowledgeStore.atoms : [];
     const clusters = knowledgeStore ? knowledgeStore.clusters : [];
 
-    // 构建知识概要
+    // 构建知识概要（包含实际内容）
     const summary = {
       totalAssets: assets.length,
       assetTypes: {},
       totalAtoms: knowledgeAtoms.length,
       totalClusters: clusters.length,
-      recentAssets: assets.slice(0, 10).map(a => ({ type: a.type, title: a.title, tags: a.tags })),
+      recentAssets: assets.slice(0, 15).map(a => ({
+        type: a.type,
+        title: a.title || a.original_name || '',
+        description: a.description || '',
+        tags: a.tags || []
+      })),
+      // 包含知识原子实际内容（最多 20 条，每条截取 200 字）
+      atomContents: knowledgeAtoms.slice(0, 20).map(a => ({
+        content: (a.content || '').substring(0, 200),
+        domain: a.domain || '未分类',
+        type: a.type || 'fact'
+      })),
+      // 包含知识簇信息
+      clusterInfo: clusters.slice(0, 10).map(c => ({
+        name: c.name,
+        atomCount: (c.atom_ids || []).length,
+        status: c.status
+      })),
       topDomains: {},
       topEntities: []
     };
@@ -17219,7 +17790,8 @@ function loadPromptTemplate(name) {
 async function callADPForInsight(config, promptTemplate, contextStr, module) {
   // v2.4: LLM 和 Agent 模式都走 LLM（结构化 JSON 输出必须走 LLM）
   const mode = getGlobalAIMode();
-  if (mode === 'llm' || mode === 'agent') {
+  // cc / llm / agent 模式都走 LLM（结构化 JSON 输出必须走 LLM）
+  if (mode === 'llm' || mode === 'agent' || mode === 'cc') {
     return await _callLLMForInsight(promptTemplate, contextStr, module);
   }
 

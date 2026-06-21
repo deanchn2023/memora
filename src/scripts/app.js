@@ -405,6 +405,9 @@ const App = {
     document.getElementById('closeSettingsBtn')?.addEventListener('click', () => this.hideSettingsModal());
     document.getElementById('saveSettingsBtn')?.addEventListener('click', () => this.saveSettings());
 
+    // 侧边栏收起/展开
+    this._initSidebarToggle();
+
     // v2.4 拖拽导入多模态文件
     const mainView = document.querySelector('.main-view');
     if (mainView) {
@@ -535,6 +538,26 @@ const App = {
     });
     // CC 环境变量动态添加
     document.getElementById('ccAddEnvVarBtn')?.addEventListener('click', () => this._addCCEnvVarRow());
+    // CC 环境变量快速预设
+    document.getElementById('ccPresetPipMirror')?.addEventListener('click', () => {
+      this._addCCEnvVarRow('PIP_INDEX_URL', 'https://pypi.tuna.tsinghua.edu.cn/simple');
+      this._addCCEnvVarRow('PIP_TRUSTED_HOST', 'pypi.tuna.tsinghua.edu.cn');
+      this.showToast('已添加 pip 清华镜像预设', 'success');
+    });
+    document.getElementById('ccPresetNpmMirror')?.addEventListener('click', () => {
+      this._addCCEnvVarRow('npm_config_registry', 'https://registry.npmmirror.com');
+      this.showToast('已添加 npm 淘宝镜像预设', 'success');
+    });
+    document.getElementById('ccPresetPythonpath')?.addEventListener('click', () => {
+      this._addCCEnvVarRow('PYTHONPATH', '');
+      this.showToast('已添加 PYTHONPATH 环境变量', 'success');
+    });
+    document.getElementById('ccPresetNodepath')?.addEventListener('click', () => {
+      this._addCCEnvVarRow('NODE_PATH', '');
+      this.showToast('已添加 NODE_PATH 环境变量', 'success');
+    });
+    // CC 运行环境检测
+    document.getElementById('ccCheckEnvBtn')?.addEventListener('click', () => this._checkCCEnv());
     // CC 权限模式警告
     document.getElementById('ccPermissionMode')?.addEventListener('change', (e) => {
       const warnEl = document.getElementById('ccPermissionWarn');
@@ -599,6 +622,8 @@ const App = {
       await this._uploadSkill(file);
       e.target.value = ''; // 重置以便重复上传同名文件
     });
+    // Skill 拖拽上传
+    this._initSkillDragDrop();
     // 连接器管理事件
     this._initConnectorEvents();
     document.getElementById('refreshMemoriesBtn')?.addEventListener('click', () => this.loadMemories());
@@ -760,7 +785,7 @@ const App = {
       }
     });
 
-    // SkillHub 搜索结果事件委托（安装/卸载）
+    // SkillHub 搜索结果事件委托（安装/卸载/详情）
     document.getElementById('skillhubResults')?.addEventListener('click', async (e) => {
       const installBtn = e.target.closest('.skillhub-install-btn');
       if (installBtn) {
@@ -770,6 +795,13 @@ const App = {
       const uninstallBtn = e.target.closest('.skillhub-uninstall-btn');
       if (uninstallBtn) {
         await this._skillhubUninstallSkill(uninstallBtn.dataset.slug, uninstallBtn);
+        return;
+      }
+      // 已安装的 SkillHub 技能点击查看详情
+      const detailTarget = e.target.closest('[data-skill-detail]');
+      if (detailTarget) {
+        const skillName = detailTarget.dataset.skillDetail;
+        if (skillName) this._showSkillDetail(skillName);
       }
     });
 
@@ -940,8 +972,18 @@ const App = {
       if (e.key === 'Enter') {
         // IME 组合期间（如中文输入法输英文），回车确认输入，不发送
         if (isComposing) return;
-        // Ctrl+Enter 或 Cmd+Enter 换行
-        if (e.ctrlKey || e.metaKey) return;
+        // Ctrl+Enter / Cmd+Enter / Shift+Enter → 显式插入换行
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          e.preventDefault();
+          const start = chatInput.selectionStart;
+          const end = chatInput.selectionEnd;
+          const value = chatInput.value;
+          chatInput.value = value.substring(0, start) + '\n' + value.substring(end);
+          chatInput.selectionStart = chatInput.selectionEnd = start + 1;
+          // 触发 input 事件以自动调整高度
+          chatInput.dispatchEvent(new Event('input'));
+          return;
+        }
         // 普通回车发送
         e.preventDefault();
         this._unlockAudioContext();
@@ -1309,14 +1351,12 @@ const App = {
       // 缓存默认工作目录，供对话区指示器使用
       this._ccDefaultWorkdir = config.defaultWorkdir || '';
       this._updateCCWorkdirBar();
-      // 初始化 OpenRouter 模型选择器
-      this._initOpenRouterModelSelector();
-
       // 加载供应商配置
       if (config.providers) {
         this._loadProviderConfigs(config.providers);
       }
       // 初始化供应商选择器（复用已返回的 providers 数据，避免重复 IPC 调用）
+      // _initProviderSelector → _updateModelSelectorForProvider 会根据当前供应商加载对应模型列表
       this._initProviderSelector({
         providers: config.providers,
         activeProvider: config.activeProvider,
@@ -1331,7 +1371,9 @@ const App = {
         for (const [key, value] of Object.entries(p.config)) {
           const input = document.getElementById(`provider_${p.id}_${key}`);
           if (input && key !== 'enabled') {
-            if (input.tagName === 'SELECT') {
+            if (input.type === 'checkbox') {
+              input.checked = value === 'true' || value === true;
+            } else if (input.tagName === 'SELECT') {
               input.value = value || '';
             } else if (input.type === 'password') {
               // Don't refill password fields, but show status
@@ -1507,7 +1549,7 @@ const App = {
   async _saveProviderConfigs() {
     if (!window.electronAPI?.ccSetConfig) return;
     const providers = {};
-    const providerIds = ['volcano', 'deepseek', 'tencent'];
+    const providerIds = ['volcano', 'volcano_agent', 'deepseek', 'tencent'];
     for (const id of providerIds) {
       const config = {};
       const fields = document.querySelectorAll(`[id^="provider_${id}_"]`);
@@ -1517,6 +1559,11 @@ const App = {
         // 密码字段为空时跳过，避免用空字符串覆盖已保存的值
         // （页面加载时密码不回显，password 字段值为空不代表用户要清除）
         if (field.type === 'password' && !field.value.trim()) return;
+        // checkbox 字段用 checked 状态
+        if (field.type === 'checkbox') {
+          config[key] = field.checked ? 'true' : 'false';
+          return;
+        }
         config[key] = field.value;
       });
       providers[id] = config;
@@ -1562,6 +1609,243 @@ const App = {
       if (key) vars.push({ key, value: value || '' });
     });
     return vars;
+  },
+
+  /** 检测 CC 工作目录的运行时环境 */
+  async _checkCCEnv() {
+    const btn = document.getElementById('ccCheckEnvBtn');
+    const statusEl = document.getElementById('ccCheckEnvStatus');
+    const resultEl = document.getElementById('ccEnvCheckResult');
+
+    if (!btn || !window.electronAPI?.ccCheckEnv) {
+      this.showToast('当前版本不支持环境检测');
+      return;
+    }
+
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = '检测中...';
+    if (resultEl) resultEl.style.display = 'none';
+
+    try {
+      const workdir = document.getElementById('ccDefaultWorkdir')?.value.trim() || undefined;
+      const result = await window.electronAPI.ccCheckEnv(workdir);
+
+      if (!result?.success) {
+        if (statusEl) statusEl.textContent = '检测失败';
+        this.showToast('环境检测失败', 'error');
+        return;
+      }
+
+      // 缓存检测结果供安装使用
+      this._ccEnvResult = result;
+
+      // 构建检测结果 HTML
+      const categoryLabels = {
+        python: 'Python',
+        node: 'Node.js',
+        java: 'Java',
+        go: 'Go',
+        rust: 'Rust',
+        vcs: '版本控制',
+        net: '网络工具',
+        util: '实用工具',
+        db: '数据库',
+        build: '编译工具',
+      };
+
+      const missingTools = result.tools.filter(t => !t.available && t.install);
+
+      let html = `<div class="cc-env-check">`;
+      html += `<div class="cc-env-check-header">工作目录: ${this.escapeHtml(result.workdir)}</div>`;
+
+      // 一键安装全部缺失项
+      if (missingTools.length > 0) {
+        html += `<div class="cc-env-check-install-all">`;
+        html += `<span class="cc-env-check-missing-count">${missingTools.length} 项缺失</span>`;
+        html += `<button class="cc-env-install-all-btn" id="ccInstallAllBtn">一键安装缺失项</button>`;
+        html += `</div>`;
+      }
+
+      // 工具检测结果
+      for (const [cat, tools] of Object.entries(result.grouped)) {
+        html += `<div class="cc-env-check-group">`;
+        html += `<div class="cc-env-check-group-title">${categoryLabels[cat] || cat}</div>`;
+        for (const t of tools) {
+          const status = t.available ? 'ok' : 'missing';
+          const icon = t.available ? '✓' : '✗';
+          html += `<div class="cc-env-check-tool cc-env-${status}" data-tool-name="${this.escapeHtml(t.name)}">`;
+          html += `<span class="cc-env-check-icon">${icon}</span>`;
+          html += `<span class="cc-env-check-name">${this.escapeHtml(t.name)}</span>`;
+          if (t.available && t.version) {
+            html += `<span class="cc-env-check-version">${this.escapeHtml(t.version)}</span>`;
+          } else if (t.install) {
+            html += `<span class="cc-env-check-version">未安装</span>`;
+            html += `<button class="cc-env-install-btn" data-tool="${this.escapeHtml(t.name)}" data-brew="${this.escapeHtml(t.install.brew)}" title="${this.escapeHtml(t.install.desc)}">安装</button>`;
+          } else {
+            html += `<span class="cc-env-check-version">未安装（随其他工具附带）</span>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      // 环境变量
+      const envVarEntries = Object.entries(result.envVars || {});
+      if (envVarEntries.length > 0) {
+        html += `<div class="cc-env-check-group">`;
+        html += `<div class="cc-env-check-group-title">关键环境变量</div>`;
+        for (const [key, value] of envVarEntries) {
+          const displayValue = value.length > 60 ? value.substring(0, 60) + '...' : value;
+          html += `<div class="cc-env-check-envvar">`;
+          html += `<span class="cc-env-check-envkey">${this.escapeHtml(key)}</span>`;
+          html += `<span class="cc-env-check-envval" title="${this.escapeHtml(value)}">${this.escapeHtml(displayValue)}</span>`;
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      // 安装日志区域
+      html += `<div class="cc-env-install-log" id="ccInstallLog" style="display:none;"></div>`;
+
+      html += `</div>`;
+
+      if (resultEl) {
+        resultEl.innerHTML = html;
+        resultEl.style.display = 'block';
+      }
+      if (statusEl) {
+        const available = result.tools.filter(t => t.available).length;
+        const total = result.tools.length;
+        statusEl.textContent = `检测完成: ${available}/${total} 工具可用`;
+      }
+
+      // 绑定安装按钮事件
+      resultEl?.querySelectorAll('.cc-env-install-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const toolName = e.target.dataset.tool;
+          const brewPkg = e.target.dataset.brew;
+          this._installTool(toolName, brewPkg);
+        });
+      });
+
+      // 绑定一键安装按钮
+      const installAllBtn = resultEl?.querySelector('#ccInstallAllBtn');
+      installAllBtn?.addEventListener('click', () => this._installAllMissing(missingTools));
+
+    } catch (e) {
+      if (statusEl) statusEl.textContent = '检测异常: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  /** 安装单个工具 */
+  async _installTool(toolName, brewPackage) {
+    if (!window.electronAPI?.ccInstallTool) {
+      this.showToast('当前版本不支持工具安装', 'error');
+      return;
+    }
+
+    const workdir = document.getElementById('ccDefaultWorkdir')?.value.trim() || undefined;
+    const logEl = document.getElementById('ccInstallLog');
+    const installBtns = document.querySelectorAll(`.cc-env-install-btn[data-tool="${toolName}"]`);
+
+    // 禁用按钮，显示安装中
+    installBtns.forEach(b => { b.disabled = true; b.textContent = '安装中...'; });
+    if (logEl) {
+      logEl.style.display = 'block';
+      logEl.innerHTML = `<div class="cc-env-install-log-entry"><span class="cc-env-install-log-tool">${this.escapeHtml(toolName)}</span> <span class="cc-env-install-log-status">安装中...</span></div>`;
+    }
+
+    // 监听安装进度
+    let progressHandler = null;
+    if (window.electronAPI?.onCCInstallProgress) {
+      window.electronAPI.onCCInstallProgress((data) => {
+        if (data.toolName === toolName && logEl) {
+          const entry = logEl.querySelector(`.cc-env-install-log-entry[data-tool="${toolName}"]`);
+          if (entry) {
+            // 追加进度行
+            const lines = (data.data || '').trim().split('\n').filter(l => l.trim());
+            for (const line of lines.slice(-3)) {
+              const lineEl = document.createElement('div');
+              lineEl.className = 'cc-env-install-log-line';
+              lineEl.textContent = line;
+              entry.appendChild(lineEl);
+            }
+            entry.scrollTop = entry.scrollHeight;
+          }
+        }
+      });
+    }
+
+    try {
+      const result = await window.electronAPI.ccInstallTool({ toolName, brewPackage, workdir });
+      const entry = logEl?.querySelector(`.cc-env-install-log-entry[data-tool="${toolName}"]`);
+      if (result.success) {
+        installBtns.forEach(b => { b.textContent = '已安装'; b.classList.add('installed'); });
+        if (entry) {
+          const statusEl = entry.querySelector('.cc-env-install-log-status');
+          if (statusEl) { statusEl.textContent = '安装成功'; statusEl.className = 'cc-env-install-log-status cc-env-install-success'; }
+        }
+        this.showToast(`${toolName} 安装成功`, 'success');
+      } else {
+        installBtns.forEach(b => { b.disabled = false; b.textContent = '安装'; });
+        if (entry) {
+          const statusEl = entry.querySelector('.cc-env-install-log-status');
+          if (statusEl) { statusEl.textContent = result.error || result.message || '安装失败'; statusEl.className = 'cc-env-install-log-status cc-env-install-failed'; }
+        }
+        this.showToast(result.error || result.message || `${toolName} 安装失败`, 'error');
+      }
+    } catch (e) {
+      installBtns.forEach(b => { b.disabled = false; b.textContent = '安装'; });
+      this.showToast(`${toolName} 安装异常: ${e.message}`, 'error');
+    } finally {
+      // 移除进度监听
+      if (window.electronAPI?.removeCCInstallProgressListeners) {
+        window.electronAPI.removeCCInstallProgressListeners();
+      }
+    }
+  },
+
+  /** 一键安装所有缺失工具 */
+  async _installAllMissing(missingTools) {
+    const installAllBtn = document.getElementById('ccInstallAllBtn');
+    if (installAllBtn) { installAllBtn.disabled = true; installAllBtn.textContent = '安装中...'; }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const tool of missingTools) {
+      // 跳过没有安装信息的工具
+      if (!tool.install) continue;
+
+      const btns = document.querySelectorAll(`.cc-env-install-btn[data-tool="${tool.name}"]`);
+      btns.forEach(b => { b.disabled = true; b.textContent = '排队中...'; });
+
+      await this._installTool(tool.name, tool.install.brew);
+
+      // 检查结果
+      const resultBtn = document.querySelector(`.cc-env-install-btn[data-tool="${tool.name}"]`);
+      if (resultBtn && resultBtn.classList.contains('installed')) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+    }
+
+    if (installAllBtn) {
+      installAllBtn.textContent = `完成: ${successCount} 成功, ${failCount} 失败`;
+      installAllBtn.disabled = false;
+    }
+
+    if (failCount === 0) {
+      this.showToast(`全部 ${successCount} 个工具安装成功`, 'success');
+    } else {
+      this.showToast(`${successCount} 成功, ${failCount} 失败，请查看日志`, 'warning');
+    }
+
+    // 自动重新检测
+    setTimeout(() => this._checkCCEnv(), 1500);
   },
 
   async _testCCConnection() {
@@ -2663,6 +2947,113 @@ const App = {
     document.getElementById('settingsModal')?.classList.add('hidden');
   },
 
+  // ===== 侧边栏收起/展开 =====
+
+  /** 初始化侧边栏收起/展开 */
+  _initSidebarToggle() {
+    this._currentViewName = 'calendar';
+    // 按视图记忆收起状态：{ viewName: isCollapsed }
+    this._sidebarCollapseState = {};
+    try {
+      const saved = localStorage.getItem('memora_sidebar_collapse');
+      if (saved) this._sidebarCollapseState = JSON.parse(saved);
+    } catch (_) {}
+
+    // 默认：AI 助手页收起，其他页展开
+    if (this._sidebarCollapseState['ai'] === undefined) {
+      this._sidebarCollapseState['ai'] = true;
+    }
+
+    // 绑定切换按钮
+    document.getElementById('sidebarToggleBtn')?.addEventListener('click', () => {
+      this._toggleSidebar();
+    });
+
+    // 收起后点击图标也可以展开
+    document.getElementById('collapsedPomodoroIcon')?.addEventListener('click', () => {
+      this._setSidebarCollapsed(false);
+    });
+    document.getElementById('collapsedTaskIcon')?.addEventListener('click', () => {
+      this._setSidebarCollapsed(false);
+    });
+
+    // 应用当前视图的侧边栏状态
+    this._applySidebarState();
+  },
+
+  /** 切换侧边栏收起/展开 */
+  _toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    const isCollapsed = sidebar.classList.contains('collapsed');
+    this._setSidebarCollapsed(!isCollapsed);
+  },
+
+  /** 设置侧边栏收起/展开状态 */
+  _setSidebarCollapsed(collapsed) {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    if (collapsed) {
+      sidebar.classList.add('collapsed');
+    } else {
+      sidebar.classList.remove('collapsed');
+    }
+    // 记住当前视图的状态
+    this._sidebarCollapseState[this._currentViewName] = collapsed;
+    try {
+      localStorage.setItem('memora_sidebar_collapse', JSON.stringify(this._sidebarCollapseState));
+    } catch (_) {}
+    // 更新收起状态下的数据
+    if (collapsed) {
+      this._updateCollapsedSidebar();
+    }
+  },
+
+  /** 根据当前视图应用侧边栏状态 */
+  _applySidebarState() {
+    const isCollapsed = this._sidebarCollapseState[this._currentViewName] || false;
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    if (isCollapsed) {
+      sidebar.classList.add('collapsed');
+      this._updateCollapsedSidebar();
+    } else {
+      sidebar.classList.remove('collapsed');
+    }
+  },
+
+  /** 设置当前视图名称（供视图切换时调用） */
+  _setCurrentViewName(name) {
+    this._currentViewName = name;
+    this._applySidebarState();
+  },
+
+  /** 更新收起状态下的侧边栏数据（计时器、任务数） */
+  _updateCollapsedSidebar() {
+    // 更新计时器显示
+    const timerDisplay = document.getElementById('timerDisplay');
+    const collapsedTimer = document.getElementById('collapsedTimerDisplay');
+    if (timerDisplay && collapsedTimer) {
+      collapsedTimer.textContent = timerDisplay.textContent;
+    }
+    // 更新运行状态指示器
+    const startBtn = document.getElementById('startPomodoro');
+    const runningDot = document.getElementById('collapsedRunningDot');
+    if (startBtn && runningDot) {
+      const isRunning = startBtn.textContent.includes('暂停') || startBtn.textContent.includes('Pause');
+      runningDot.classList.toggle('active', isRunning);
+    }
+    // 更新任务数
+    const taskList = document.getElementById('taskList');
+    const taskBadge = document.getElementById('collapsedTaskCount');
+    if (taskList && taskBadge) {
+      const tasks = taskList.querySelectorAll('.task-item');
+      const count = tasks.length;
+      taskBadge.textContent = count > 0 ? count : '';
+      taskBadge.dataset.count = count;
+    }
+  },
+
   showAIAssistantView() {
     // 隐藏所有主视图（与 calendar.js hideOtherViews 保持一致）
     const allViews = ['calendarView', 'notebookView', 'knowledgeView', 'documentsView', 'insightView'];
@@ -2682,6 +3073,9 @@ const App = {
     // 隐藏日期导航栏（非日历视图时不需要）
     const dateNav = document.querySelector('.date-navigator');
     if (dateNav) dateNav.style.display = 'none';
+
+    // 侧边栏：AI 助手页默认收起
+    this._setCurrentViewName('ai');
 
     // 更新 AI 模式切换按钮可见性
     this._updateAIModeToggle();
@@ -2893,8 +3287,7 @@ const App = {
 
     // 同时刷新 Skill 选择器
     this._refreshCCSkillSelect();
-    // 同时初始化 OpenRouter 模型选择器
-    this._initOpenRouterModelSelector();
+    // 模型列表由 _updateModelSelectorForProvider 根据当前供应商自动管理，这里不需要重复加载
   },
 
   /** 刷新 CC Skill 选择下拉框（只显示已安装的 skill） */
@@ -2929,6 +3322,13 @@ const App = {
     const select = document.getElementById('ccOpenRouterSelect');
     if (!select) return;
     if (!forceRefresh && select.dataset.loaded === 'true') return;
+
+    // 守卫：如果当前选中了直连供应商（火山引擎/DeepSeek/腾讯云），不要加载 OpenRouter 模型覆盖它
+    const activeProviderId = document.getElementById('ccProviderSelect')?.value;
+    if (activeProviderId && activeProviderId !== 'openrouter') {
+      console.log(`[OpenRouter] Skip loading — active provider is "${activeProviderId}", not OpenRouter`);
+      return;
+    }
 
     // 保留当前选中值
     const prevValue = select.value;
@@ -3566,6 +3966,8 @@ const App = {
         this._ccCurrentText = '';
         this._ccThinkingText = '';
         this._ccRenderPending = false;
+        // 重置自动批准标志（每次新对话都需要重新确认）
+        this._ccAutoApproveCommands = false;
         // Clean up any previous subtask listeners before starting new message
         window.electronAPI?.removeCCSubTaskListeners?.();
         window.electronAPI.onCCStream((evt) => {
@@ -4017,18 +4419,19 @@ const App = {
       return;
     }
 
-    // --- CC 代码块按钮（保存/打开/预览/复制/执行/忽略/拒绝）---
+    // --- CC 代码块按钮（保存/打开/预览/复制/执行/总是同意/忽略/拒绝）---
     const ccSaveBtn = e.target.closest('.cc-code-save-btn');
     const ccOpenBtn = e.target.closest('.cc-code-open-btn');
     const ccPreviewBtn = e.target.closest('.cc-code-preview-btn');
     const ccCopyBtn = e.target.closest('.cc-code-copy-btn');
     const ccExecBtn = e.target.closest('.cc-code-exec-btn');
+    const ccAllowBtn = e.target.closest('.cc-code-allow-btn');
     const ccIgnoreBtn = e.target.closest('.cc-code-ignore-btn');
     const ccRejectBtn = e.target.closest('.cc-code-reject-btn');
-    if (ccSaveBtn || ccOpenBtn || ccPreviewBtn || ccCopyBtn || ccExecBtn || ccIgnoreBtn || ccRejectBtn) {
+    if (ccSaveBtn || ccOpenBtn || ccPreviewBtn || ccCopyBtn || ccExecBtn || ccAllowBtn || ccIgnoreBtn || ccRejectBtn) {
       e.preventDefault();
       e.stopPropagation();
-      const clickedBtn = ccSaveBtn || ccOpenBtn || ccPreviewBtn || ccCopyBtn || ccExecBtn || ccIgnoreBtn || ccRejectBtn;
+      const clickedBtn = ccSaveBtn || ccOpenBtn || ccPreviewBtn || ccCopyBtn || ccExecBtn || ccAllowBtn || ccIgnoreBtn || ccRejectBtn;
       const toolbar = clickedBtn.closest('.cc-code-toolbar');
       const pre = toolbar?.nextElementSibling;
       const codeEl = pre?.querySelector('code');
@@ -4042,11 +4445,20 @@ const App = {
       if (ccCopyBtn) {
         try {
           await navigator.clipboard.writeText(codeContent);
-          ccCopyBtn.textContent = '✅ 已复制';
-          setTimeout(() => { ccCopyBtn.textContent = '📋 复制'; }, 2000);
+          ccCopyBtn.textContent = '已复制';
+          setTimeout(() => { ccCopyBtn.textContent = '复制'; }, 2000);
         } catch {
           this.showToast('复制失败', 'error');
         }
+        return;
+      }
+      if (ccAllowBtn) {
+        // 总是同意：设置自动批准标志，然后执行当前命令
+        this._ccAutoApproveCommands = true;
+        ccAllowBtn.textContent = '已开启';
+        ccAllowBtn.disabled = true;
+        this.showToast('已开启自动执行，后续命令无需确认', 'success');
+        await this._executeCommandInline(ccExecBtn, pre, codeContent);
         return;
       }
       if (ccExecBtn) {
@@ -4054,18 +4466,18 @@ const App = {
         return;
       }
       if (ccIgnoreBtn) {
-        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-allow-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
         const badge = document.createElement('span');
         badge.className = 'cc-command-status cc-command-ignored';
-        badge.textContent = '✕ 已忽略';
+        badge.textContent = '已忽略';
         toolbar.appendChild(badge);
         return;
       }
       if (ccRejectBtn) {
-        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        toolbar.querySelectorAll('.cc-code-exec-btn, .cc-code-allow-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
         const badge = document.createElement('span');
         badge.className = 'cc-command-status cc-command-rejected';
-        badge.textContent = '🚫 已拒绝';
+        badge.textContent = '已拒绝';
         toolbar.appendChild(badge);
         return;
       }
@@ -4075,12 +4487,12 @@ const App = {
       }
       if (ccSaveBtn) {
         ccSaveBtn.disabled = true;
-        ccSaveBtn.textContent = '⏳ 保存中...';
+        ccSaveBtn.textContent = '保存中...';
       }
       try {
         const result = await window.electronAPI?.artifactsSave?.({ content: codeContent, fileName, source: 'cc' });
         if (result?.success) {
-          if (ccSaveBtn) { ccSaveBtn.textContent = '✅ 已保存'; ccSaveBtn.disabled = false; }
+          if (ccSaveBtn) { ccSaveBtn.textContent = '已保存'; ccSaveBtn.disabled = false; }
           if (ccOpenBtn || ccSaveBtn) {
             this.showToast(`已保存到 Agent 产物: ${result.name}`);
           }
@@ -5352,6 +5764,13 @@ const App = {
 
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // ===== AI 完成提醒（与 ADP 模式一致：耗时长 + 用户已切走时） =====
+    if (!aborted && !error) {
+      const elapsedMs = this._ccTimerStart ? (Date.now() - this._ccTimerStart) : 0;
+      this._notifyADPCompleted(messageContent, elapsedMs);
+    }
+    this._ccTimerStart = null;
   },
 
   /** 给 CC 输出中的代码块添加工具栏（保存/打开/预览/复制/执行按钮由全局事件委托处理） */
@@ -5424,18 +5843,19 @@ const App = {
 
       let toolbarHtml = `<span class="cc-code-lang">${lang}</span>`;
       // 复制按钮（所有代码块都有）
-      toolbarHtml += `<button class="cc-code-copy-btn" title="复制代码">📋 复制</button>`;
-      // 命令类代码块：执行/忽略/拒绝
+      toolbarHtml += `<button class="cc-code-copy-btn" title="复制代码">复制</button>`;
+      // 命令类代码块：执行一次/总是同意/忽略/拒绝
       if (isCommand) {
-        toolbarHtml += `<button class="cc-code-exec-btn" title="执行命令">▶ 执行</button>`;
-        toolbarHtml += `<button class="cc-code-ignore-btn" title="忽略">✕ 忽略</button>`;
-        toolbarHtml += `<button class="cc-code-reject-btn" title="拒绝">🚫 拒绝</button>`;
+        toolbarHtml += `<button class="cc-code-exec-btn" title="执行一次（需确认）">执行一次</button>`;
+        toolbarHtml += `<button class="cc-code-allow-btn" title="总是同意执行后续命令">总是同意</button>`;
+        toolbarHtml += `<button class="cc-code-ignore-btn" title="忽略此命令">忽略</button>`;
+        toolbarHtml += `<button class="cc-code-reject-btn" title="拒绝">拒绝</button>`;
       }
       // 保存按钮
-      toolbarHtml += `<button class="cc-code-save-btn" title="保存到 Agent 产物">💾 保存</button>`;
+      toolbarHtml += `<button class="cc-code-save-btn" title="保存到 Agent 产物">保存</button>`;
       // 预览/打开
-      toolbarHtml += `<button class="cc-code-preview-btn" title="预览" style="${canPreview ? '' : 'display:none'}">👁 预览</button>`;
-      toolbarHtml += `<button class="cc-code-open-btn" title="在浏览器中打开" style="${canOpen ? '' : 'display:none'}">↗ 打开</button>`;
+      toolbarHtml += `<button class="cc-code-preview-btn" title="预览" style="${canPreview ? '' : 'display:none'}">预览</button>`;
+      toolbarHtml += `<button class="cc-code-open-btn" title="在浏览器中打开" style="${canOpen ? '' : 'display:none'}">打开</button>`;
 
       toolbar.innerHTML = toolbarHtml;
       pre.parentNode.insertBefore(toolbar, pre);
@@ -5451,7 +5871,10 @@ const App = {
   /** 在对话中直接执行命令并显示输出 */
   async _executeCommandInline(execBtn, pre, command) {
     // 如果已经在执行中，不重复触发
-    if (execBtn.disabled) return;
+    if (execBtn?.disabled) return;
+
+    // 获取工具栏引用（后续按钮状态更新需要）
+    const toolbar = execBtn?.closest('.cc-code-toolbar');
 
     // 检查是否已有输出区域
     let outputEl = pre.nextElementSibling;
@@ -5460,36 +5883,47 @@ const App = {
       outputEl = null;
     }
 
-    // 显示确认弹窗
-    const shortCmd = command.length > 80 ? command.substring(0, 80) + '...' : command;
-    const overlay = document.createElement('div');
-    overlay.className = 'cc-exec-confirm-overlay';
-    overlay.innerHTML = `
-      <div class="cc-exec-confirm-modal">
-        <div class="cc-exec-confirm-header">
-          <span class="cc-exec-confirm-icon">⚡</span>
-          <span class="cc-exec-confirm-title">执行命令确认</span>
+    // 如果未开启自动批准，显示确认弹窗
+    if (!this._ccAutoApproveCommands) {
+      const shortCmd = command.length > 80 ? command.substring(0, 80) + '...' : command;
+      const overlay = document.createElement('div');
+      overlay.className = 'cc-exec-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="cc-exec-confirm-modal">
+          <div class="cc-exec-confirm-header">
+            <span class="cc-exec-confirm-icon">⚡</span>
+            <span class="cc-exec-confirm-title">执行命令确认</span>
+          </div>
+          <div class="cc-exec-confirm-body">
+            <div class="cc-exec-confirm-label">即将执行以下命令：</div>
+            <pre class="cc-exec-confirm-cmd">${this.escapeHtml(command)}</pre>
+            <div class="cc-exec-confirm-hint">工作目录：${this.escapeHtml(this._getCCWorkdir() || this._ccDefaultWorkdir || '默认')}</div>
+          </div>
+          <div class="cc-exec-confirm-actions">
+            <button class="cc-exec-confirm-btn cc-exec-confirm-once">确认执行</button>
+            <button class="cc-exec-confirm-btn cc-exec-confirm-always">总是同意</button>
+            <button class="cc-exec-confirm-btn cc-exec-confirm-no">取消</button>
+          </div>
         </div>
-        <div class="cc-exec-confirm-body">
-          <div class="cc-exec-confirm-label">即将执行以下命令：</div>
-          <pre class="cc-exec-confirm-cmd">${this.escapeHtml(command)}</pre>
-          <div class="cc-exec-confirm-hint">工作目录：${this.escapeHtml(this._getCCWorkdir() || this._ccDefaultWorkdir || '默认')}</div>
-        </div>
-        <div class="cc-exec-confirm-actions">
-          <button class="cc-exec-confirm-btn cc-exec-confirm-yes">✓ 确认执行</button>
-          <button class="cc-exec-confirm-btn cc-exec-confirm-no">✕ 取消</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
+      `;
+      document.body.appendChild(overlay);
 
-    const confirmed = await new Promise((resolve) => {
-      overlay.querySelector('.cc-exec-confirm-yes').addEventListener('click', () => { overlay.remove(); resolve(true); });
-      overlay.querySelector('.cc-exec-confirm-no').addEventListener('click', () => { overlay.remove(); resolve(false); });
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(false); } });
-    });
+      const confirmed = await new Promise((resolve) => {
+        overlay.querySelector('.cc-exec-confirm-once').addEventListener('click', () => { overlay.remove(); resolve('once'); });
+        overlay.querySelector('.cc-exec-confirm-always').addEventListener('click', () => { overlay.remove(); resolve('always'); });
+        overlay.querySelector('.cc-exec-confirm-no').addEventListener('click', () => { overlay.remove(); resolve(false); });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(false); } });
+      });
 
-    if (!confirmed) return;
+      if (!confirmed) return;
+      if (confirmed === 'always') {
+        this._ccAutoApproveCommands = true;
+        // 更新工具栏上的"总是同意"按钮状态
+        const allowBtn = toolbar?.querySelector('.cc-code-allow-btn');
+        if (allowBtn) { allowBtn.textContent = '已开启'; allowBtn.disabled = true; }
+        this.showToast('已开启自动执行，后续命令无需确认', 'success');
+      }
+    }
 
     // 创建输出区域
     outputEl = document.createElement('div');
@@ -5505,7 +5939,7 @@ const App = {
 
     // 禁用执行按钮
     execBtn.disabled = true;
-    execBtn.textContent = '⏳ 执行中';
+    execBtn.textContent = '执行中';
 
     const bodyEl = outputEl.querySelector('.cc-command-output-body');
     const titleEl = outputEl.querySelector('.cc-command-output-title');
@@ -5519,7 +5953,7 @@ const App = {
         titleEl.textContent = '❌ 执行失败';
         iconEl.textContent = '❌';
         bodyEl.textContent = 'IPC 调用失败';
-        execBtn.textContent = '▶ 重试';
+        execBtn.textContent = '重试';
         execBtn.disabled = false;
         outputEl.classList.add('cc-command-output-error');
         return;
@@ -5537,11 +5971,10 @@ const App = {
         iconEl.textContent = '✅';
         outputEl.classList.add('cc-command-output-success');
         // 隐藏执行/忽略/拒绝按钮，显示已执行状态
-        const toolbar = execBtn.closest('.cc-code-toolbar');
-        toolbar?.querySelectorAll('.cc-code-exec-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
+        toolbar?.querySelectorAll('.cc-code-exec-btn, .cc-code-allow-btn, .cc-code-ignore-btn, .cc-code-reject-btn').forEach(b => b.remove());
         const badge = document.createElement('span');
         badge.className = 'cc-command-status cc-command-executed';
-        badge.textContent = '✅ 已执行';
+        badge.textContent = '已执行';
         toolbar?.appendChild(badge);
       } else {
         titleEl.textContent = `❌ 执行失败 (exit: ${result.exitCode})`;
@@ -5550,7 +5983,7 @@ const App = {
         if (result.error && !result.stderr) {
           bodyEl.textContent = result.error;
         }
-        execBtn.textContent = '▶ 重试';
+        execBtn.textContent = '重试';
         execBtn.disabled = false;
       }
     } catch (err) {
@@ -5688,40 +6121,74 @@ const App = {
     grid.innerHTML = this._ccSkills.map(skill => {
       const installed = skill.installed;
       const isSkillhub = skill.source === 'skillhub';
-      const sourceLabel = isSkillhub
-        ? '<span class="skill-source-badge skillhub">SkillHub</span>'
-        : '<span class="skill-source-badge upload">上传</span>';
+      const isCcWorkdir = skill.source === 'cc-workdir';
+      const isSymlink = skill.source === 'symlink';
+      // 来源标签
+      let sourceLabel, sourceIcon;
+      if (isSkillhub) {
+        sourceLabel = '<span class="skill-source-badge skillhub">SkillHub</span>';
+        sourceIcon = '🌐';
+      } else if (isCcWorkdir) {
+        sourceLabel = '<span class="skill-source-badge cc-workdir">CC工作目录</span>';
+        sourceIcon = '⚡';
+      } else if (isSymlink) {
+        sourceLabel = '<span class="skill-source-badge symlink">已链接</span>';
+        sourceIcon = '🔗';
+      } else {
+        sourceLabel = '<span class="skill-source-badge upload">上传</span>';
+        sourceIcon = '🧩';
+      }
       const statusBadge = installed
         ? '<span class="skill-status-badge installed">✅ 已安装</span>'
         : '<span class="skill-status-badge not-installed">⬜ 未安装</span>';
       const installBtn = installed
         ? `<button class="skill-uninstall-btn" data-skill-name="${this.escapeHtml(skill.name)}">卸载</button>`
         : `<button class="skill-install-btn" data-skill-name="${this.escapeHtml(skill.name)}">安装到CC</button>`;
-      // SkillHub 来源的技能没有上传文件，不显示"删除"按钮
-      const deleteBtn = isSkillhub ? '' : `<button class="skill-delete-btn" data-skill-name="${this.escapeHtml(skill.name)}">🗑 删除</button>`;
+      // CC工作目录来源：显示"导入"+"删除"按钮
+      // SkillHub 来源：不显示"删除"按钮
+      // 上传来源：显示"删除"按钮
+      // 符号链接：不显示额外按钮
+      let actionBtns = '';
+      if (isCcWorkdir) {
+        actionBtns = `<button class="skill-import-btn" data-skill-name="${this.escapeHtml(skill.name)}" title="导入到持久存储">📥 导入</button>`;
+        actionBtns += `<button class="skill-delete-workdir-btn" data-skill-name="${this.escapeHtml(skill.name)}" title="从工作目录删除">🗑 删除</button>`;
+      } else if (!isSkillhub && !isSymlink) {
+        actionBtns = `<button class="skill-delete-btn" data-skill-name="${this.escapeHtml(skill.name)}">🗑 删除</button>`;
+      }
+      const fullDesc = this.escapeHtml(skill.description || '暂无描述');
+      const shortDesc = this.escapeHtml((skill.description || '暂无描述').substring(0, 80));
       return `
-        <div class="skill-card" data-skill-name="${this.escapeHtml(skill.name)}">
-          <div class="skill-card-header">
-            <span class="skill-card-icon">${isSkillhub ? '🌐' : '🧩'}</span>
+        <div class="skill-card" data-skill-name="${this.escapeHtml(skill.name)}" title="${fullDesc}">
+          <div class="skill-card-header" data-skill-detail="${this.escapeHtml(skill.name)}">
+            <span class="skill-card-icon">${sourceIcon}</span>
             <span class="skill-card-name">${this.escapeHtml(skill.name)}</span>
             ${sourceLabel}
             ${statusBadge}
           </div>
-          <p class="skill-card-desc">${this.escapeHtml(skill.description || '无描述')}</p>
+          <p class="skill-card-desc" data-skill-detail="${this.escapeHtml(skill.name)}">${shortDesc}${(skill.description || '').length > 80 ? '...' : ''}</p>
           <div class="skill-card-actions">
             ${installBtn}
-            ${deleteBtn}
+            ${actionBtns}
           </div>
         </div>
       `;
     }).join('');
 
-    // 事件委托：在 grid 上统一处理安装/卸载/删除按钮点击
+    // 事件委托：在 grid 上统一处理安装/卸载/删除/导入/详情按钮点击
     grid.onclick = async (e) => {
       const installBtn = e.target.closest('.skill-install-btn');
       const uninstallBtn = e.target.closest('.skill-uninstall-btn');
       const deleteBtn = e.target.closest('.skill-delete-btn');
-      if (!installBtn && !uninstallBtn && !deleteBtn) return;
+      const importBtn = e.target.closest('.skill-import-btn');
+      const deleteWorkdirBtn = e.target.closest('.skill-delete-workdir-btn');
+      const detailTarget = e.target.closest('[data-skill-detail]');
+      // 检查是否点击了详情区域（header 或 desc），且不是按钮
+      if (detailTarget && !installBtn && !uninstallBtn && !deleteBtn && !importBtn && !deleteWorkdirBtn) {
+        const skillName = detailTarget.dataset.skillDetail;
+        if (skillName) this._showSkillDetail(skillName);
+        return;
+      }
+      if (!installBtn && !uninstallBtn && !deleteBtn && !importBtn && !deleteWorkdirBtn) return;
 
       if (installBtn) {
         const name = installBtn.dataset.skillName;
@@ -5749,6 +6216,29 @@ const App = {
         } else {
           this.showToast('卸载失败: ' + (result?.error || '未知错误'), 'error');
         }
+      } else if (importBtn) {
+        // 导入 CC 工作目录中的 Skill 到持久存储
+        const name = importBtn.dataset.skillName;
+        const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        const result = await window.electronAPI?.skillImportFromWorkdir?.({ skillName: name, ccWorkdir: workdir });
+        if (result?.success) {
+          this.showToast(`Skill "${name}" 已导入到持久存储`);
+          this._loadSkillList();
+        } else {
+          this.showToast('导入失败: ' + (result?.error || '未知错误'), 'error');
+        }
+      } else if (deleteWorkdirBtn) {
+        // 从 CC 工作目录删除 Skill
+        const name = deleteWorkdirBtn.dataset.skillName;
+        if (!confirm(`确定从工作目录删除 Skill "${name}"？`)) return;
+        const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        const result = await window.electronAPI?.skillDeleteFromWorkdir?.({ skillName: name, ccWorkdir: workdir });
+        if (result?.success) {
+          this.showToast(`Skill "${name}" 已从工作目录删除`);
+          this._loadSkillList();
+        } else {
+          this.showToast('删除失败: ' + (result?.error || '未知错误'), 'error');
+        }
       } else if (deleteBtn) {
         const name = deleteBtn.dataset.skillName;
         if (!confirm(`确定删除 Skill "${name}"？将同时从 CC 卸载。`)) return;
@@ -5765,7 +6255,173 @@ const App = {
     };
   },
 
-  // ===== SkillHub 市场集成（v2.8） =====
+  /** 显示 Skill 详情弹窗 */
+  async _showSkillDetail(skillName) {
+    const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    // 显示加载中
+    const overlay = document.createElement('div');
+    overlay.className = 'skill-detail-overlay';
+    overlay.innerHTML = `
+      <div class="skill-detail-modal">
+        <div class="skill-detail-header">
+          <div class="skill-detail-loading">
+            <div class="spinner"></div>
+            <span>加载中...</span>
+          </div>
+          <button class="skill-detail-close" onclick="this.closest('.skill-detail-overlay').remove()">×</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    // 点击遮罩关闭
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    try {
+      const result = await window.electronAPI?.skillDetail?.({ name: skillName, ccWorkdir: workdir });
+      if (!result?.success) {
+        overlay.querySelector('.skill-detail-modal').innerHTML = `
+          <div class="skill-detail-header">
+            <h3 class="skill-detail-title">❌ 加载失败</h3>
+            <button class="skill-detail-close" onclick="this.closest('.skill-detail-overlay').remove()">×</button>
+          </div>
+          <div class="skill-detail-body">
+            <p class="skill-detail-error">${this.escapeHtml(result?.error || '未知错误')}</p>
+          </div>`;
+        return;
+      }
+
+      const meta = result.metadata || {};
+      const sourceLabel = result.source === 'upload' ? '上传' : result.source === 'cc-workdir' ? 'CC工作目录' : result.source;
+      const installBadge = result.installed
+        ? '<span class="skill-detail-badge installed">✅ 已安装</span>'
+        : '<span class="skill-detail-badge not-installed">⬜ 未安装</span>';
+
+      // 格式化 SKILL.md 内容（简单 markdown 渲染）
+      let mdHtml = '';
+      if (result.skillMdContent) {
+        // 去掉 YAML frontmatter
+        let content = result.skillMdContent.replace(/^---\n[\s\S]*?\n---\n?/, '');
+        // 简单 markdown → HTML
+        mdHtml = content
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+          .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+          .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`(.+?)`/g, '<code>$1</code>')
+          .replace(/^- (.+)$/gm, '<li>$1</li>')
+          .replace(/\n\n/g, '</p><p>')
+          .replace(/^/, '<p>')
+          .replace(/$/, '</p>');
+        mdHtml = mdHtml.replace(/<li>/g, '<ul><li>').replace(/<\/li>\n(?!<li>)/g, '</li></ul>');
+        // 修复嵌套 ul
+        mdHtml = mdHtml.replace(/(<\/p>)?<ul><li>/g, '<ul><li>').replace(/<\/li><\/ul>(<\/p>)?/g, '</li></ul>');
+      }
+
+      // 文件列表
+      const filesHtml = (result.files || []).map(f =>
+        `<div class="skill-detail-file"><span class="skill-detail-file-icon">${f.type === 'dir' ? '📁' : '📄'}</span> ${this.escapeHtml(f.name)}</div>`
+      ).join('');
+
+      overlay.querySelector('.skill-detail-modal').innerHTML = `
+        <div class="skill-detail-header">
+          <div class="skill-detail-title-row">
+            <span class="skill-detail-icon">🧩</span>
+            <h3 class="skill-detail-title">${this.escapeHtml(meta.name || result.name)}</h3>
+            <span class="skill-detail-source-badge">${sourceLabel}</span>
+            ${installBadge}
+          </div>
+          <button class="skill-detail-close" onclick="this.closest('.skill-detail-overlay').remove()">×</button>
+        </div>
+        <div class="skill-detail-body">
+          <div class="skill-detail-meta">
+            ${meta.version ? `<div class="skill-detail-meta-item"><span class="meta-label">版本</span><span class="meta-value">v${this.escapeHtml(meta.version)}</span></div>` : ''}
+            ${meta.author ? `<div class="skill-detail-meta-item"><span class="meta-label">作者</span><span class="meta-value">${this.escapeHtml(meta.author)}</span></div>` : ''}
+            <div class="skill-detail-meta-item"><span class="meta-label">来源</span><span class="meta-value">${sourceLabel}</span></div>
+            <div class="skill-detail-meta-item"><span class="meta-label">安装状态</span><span class="meta-value">${result.installed ? '已安装' : '未安装'}</span></div>
+          </div>
+          ${meta.description ? `<p class="skill-detail-description">${this.escapeHtml(meta.description)}</p>` : ''}
+          ${mdHtml ? `<div class="skill-detail-md"><h4>📖 详细文档</h4><div class="skill-detail-md-content">${mdHtml}</div></div>` : ''}
+          ${filesHtml ? `<div class="skill-detail-files"><h4>📂 文件列表</h4>${filesHtml}</div>` : ''}
+          <div class="skill-detail-path">路径: ${this.escapeHtml(result.path || '')}</div>
+        </div>
+        <div class="skill-detail-footer">
+          ${!result.installed ? `<button class="btn primary skill-detail-install-btn" data-skill-name="${this.escapeHtml(result.name)}">安装到CC</button>` : `<button class="btn secondary skill-detail-uninstall-btn" data-skill-name="${this.escapeHtml(result.name)}">从CC卸载</button>`}
+          <button class="btn secondary" onclick="this.closest('.skill-detail-overlay').remove()">关闭</button>
+        </div>`;
+
+      // 绑定安装/卸载按钮
+      overlay.querySelector('.skill-detail-install-btn')?.addEventListener('click', async (e) => {
+        const name = e.target.dataset.skillName;
+        const wd = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        const r = await window.electronAPI?.skillInstallToCC?.({ skillName: name, ccWorkdir: wd });
+        if (r?.success) {
+          this.showToast(`Skill "${name}" 已安装到 CC`);
+          overlay.remove();
+          this._loadSkillList();
+        } else {
+          this.showToast('安装失败: ' + (r?.error || '未知错误'), 'error');
+        }
+      });
+      overlay.querySelector('.skill-detail-uninstall-btn')?.addEventListener('click', async (e) => {
+        const name = e.target.dataset.skillName;
+        if (!confirm(`确定从 CC 卸载 Skill "${name}"？`)) return;
+        const wd = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+        const r = await window.electronAPI?.skillUninstallFromCC?.({ skillName: name, ccWorkdir: wd });
+        if (r?.success) {
+          this.showToast(`Skill "${name}" 已从 CC 卸载`);
+          overlay.remove();
+          this._loadSkillList();
+        } else {
+          this.showToast('卸载失败: ' + (r?.error || '未知错误'), 'error');
+        }
+      });
+    } catch (err) {
+      overlay.querySelector('.skill-detail-modal').innerHTML = `
+        <div class="skill-detail-header">
+          <h3 class="skill-detail-title">❌ 加载异常</h3>
+          <button class="skill-detail-close" onclick="this.closest('.skill-detail-overlay').remove()">×</button>
+        </div>
+        <div class="skill-detail-body">
+          <p class="skill-detail-error">${this.escapeHtml(err.message)}</p>
+        </div>`;
+    }
+  },
+
+  /** 初始化 Skill 拖拽上传 */
+  _initSkillDragDrop() {
+    if (this._skillDragDropInit) return;
+    this._skillDragDropInit = true;
+    const container = document.getElementById('skillContainer');
+    if (!container) return;
+
+    container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      container.classList.add('skill-drag-active');
+    });
+    container.addEventListener('dragleave', (e) => {
+      if (e.target === container) {
+        container.classList.remove('skill-drag-active');
+      }
+    });
+    container.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      container.classList.remove('skill-drag-active');
+
+      const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.zip'));
+      if (files.length === 0) {
+        this.showToast('请拖入 .zip 格式的 Skill 包', 'warning');
+        return;
+      }
+      for (const file of files) {
+        await this._uploadSkill(file);
+      }
+    });
+  },
 
   _skillhubInitialized: false,
   _skillhubInstalledSlugs: new Set(),
@@ -5847,8 +6503,12 @@ const App = {
     }
   },
 
-  /** 刷新已安装的 SkillHub 技能列表 */
-  async _refreshSkillHubInstalled() {
+  /** 刷新已安装的 SkillHub 技能列表（带缓存，避免每次搜索都调 CLI） */
+  async _refreshSkillHubInstalled(force = false) {
+    // 5 分钟内不重复刷新（除非 force）
+    if (!force && this._skillhubInstalledTs && (Date.now() - this._skillhubInstalledTs < 300000)) {
+      return;
+    }
     this._skillhubInstalledSlugs.clear();
     const workdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
     if (!workdir) return;
@@ -5856,6 +6516,7 @@ const App = {
     const result = await window.electronAPI?.skillhubList?.({ dir: targetDir });
     if (result?.success && result.skills) {
       result.skills.forEach(s => this._skillhubInstalledSlugs.add(s.slug));
+      this._skillhubInstalledTs = Date.now();
     }
   },
 
@@ -5933,8 +6594,8 @@ const App = {
       : `<button class="skillhub-install-btn" data-slug="${slug}">📥 安装到CC</button>`;
 
     return `
-      <div class="skillhub-card">
-        <div class="skillhub-card-header">
+      <div class="skillhub-card" title="${description}">
+        <div class="skillhub-card-header" ${isInstalled ? `data-skill-detail="${slug}"` : ''}>
           <span class="skillhub-card-icon">🌐</span>
           <span class="skillhub-card-name" title="${name}">${name}</span>
           ${version ? `<span class="skillhub-card-version">${version}</span>` : ''}
@@ -5975,6 +6636,8 @@ const App = {
       this._refreshCCSkillSelect();
       // 刷新"我的技能"列表（SkillHub 安装的技能也需要同步显示）
       this._loadSkillList();
+      // 强制刷新已安装缓存（安装状态已变化）
+      this._refreshSkillHubInstalled(true);
     } else {
       this.showToast('安装失败: ' + (result?.error || '未知错误'), 'error');
       if (btn) { btn.disabled = false; btn.textContent = '📥 安装到CC'; }
@@ -6001,6 +6664,8 @@ const App = {
         btn.textContent = '📥 安装到CC';
         btn.disabled = false;
       }
+      // 强制刷新已安装缓存（卸载状态已变化）
+      this._refreshSkillHubInstalled(true);
       this._refreshCCSkillSelect();
       // 刷新"我的技能"列表
       this._loadSkillList();
@@ -7054,7 +7719,7 @@ const App = {
       // 提取摘要（前 50 字）
       let preview = '';
       try {
-        const textEl = messageContent.querySelector('.adp-response-text, .message-text, p');
+        const textEl = messageContent.querySelector('.adp-response-text, .chat-markdown-content, .message-text, p');
         preview = (textEl?.textContent || messageContent.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 50);
         if (preview.length === 50) preview += '...';
       } catch {}
@@ -9592,6 +10257,8 @@ const App = {
 
     return card;
   },
+
+  _formatChatTime(date) {
     const h = String(date.getHours()).padStart(2, '0');
     const m = String(date.getMinutes()).padStart(2, '0');
     return `${h}:${m}`;
@@ -13221,6 +13888,7 @@ ${JSON.stringify(reportData, null, 2)}`;
           <p>${window.i18n?.t('task.empty') || '暂无待办事项'}</p>
         </div>
       `;
+      this._updateCollapsedSidebar();
       return;
     }
     
@@ -13260,6 +13928,8 @@ ${JSON.stringify(reportData, null, 2)}`;
     
     container.innerHTML = sortedTasks.map(task => this.renderTaskItem(task)).join('');
     // 事件委托已在 bindEvents() 中绑定，无需逐元素 addEventListener
+    // 更新收起状态下的任务数角标
+    this._updateCollapsedSidebar();
   },
 
   // === 任务列表事件委托处理 ===
@@ -14463,6 +15133,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     this._renderThemeGrid();
     this._loadVisualToggles();
     this._loadFontSize();
+    this._loadStartupPage();
   },
 
   _loadReminderSettings() {
@@ -14672,6 +15343,71 @@ ${JSON.stringify(reportData, null, 2)}`;
 
     const fontSize = localStorage.getItem('memora-font-size') || 'medium';
     document.body.classList.add(`font-${fontSize}`);
+
+    // 应用启动页设置
+    this._applyStartupPage();
+  },
+
+  /** 应用启动页设置（在初始化后自动导航到用户选择的页面） */
+  _applyStartupPage() {
+    const saved = localStorage.getItem('memora-startup-page');
+    if (!saved || saved === 'calendar') return; // 默认日历，无需切换
+
+    // 延迟执行，确保所有视图和事件已初始化
+    setTimeout(() => {
+      if (saved === 'ai-assistant') {
+        this.showAIAssistantView();
+        // 如果配置了 AI 模式，同步切换
+        const aiMode = localStorage.getItem('memora-startup-ai-mode');
+        if (aiMode && aiMode !== this._aiAssistantMode) {
+          this._setGlobalAIMode(aiMode);
+        }
+      } else {
+        const tab = document.querySelector(`.view-tab[data-view="${saved}"]`);
+        if (tab) tab.click();
+      }
+    }, 500);
+  },
+
+  /** 加载启动页设置 UI（外观设置面板中） */
+  _loadStartupPage() {
+    const savedPage = localStorage.getItem('memora-startup-page') || 'calendar';
+    const savedAiMode = localStorage.getItem('memora-startup-ai-mode') || 'cc';
+
+    document.querySelectorAll('.startup-page-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.page === savedPage);
+      btn.addEventListener('click', () => {
+        const page = btn.dataset.page;
+        document.querySelectorAll('.startup-page-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        localStorage.setItem('memora-startup-page', page);
+
+        // 显示/隐藏 AI 模式选择行
+        const modeRow = document.getElementById('startupAiModeRow');
+        if (modeRow) {
+          modeRow.style.display = page === 'ai-assistant' ? 'flex' : 'none';
+        }
+
+        this.showToast('启动页已设置，下次打开 Memora 时生效', 'success');
+      });
+    });
+
+    // AI 模式选择
+    document.querySelectorAll('.ai-mode-btn-mini').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === savedAiMode);
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        document.querySelectorAll('.ai-mode-btn-mini').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        localStorage.setItem('memora-startup-ai-mode', mode);
+      });
+    });
+
+    // 初始显示 AI 模式行
+    const modeRow = document.getElementById('startupAiModeRow');
+    if (modeRow) {
+      modeRow.style.display = savedPage === 'ai-assistant' ? 'flex' : 'none';
+    }
   },
 
   // ========== 国际化 ==========

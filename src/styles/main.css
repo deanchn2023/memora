@@ -101,7 +101,8 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100vh / var(--zoom-factor, 1));
+  min-height: calc(100vh / var(--zoom-factor, 1));
   background: var(--bg-secondary);
 }
 
@@ -204,6 +205,7 @@ body {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ============= 顶部导航 ============= */
@@ -219,6 +221,7 @@ body {
   gap: 16px;
   position: relative;
   z-index: 100;
+  flex-shrink: 0;
 }
 
 /* 视图切换 - Apple Segmented Control */
@@ -710,6 +713,7 @@ body {
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ============= 侧边栏 ============= */
@@ -720,6 +724,147 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+/* 收起状态 */
+.sidebar.collapsed {
+  width: 52px;
+}
+
+.sidebar.collapsed .sidebar-content {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-20px);
+}
+
+.sidebar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* 收起/展开按钮 */
+.sidebar-toggle-btn {
+  position: absolute;
+  top: 12px;
+  right: -12px;
+  z-index: 100;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  transform: scale(1.1);
+}
+
+.sidebar.collapsed .sidebar-toggle-btn .toggle-icon {
+  transform: rotate(180deg);
+}
+
+.sidebar-toggle-btn .toggle-icon {
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* 收起后的窄条图标栏 */
+.sidebar-collapsed-icons {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding-top: 52px;
+  flex: 1;
+}
+
+.sidebar.collapsed .sidebar-collapsed-icons {
+  display: flex;
+}
+
+.collapsed-icon-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+
+.collapsed-icon-item:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.collapsed-timer-text {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--text-secondary);
+}
+
+/* 番茄钟运行中的指示器 */
+.collapsed-running-indicator {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #FF3B30;
+}
+
+.collapsed-running-indicator.active {
+  display: block;
+  animation: pulseRed 1.5s ease-in-out infinite;
+}
+
+@keyframes pulseRed {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* 任务数角标 */
+.collapsed-task-badge {
+  position: absolute;
+  top: 0px;
+  right: 0px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: #007AFF;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.collapsed-task-badge:empty,
+.collapsed-task-badge[data-count="0"] {
+  display: none;
 }
 
 /* 番茄钟区域 */
@@ -899,6 +1044,7 @@ body {
   overflow: hidden;
   background: var(--bg-secondary);
   position: relative;
+  min-height: 0;
 }
 
 .day-view,
@@ -1619,6 +1765,7 @@ body {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 .notebook-main-area {
@@ -1626,6 +1773,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .notebook-sidebar {
@@ -1785,6 +1933,7 @@ body {
   flex-direction: column;
   gap: 12px;
   background: var(--bg-secondary);
+  min-height: 0;
 }
 
 .notebook-list::-webkit-scrollbar {
@@ -2430,6 +2579,7 @@ body {
   display: flex;
   flex-direction: row;
   height: 100%;
+  min-height: 0;
 }
 
 .chat-main {
@@ -2438,6 +2588,7 @@ body {
   flex-direction: column;
   height: 100%;
   min-width: 0;
+  min-height: 0;
   position: relative;
 }
 
@@ -2551,6 +2702,7 @@ body {
   padding: 24px;
   background: var(--bg-secondary);
   position: relative;
+  min-height: 0;
 }
 
 /* 滚动快捷按钮 */
@@ -2584,7 +2736,7 @@ body {
   right: 20px;
 }
 .chat-scroll-bottom {
-  bottom: 80px;
+  bottom: 140px;
   right: 20px;
 }
 
@@ -3572,6 +3724,7 @@ body {
   border-top: 0.5px solid var(--border-light);
   padding: 18px 20px;
   background: var(--bg-glass-medium);
+  flex-shrink: 0;
 }
 
 .input-wrapper {
@@ -4175,6 +4328,39 @@ body {
   background: rgba(255, 59, 48, 0.12);
 }
 
+/* CC 总是同意按钮 */
+.cc-code-allow-btn {
+  background: rgba(52, 199, 89, 0.08);
+  border: 1px solid rgba(52, 199, 89, 0.2);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: #34C759;
+  white-space: nowrap;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
+}
+
+.cc-code-allow-btn:hover {
+  background: rgba(52, 199, 89, 0.15);
+}
+
+.cc-code-allow-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 确认弹窗：总是同意按钮 */
+.cc-exec-confirm-always {
+  background: rgba(52, 199, 89, 0.1);
+  color: #34C759;
+  border-color: rgba(52, 199, 89, 0.3);
+}
+
+.cc-exec-confirm-always:hover {
+  background: rgba(52, 199, 89, 0.18);
+}
+
 /* 命令状态标签 */
 .cc-command-status {
   font-size: 11px;
@@ -4449,6 +4635,295 @@ body {
   background: rgba(255, 59, 48, 0.08);
 }
 
+/* Skill 卡片 hover 效果 + 拖拽态 */
+.skill-card {
+  transition: box-shadow 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  cursor: pointer;
+}
+.skill-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  border-color: var(--primary-color, #007AFF);
+  transform: translateY(-2px);
+}
+.skill-card-header[data-skill-detail],
+.skill-card-desc[data-skill-detail] {
+  cursor: pointer;
+}
+.skill-card-desc[data-skill-detail]:hover {
+  color: var(--primary-color, #007AFF);
+}
+
+/* 拖拽激活态 */
+.skill-drag-active {
+  outline: 2px dashed var(--primary-color, #007AFF);
+  outline-offset: -4px;
+  background: rgba(0, 122, 255, 0.03);
+}
+
+/* Skill 详情弹窗 */
+.skill-detail-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.skill-detail-modal {
+  background: var(--bg-primary, #fff);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 640px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  overflow: hidden;
+  animation: scaleIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.skill-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border-light, rgba(0,0,0,0.06));
+  flex-shrink: 0;
+}
+
+.skill-detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.skill-detail-icon {
+  font-size: 24px;
+}
+
+.skill-detail-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0;
+}
+
+.skill-detail-source-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 122, 255, 0.1);
+  color: #007AFF;
+  font-weight: 500;
+}
+
+.skill-detail-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.skill-detail-badge.installed {
+  background: rgba(52, 199, 89, 0.1);
+  color: #34C759;
+}
+.skill-detail-badge.not-installed {
+  background: rgba(142, 142, 147, 0.1);
+  color: #8e8e93;
+}
+
+.skill-detail-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--text-tertiary, #aeaeb2);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.skill-detail-close:hover {
+  color: var(--text-primary, #1d1d1f);
+}
+
+.skill-detail-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.skill-detail-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary, #86868b);
+  font-size: 14px;
+}
+
+.skill-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.skill-detail-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skill-detail-meta-item .meta-label {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.skill-detail-meta-item .meta-value {
+  font-size: 14px;
+  color: var(--text-primary, #1d1d1f);
+  font-weight: 500;
+}
+
+.skill-detail-description {
+  font-size: 14px;
+  color: var(--text-secondary, #86868b);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.skill-detail-md {
+  margin-bottom: 16px;
+}
+.skill-detail-md h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0 0 8px;
+}
+.skill-detail-md-content {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  line-height: 1.7;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+.skill-detail-md-content h2,
+.skill-detail-md-content h3 {
+  font-size: 14px;
+  color: var(--text-primary, #1d1d1f);
+  margin: 12px 0 6px;
+}
+.skill-detail-md-content h4 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+.skill-detail-md-content code {
+  font-family: 'SF Mono', Monaco, monospace;
+  background: rgba(0,0,0,0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.skill-detail-md-content ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.skill-detail-md-content li {
+  margin: 3px 0;
+}
+.skill-detail-md-content p {
+  margin: 6px 0;
+}
+
+.skill-detail-files {
+  margin-bottom: 16px;
+}
+.skill-detail-files h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin: 0 0 8px;
+}
+.skill-detail-file {
+  font-size: 13px;
+  color: var(--text-secondary, #86868b);
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.skill-detail-file-icon {
+  font-size: 14px;
+}
+
+.skill-detail-path {
+  font-size: 11px;
+  color: var(--text-tertiary, #aeaeb2);
+  font-family: 'SF Mono', Monaco, monospace;
+  word-break: break-all;
+  margin-top: 12px;
+}
+
+.skill-detail-error {
+  color: var(--danger, #ff3b30);
+  font-size: 14px;
+}
+
+.skill-detail-footer {
+  display: flex;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-light, rgba(0,0,0,0.06));
+  flex-shrink: 0;
+}
+
+/* AFP 用量指示器 */
+.afp-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.afp-indicator.hidden { display: none; }
+.afp-icon { font-size: 14px; }
+.afp-label { color: var(--text-secondary, #86868b); }
+.afp-value { color: var(--text-primary, #1d1d1f); font-weight: 600; }
+.afp-total { color: var(--text-tertiary, #aeaeb2); }
+.afp-bar {
+  width: 60px;
+  height: 4px;
+  background: rgba(0,0,0,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-left: 4px;
+}
+.afp-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  background: #34C759;
+}
+.afp-bar-fill.warning { background: #FF9500; }
+.afp-bar-fill.danger { background: #FF3B30; }
+
 /* CC 环境变量行 */
 .cc-env-var-row {
   display: flex;
@@ -4494,6 +4969,211 @@ body {
 
 .cc-env-var-del:hover {
   background: rgba(255, 59, 48, 0.08);
+}
+
+/* CC 环境检测结果 */
+.cc-env-check {
+  font-size: 13px;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.1));
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--bg-secondary, rgba(245, 245, 247, 0.6));
+}
+
+.cc-env-check-header {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+
+.cc-env-check-group {
+  margin-bottom: 14px;
+}
+
+.cc-env-check-group-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-primary, #1d1d1f);
+  margin-bottom: 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border-color, rgba(0,0,0,0.06));
+}
+
+.cc-env-check-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.cc-env-check-icon {
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.cc-env-ok .cc-env-check-icon {
+  color: #34C759;
+}
+
+.cc-env-missing .cc-env-check-icon {
+  color: #FF3B30;
+}
+
+.cc-env-check-name {
+  min-width: 80px;
+  font-weight: 500;
+}
+
+.cc-env-check-version {
+  color: var(--text-secondary, #86868b);
+  font-size: 11px;
+}
+
+.cc-env-missing .cc-env-check-version {
+  color: #FF3B30;
+  opacity: 0.6;
+}
+
+.cc-env-check-envvar {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 11px;
+  align-items: baseline;
+}
+
+.cc-env-check-envkey {
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  min-width: 180px;
+  white-space: nowrap;
+}
+
+.cc-env-check-envval {
+  color: var(--text-secondary, #86868b);
+  word-break: break-all;
+}
+
+/* CC 环境检测：安装按钮 */
+.cc-env-install-btn {
+  background: rgba(0, 122, 255, 0.08);
+  border: 1px solid rgba(0, 122, 255, 0.2);
+  border-radius: 4px;
+  padding: 1px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  color: #007AFF;
+  white-space: nowrap;
+  margin-left: auto;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.cc-env-install-btn:hover:not(:disabled) {
+  background: rgba(0, 122, 255, 0.15);
+}
+
+.cc-env-install-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cc-env-install-btn.installed {
+  background: rgba(52, 199, 89, 0.08);
+  border-color: rgba(52, 199, 89, 0.2);
+  color: #34C759;
+}
+
+/* CC 环境检测：一键安装全部 */
+.cc-env-check-install-all {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 149, 0, 0.06);
+  border: 1px solid rgba(255, 149, 0, 0.15);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.cc-env-check-missing-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: #FF9500;
+}
+
+.cc-env-install-all-btn {
+  background: rgba(255, 149, 0, 0.1);
+  border: 1px solid rgba(255, 149, 0, 0.25);
+  border-radius: 6px;
+  padding: 4px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #FF9500;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.cc-env-install-all-btn:hover:not(:disabled) {
+  background: rgba(255, 149, 0, 0.18);
+}
+
+.cc-env-install-all-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* CC 环境检测：安装日志 */
+.cc-env-install-log {
+  margin-top: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.08));
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  padding: 8px;
+}
+
+.cc-env-install-log-entry {
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.cc-env-install-log-entry[data-tool] {
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.cc-env-install-log-tool {
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+  margin-right: 8px;
+}
+
+.cc-env-install-log-status {
+  color: var(--text-secondary, #86868b);
+}
+
+.cc-env-install-log-status.cc-env-install-success {
+  color: #34C759;
+  font-weight: 500;
+}
+
+.cc-env-install-log-status.cc-env-install-failed {
+  color: #FF3B30;
+  font-weight: 500;
+}
+
+.cc-env-install-log-line {
+  color: var(--text-secondary, #86868b);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  padding: 1px 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* CC Skill 选择器 */
@@ -4564,6 +5244,46 @@ body {
 .skill-source-badge.upload {
   background: rgba(255, 149, 0, 0.1);
   color: #FF9500;
+}
+
+.skill-source-badge.cc-workdir {
+  background: rgba(88, 86, 214, 0.12);
+  color: #5856D6;
+}
+
+.skill-source-badge.symlink {
+  background: rgba(52, 199, 89, 0.1);
+  color: #34C759;
+}
+
+.skill-import-btn {
+  background: rgba(88, 86, 214, 0.1);
+  color: #5856D6;
+  border: 1px solid rgba(88, 86, 214, 0.2);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.skill-import-btn:hover {
+  background: rgba(88, 86, 214, 0.2);
+}
+
+.skill-delete-workdir-btn {
+  background: rgba(255, 59, 48, 0.08);
+  color: #FF3B30;
+  border: 1px solid rgba(255, 59, 48, 0.15);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.skill-delete-workdir-btn:hover {
+  background: rgba(255, 59, 48, 0.15);
 }
 
 /* Skill 安装/卸载按钮 */

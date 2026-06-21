@@ -1,5 +1,11 @@
 # Memora 项目长期记忆
 
+## 代码索引（2026-06-21 创建）
+- **索引文件**：`.codebuddy/memory/CODE-INDEX.md`
+- **用途**：告诉 AI "参考 CODE-INDEX" 或 "查看代码索引"，AI 可直接定位代码，无需搜索
+- **包含内容**：main.js IPC 通道、preload.js API、app.js 方法、index.html 元素 ID、CSS 类名、MCP Server
+- **行号可能随代码变化**，但函数名/通道名是稳定的
+
 ## 图片同步关键原则（2026-06-12 更新）
 - 笔记 `imagePath` **始终指向本地文件**（`images/xxx.png`），服务端路径仅在同步 payload 中使用
 - Node.js `fetch`（undici）与 `form-data` npm 包的 stream body 不兼容 → multipart/form-data 上传必须用 http 模块 + form.pipe(req)

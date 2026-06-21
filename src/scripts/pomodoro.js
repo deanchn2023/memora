@@ -171,6 +171,12 @@ const Pomodoro = {
     const seconds = this.state.remainingTime % 60;
     const display = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     document.getElementById('timerDisplay').textContent = display;
+    // 同步更新收起状态下的计时器
+    const collapsedTimer = document.getElementById('collapsedTimerDisplay');
+    if (collapsedTimer) collapsedTimer.textContent = display;
+    // 同步运行状态指示器
+    const runningDot = document.getElementById('collapsedRunningDot');
+    if (runningDot) runningDot.classList.toggle('active', this.state.isRunning);
     
     document.title = `${display} - 忆境 Memora`;
   },

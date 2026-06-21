@@ -108,51 +108,80 @@
       </div>
 
       <div class="content">
-        <div class="sidebar">
-          <div class="pomodoro-section">
-            <h3 data-i18n="pomodoro.title">番茄钟</h3>
-            <div class="pomodoro-timer">
-              <div class="timer-display" id="timerDisplay">25:00</div>
-              <div class="pomodoro-count" id="pomodoroCount">○ ○ ○ ○</div>
+        <div class="sidebar" id="sidebar">
+          <!-- 收起/展开按钮 -->
+          <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="收起/展开侧栏">
+            <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+          <!-- 正常展开内容 -->
+          <div class="sidebar-content">
+            <div class="pomodoro-section">
+              <h3 data-i18n="pomodoro.title">番茄钟</h3>
+              <div class="pomodoro-timer">
+                <div class="timer-display" id="timerDisplay">25:00</div>
+                <div class="pomodoro-count" id="pomodoroCount">○ ○ ○ ○</div>
+              </div>
+              <div class="pomodoro-controls">
+                <button class="pomodoro-btn primary" id="startPomodoro" data-i18n="pomodoro.start">开始</button>
+                <button class="pomodoro-btn" id="resetPomodoro" data-i18n="pomodoro.reset">重置</button>
+              </div>
+              <div class="current-task" id="currentTask">
+                <span class="label" data-i18n="pomodoro.currentTask">当前任务:</span>
+                <span class="task-name" data-i18n="pomodoro.noTask">无</span>
+              </div>
             </div>
-            <div class="pomodoro-controls">
-              <button class="pomodoro-btn primary" id="startPomodoro" data-i18n="pomodoro.start">开始</button>
-              <button class="pomodoro-btn" id="resetPomodoro" data-i18n="pomodoro.reset">重置</button>
-            </div>
-            <div class="current-task" id="currentTask">
-              <span class="label" data-i18n="pomodoro.currentTask">当前任务:</span>
-              <span class="task-name" data-i18n="pomodoro.noTask">无</span>
+
+            <div class="task-list-section">
+              <div class="task-list-header">
+                <h3 data-i18n="task.title">待办列表</h3>
+                <div class="task-sort-toggle" id="taskSortToggle">
+                  <button class="sort-btn active" data-sort="dueDate" title="按截止时间排序">⏰</button>
+                  <button class="sort-btn" data-sort="priority" title="按优先级排序">🔥</button>
+                  <button class="sort-btn" data-sort="latest" title="按最新排序">🆕</button>
+                </div>
+              </div>
+              <div class="task-list" id="taskList">
+                <div class="empty-state">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                    <rect x="9" y="3" width="6" height="4" rx="1"/>
+                    <path d="M9 12h6M9 16h6"/>
+                  </svg>
+                  <p data-i18n="task.noTasks">暂无待办事项</p>
+                </div>
+              </div>
+              <div class="task-add-row">
+                <button class="add-task-btn" id="addTaskBtn" data-i18n="task.newTask">+ 新建</button>
+                <button class="voice-input-btn" id="voiceInputBtn" title="语音输入" data-i18n-title="voice.input">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                    <line x1="12" y1="18" x2="12" y2="22"/>
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
-
-          <div class="task-list-section">
-            <div class="task-list-header">
-              <h3 data-i18n="task.title">待办列表</h3>
-              <div class="task-sort-toggle" id="taskSortToggle">
-                <button class="sort-btn active" data-sort="dueDate" title="按截止时间排序">⏰</button>
-                <button class="sort-btn" data-sort="priority" title="按优先级排序">🔥</button>
-                <button class="sort-btn" data-sort="latest" title="按最新排序">🆕</button>
-              </div>
+          <!-- 收起后的窄条图标栏 -->
+          <div class="sidebar-collapsed-icons">
+            <div class="collapsed-icon-item" id="collapsedPomodoroIcon" title="番茄钟">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="13" r="8"/>
+                <path d="M12 9v4l2 2"/>
+                <path d="M9 2h6"/>
+              </svg>
+              <span class="collapsed-timer-text" id="collapsedTimerDisplay">25:00</span>
+              <span class="collapsed-running-indicator" id="collapsedRunningDot"></span>
             </div>
-            <div class="task-list" id="taskList">
-              <div class="empty-state">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
-                  <rect x="9" y="3" width="6" height="4" rx="1"/>
-                  <path d="M9 12h6M9 16h6"/>
-                </svg>
-                <p data-i18n="task.noTasks">暂无待办事项</p>
-              </div>
-            </div>
-            <div class="task-add-row">
-              <button class="add-task-btn" id="addTaskBtn" data-i18n="task.newTask">+ 新建</button>
-              <button class="voice-input-btn" id="voiceInputBtn" title="语音输入" data-i18n-title="voice.input">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
-                  <line x1="12" y1="18" x2="12" y2="22"/>
-                </svg>
-              </button>
+            <div class="collapsed-icon-item" id="collapsedTaskIcon" title="待办任务">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                <rect x="9" y="3" width="6" height="4" rx="1"/>
+                <path d="M9 12h6M9 16h6"/>
+              </svg>
+              <span class="collapsed-task-badge" id="collapsedTaskCount">0</span>
             </div>
           </div>
         </div>
@@ -345,7 +374,7 @@
                         <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
                       </svg>
                     </button>
-                    <textarea id="aiChatInput" placeholder="输入你的问题..." data-i18n-placeholder="ai.inputPlaceholder" autocomplete="off" rows="2"></textarea>
+                    <textarea id="aiChatInput" placeholder="输入你的问题... (Enter 发送, Shift+Enter 换行)" data-i18n-placeholder="ai.inputPlaceholder" autocomplete="off" rows="2"></textarea>
                     <button class="chat-voice-btn" id="chatVoiceBtn" title="语音输入">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -742,7 +771,7 @@
                     <button class="btn primary" id="skillUploadBtn">📤 上传 Skill（zip）</button>
                     <input type="file" id="skillFileInput" accept=".zip" style="display:none">
                     <span class="skill-hint" style="color: var(--text-secondary); font-size: 12px; margin-left: 8px;">
-                      上传 .zip 格式的 Skill 包，在 M-Agent 模式对话中可选择启用
+                      上传或拖拽 .zip 格式的 Skill 包，点击卡片查看详情，在 M-Agent 模式对话中可选择启用
                     </span>
                   </div>
                   <div class="skill-body" id="skillBody">
@@ -750,7 +779,7 @@
                     <div class="skill-empty" id="skillEmpty">
                       <div class="empty-icon">🧩</div>
                       <p>暂无 Skill</p>
-                      <span class="empty-hint">上传 .zip 格式的 Skill 包，在 M-Agent 模式中使用</span>
+                      <span class="empty-hint">上传或拖拽 .zip 格式的 Skill 包到此处，在 M-Agent 模式中使用</span>
                     </div>
                   </div>
                 </div>
@@ -1485,7 +1514,7 @@
   <!-- 设置Modal -->
   <div class="modal hidden" id="settingsModal">
     <div class="modal-overlay"></div>
-    <div class="modal-content" style="width: 85vw; max-width: 85vw; height: 85vh; max-height: 85vh;">
+    <div class="modal-content" style="width: 90vw; max-width: 90vw; height: 90vh; max-height: 90vh;">
       <div class="modal-header">
         <h3 data-i18n="settings.title">设置</h3>
         <button class="modal-close" id="closeSettingsBtn">×</button>
@@ -1500,10 +1529,10 @@
           <button class="settings-tab" data-tab="prompt" data-i18n="settings.tab.prompts">Prompt</button>
           <button class="settings-tab" data-tab="profile" data-i18n="settings.tab.profile">画像</button>
           <button class="settings-tab" data-tab="memory" data-i18n="settings.tab.memory">记忆</button>
+          <button class="settings-tab" data-tab="context" data-i18n="settings.tab.context">上下文</button>
           <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">外观</button>
           <button class="settings-tab" data-tab="sync" data-i18n="settings.tab.sync">同步</button>
           <button class="settings-tab" data-tab="reminder" data-i18n="settings.tab.reminder">提醒</button>
-          <button class="settings-tab" data-tab="context" data-i18n="settings.tab.context">智能上下文</button>
           <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">语音</button>
           <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
@@ -1809,6 +1838,31 @@
               <!-- 动态生成的环境变量行 -->
             </div>
             <button class="btn secondary" id="ccAddEnvVarBtn" style="font-size: 12px;">+ 添加环境变量</button>
+
+            <!-- 快速预设 -->
+            <div style="margin-top: 10px;">
+              <small style="color: var(--text-secondary); display: block; margin-bottom: 6px;">快速预设：</small>
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <button class="btn secondary" id="ccPresetPipMirror" style="font-size: 11px; padding: 2px 10px;">pip 清华镜像</button>
+                <button class="btn secondary" id="ccPresetNpmMirror" style="font-size: 11px; padding: 2px 10px;">npm 淘宝镜像</button>
+                <button class="btn secondary" id="ccPresetPythonpath" style="font-size: 11px; padding: 2px 10px;">PYTHONPATH</button>
+                <button class="btn secondary" id="ccPresetNodepath" style="font-size: 11px; padding: 2px 10px;">NODE_PATH</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 运行环境检测 -->
+          <div class="form-group" style="margin-top: 16px;">
+            <label>运行环境检测</label>
+            <small style="color: var(--text-secondary); display: block; margin-bottom: 8px;">
+              检测当前工作目录下可用的开发工具链（Python/Node/Java/Go/Rust 等）和关键环境变量。
+              CC 子进程现在完整继承宿主机环境，工具链变量全部可用。
+            </small>
+            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+              <button class="btn secondary" id="ccCheckEnvBtn">检测运行环境</button>
+              <span id="ccCheckEnvStatus" style="font-size: 13px;"></span>
+            </div>
+            <div id="ccEnvCheckResult" style="display: none;"></div>
           </div>
 
           <div class="form-group" style="margin-top: 16px;">
@@ -1898,6 +1952,80 @@
                 </div>
               </div>
               <button class="btn secondary provider-test-btn" data-provider="volcano">🔗 测试连接</button>
+            </div>
+          </div>
+
+          <div class="provider-card" id="provider-card-volcano_agent">
+            <div class="provider-card-header" data-provider="volcano_agent">
+              <span class="provider-icon">🌋</span>
+              <span class="provider-name">火山引擎 Agent Plan</span>
+              <span class="provider-status" id="providerStatusVolcano_agent">未配置</span>
+              <span class="provider-toggle">▾</span>
+            </div>
+            <div class="provider-card-body hidden" id="providerBodyVolcano_agent">
+              <div class="form-group">
+                <label>Base URL</label>
+                <input type="text" id="provider_volcano_agent_baseUrl" placeholder="https://ark.cn-beijing.volces.com/api/agent">
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                  Agent Plan 推理接入点 URL，购买后在火山方舟控制台获取。
+                </small>
+              </div>
+              <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="provider_volcano_agent_authToken" placeholder="ark-xxxxxxxx">
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                  火山方舟 API Key（与 Coding Plan 独立计费，AFP 包月制）。
+                </small>
+              </div>
+              <div class="form-group">
+                <label>模型列表 <small style="color: var(--text-tertiary); font-weight: normal;">粘贴模型说明 → AI 解析 → 选择</small></label>
+                <textarea id="provider_volcano_agent_modelList" class="provider-model-list" rows="4" placeholder="粘贴 Agent Plan 可用模型列表，点击 AI 解析..." style="width:100%;font-size:12px;border-radius:8px;border:1px solid var(--border-color);padding:8px;resize:vertical;"></textarea>
+                <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+                  <button class="btn secondary provider-parse-models-btn" data-provider="volcano_agent">🤖 AI 解析模型</button>
+                  <span id="provider_volcano_agent_parseStatus" style="font-size: 13px; color: var(--text-secondary);"></span>
+                </div>
+              </div>
+              <div class="form-group" style="margin-top: 12px;">
+                <label>主模型（文本+视觉）</label>
+                <select id="provider_volcano_agent_model">
+                  <option value="auto">Auto（智能调度）</option>
+                  <option value="doubao-seed-1-6-vision">Doubao-Seed-1.6-Vision（代码+视觉）</option>
+                  <option value="doubao-seed-1-6">Doubao-Seed-1.6（纯文本）</option>
+                  <option value="deepseek-v3.1">DeepSeek-V3.1（推理）</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>图像生成模型</label>
+                <select id="provider_volcano_agent_imageGenModel">
+                  <option value="doubao-seedream-3-0">Doubao-Seedream-3.0</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>视频生成模型</label>
+                <select id="provider_volcano_agent_videoGenModel">
+                  <option value="seedance-2-0">Seedance-2.0</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>向量化模型</label>
+                <select id="provider_volcano_agent_embeddingModel">
+                  <option value="doubao-embedding-text">Doubao-Embedding-Text</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--border-light);">
+                <label>Harness</label>
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 4px;">
+                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                    <input type="checkbox" id="provider_volcano_agent_enableDoubaoSearch" checked style="width: 16px; height: 16px;">
+                    <span>🔍 豆包搜索 <small style="color: var(--text-tertiary);">联网搜索实时信息</small></span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                    <input type="checkbox" id="provider_volcano_agent_enableAgentMemory" style="width: 16px; height: 16px;">
+                    <span>🧠 Agent 记忆 <small style="color: var(--text-tertiary);">跨会话记忆持久化</small></span>
+                  </label>
+                </div>
+              </div>
+              <button class="btn secondary provider-test-btn" data-provider="volcano_agent">🔗 测试连接</button>
             </div>
           </div>
 
@@ -2253,6 +2381,26 @@
                 <button class="font-size-btn" data-size="large">大</button>
               </div>
             </div>
+            <div class="appearance-section">
+              <h4 data-i18n="settings.appearance.startupPage">🚀 启动页</h4>
+              <p class="appearance-desc" data-i18n="settings.appearance.startupPageDesc">打开 Memora 时默认进入的页面</p>
+              <div class="startup-page-selector">
+                <button class="startup-page-btn active" data-page="calendar" data-i18n="settings.appearance.startupCalendar">日历</button>
+                <button class="startup-page-btn" data-page="ai-assistant" data-i18n="settings.appearance.startupAiAssistant">AI 助手</button>
+                <button class="startup-page-btn" data-page="notebook" data-i18n="settings.appearance.startupNotebook">记事本</button>
+                <button class="startup-page-btn" data-page="knowledge" data-i18n="settings.appearance.startupKnowledge">知识</button>
+                <button class="startup-page-btn" data-page="documents" data-i18n="settings.appearance.startupDocuments">资产</button>
+                <button class="startup-page-btn" data-page="insight" data-i18n="settings.appearance.startupInsight">洞察</button>
+              </div>
+              <div id="startupAiModeRow" class="startup-ai-mode-row" style="display: none; margin-top: 12px;">
+                <span class="appearance-option-title" style="margin-right: 12px;" data-i18n="settings.appearance.startupAiMode">AI 助手默认模式</span>
+                <div class="ai-mode-toggle-mini">
+                  <button class="ai-mode-btn-mini active" data-mode="cc">M-Agent</button>
+                  <button class="ai-mode-btn-mini" data-mode="agent">Agent</button>
+                  <button class="ai-mode-btn-mini" data-mode="llm">LLM</button>
+                </div>
+              </div>
+            </div>
           </div>
         
         <!-- 记忆管理 -->
@@ -2527,12 +2675,12 @@
 
         <div class="settings-panel hidden" id="contextPanel">
           <div class="reminder-settings-section">
-            <h4 data-i18n="settings.context.title">🧠 智能上下文</h4>
+            <h4 data-i18n="settings.context.title">🧠 上下文</h4>
             <p style="color:var(--text-tertiary);font-size:12px;margin:4px 0 16px;" data-i18n="settings.context.enableDesc">对话时自动检索本地数据（记事本/记忆/待办等）发送给 AI，让回答更精准</p>
             <div class="reminder-setting-group">
               <label class="setting-toggle-row">
                 <div>
-                  <span class="setting-label" data-i18n="settings.context.enable">智能上下文注入</span>
+                  <span class="setting-label" data-i18n="settings.context.enable">上下文注入</span>
                   <span class="setting-desc" data-i18n="settings.context.enableDesc">对话时自动检索本地数据（记事本/记忆/待办等）发送给 AI，让回答更精准</span>
                 </div>
                 <input type="checkbox" id="localContextEnabled" checked>

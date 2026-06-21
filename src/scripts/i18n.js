@@ -102,7 +102,7 @@ const translations = {
     'settings.tab.memory': '记忆',
     'settings.tab.sync': '同步',
     'settings.tab.reminder': '提醒',
-    'settings.tab.context': '智能上下文',
+    'settings.tab.context': '上下文',
     'settings.tab.voice': '语音',
     'settings.tab.appearance': '外观',
     'settings.tab.login': '组织登录',
@@ -624,6 +624,42 @@ const translations = {
     'settings.appearance.fontSizeSmall': '小',
     'settings.appearance.fontSizeMedium': '中',
     'settings.appearance.fontSizeLarge': '大',
+    'settings.appearance.startupPage': '🚀 启动页',
+    'settings.appearance.startupPageDesc': '打开 Memora 时默认进入的页面',
+    'settings.appearance.startupCalendar': '日历',
+    'settings.appearance.startupAiAssistant': 'AI 助手',
+    'settings.appearance.startupNotebook': '记事本',
+    'settings.appearance.startupKnowledge': '知识',
+    'settings.appearance.startupDocuments': '资产',
+    'settings.appearance.startupInsight': '洞察',
+    'settings.appearance.startupAiMode': 'AI 助手默认模式',
+
+    // 火山引擎 Agent Plan
+    'cc.provider.volcano_agent': '火山引擎 Agent Plan',
+    'cc.provider.volcano_agent.desc': '多模态 + Harness（图片理解/生成/搜索）',
+    'cc.agentPlan.imageModel': '图像生成模型',
+    'cc.agentPlan.videoModel': '视频生成模型',
+    'cc.agentPlan.embeddingModel': '向量化模型',
+    'cc.agentPlan.enableSearch': '启用豆包搜索',
+    'cc.agentPlan.enableMemory': '启用 Agent 记忆',
+    'cc.agentPlan.afpUsage': 'AFP 用量',
+    'cc.agentPlan.afpRemaining': '剩余',
+    'cc.agentPlan.imageFiltered': '当前供应商不支持图片输入，已自动过滤。切换到 Agent Plan 可启用多模态。',
+
+    // Skill 详情
+    'skill.detail.version': '版本',
+    'skill.detail.author': '作者',
+    'skill.detail.source': '来源',
+    'skill.detail.installStatus': '安装状态',
+    'skill.detail.installed': '已安装',
+    'skill.detail.notInstalled': '未安装',
+    'skill.detail.documentation': '📖 详细文档',
+    'skill.detail.files': '📂 文件列表',
+    'skill.detail.path': '路径',
+    'skill.detail.installToCC': '安装到CC',
+    'skill.detail.uninstallFromCC': '从CC卸载',
+    'skill.detail.close': '关闭',
+    'skill.detail.dragHint': '拖拽 .zip 文件到此处上传 Skill',
 
     // 设置 - 记忆
     'settings.memory.total': '总记忆数',
@@ -717,8 +753,8 @@ const translations = {
     'settings.backup.importPwdPh': '输入导出时设置的密码',
 
     // 设置 - 本地上下文注入
-    'settings.context.title': '🧠 智能上下文',
-    'settings.context.enable': '智能上下文注入',
+    'settings.context.title': '🧠 上下文',
+    'settings.context.enable': '上下文注入',
     'settings.context.enableDesc': '对话时自动检索本地数据（记事本/记忆/待办等）发送给 AI，让回答更精准',
 
     // 业务分类
@@ -829,7 +865,7 @@ const translations = {
     'settings.tab.memory': 'Memory',
     'settings.tab.sync': 'Sync',
     'settings.tab.reminder': 'Reminder',
-    'settings.tab.context': 'Smart Context',
+    'settings.tab.context': 'Context',
     'settings.tab.voice': 'Voice',
     'settings.tab.appearance': 'Appearance',
     'settings.tab.login': 'Org Login',
@@ -1351,6 +1387,42 @@ const translations = {
     'settings.appearance.fontSizeSmall': 'Small',
     'settings.appearance.fontSizeMedium': 'Medium',
     'settings.appearance.fontSizeLarge': 'Large',
+    'settings.appearance.startupPage': '🚀 Startup Page',
+    'settings.appearance.startupPageDesc': 'The page to show when Memora opens',
+    'settings.appearance.startupCalendar': 'Calendar',
+    'settings.appearance.startupAiAssistant': 'AI Assistant',
+    'settings.appearance.startupNotebook': 'Notebook',
+    'settings.appearance.startupKnowledge': 'Knowledge',
+    'settings.appearance.startupDocuments': 'Assets',
+    'settings.appearance.startupInsight': 'Insights',
+    'settings.appearance.startupAiMode': 'Default AI Mode',
+
+    // Volcano Engine Agent Plan
+    'cc.provider.volcano_agent': 'Volcano Engine Agent Plan',
+    'cc.provider.volcano_agent.desc': 'Multimodal + Harness (image understanding/generation/search)',
+    'cc.agentPlan.imageModel': 'Image Generation Model',
+    'cc.agentPlan.videoModel': 'Video Generation Model',
+    'cc.agentPlan.embeddingModel': 'Embedding Model',
+    'cc.agentPlan.enableSearch': 'Enable Doubao Search',
+    'cc.agentPlan.enableMemory': 'Enable Agent Memory',
+    'cc.agentPlan.afpUsage': 'AFP Usage',
+    'cc.agentPlan.afpRemaining': 'Remaining',
+    'cc.agentPlan.imageFiltered': 'Current provider does not support image input. Switch to Agent Plan for multimodal.',
+
+    // Skill Detail
+    'skill.detail.version': 'Version',
+    'skill.detail.author': 'Author',
+    'skill.detail.source': 'Source',
+    'skill.detail.installStatus': 'Install Status',
+    'skill.detail.installed': 'Installed',
+    'skill.detail.notInstalled': 'Not Installed',
+    'skill.detail.documentation': '📖 Documentation',
+    'skill.detail.files': '📂 Files',
+    'skill.detail.path': 'Path',
+    'skill.detail.installToCC': 'Install to CC',
+    'skill.detail.uninstallFromCC': 'Uninstall from CC',
+    'skill.detail.close': 'Close',
+    'skill.detail.dragHint': 'Drag .zip files here to upload Skills',
 
     // Settings - Memory
     'settings.memory.total': 'Total Memories',
@@ -1444,8 +1516,8 @@ const translations = {
     'settings.backup.importPwdPh': 'Enter the password set during export',
 
     // Settings - Local Context Injection
-    'settings.context.title': '🧠 Smart Context',
-    'settings.context.enable': 'Smart Context Injection',
+    'settings.context.title': '🧠 Context',
+    'settings.context.enable': 'Context Injection',
     'settings.context.enableDesc': 'Auto-retrieve local data (notes/memories/tasks etc.) and send to AI for more relevant answers',
 
     // Business categories
