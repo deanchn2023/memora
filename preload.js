@@ -298,6 +298,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   vectorRebuild: () => ipcRenderer.invoke('vector:rebuild'),
   vectorStatus: () => ipcRenderer.invoke('vector:status'),
   vectorQueueStatus: () => ipcRenderer.invoke('vector:queue-status'),
+  memoryUtilization: () => ipcRenderer.invoke('memory:utilization'),
+  memoryCheckPromotion: () => ipcRenderer.invoke('memory:check-promotion'),
+  memoryCheckForgetting: () => ipcRenderer.invoke('memory:check-forgetting'),
+  auditLogPromptOptimization: (data) => ipcRenderer.invoke('audit:log-prompt-optimization', data),
 
   // Agent 产物系统
   artifactsGetBasePath: () => ipcRenderer.invoke('artifacts:get-base-path'),

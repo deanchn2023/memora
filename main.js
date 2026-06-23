@@ -936,6 +936,7 @@ let embeddingService;
 let vectorIndex;
 let vectorQueue;
 let unifiedContextLayer;
+let memoryActivation;
 
 // === 用户画像 ===
 function getDefaultProfile() {
@@ -8380,6 +8381,11 @@ ipcMain.handle('send-adp-message', async (event, data) => {
           ? `${localSystemRole}\n\n${ctxResult.context}`
           : ctxResult.context;
         _vectorSources = ctxResult.sources || [];
+        // v3.1: 更新记忆活跃度
+        const memoryIds = _vectorSources.filter(s => s.source_type === 'memory').map(s => s.source_id);
+        if (memoryIds.length > 0 && memoryActivation) {
+          memoryActivation.onRetrievalHit(memoryIds, message);
+        }
         // 通知前端展示引用来源
         event.sender.send('context:sources', { sources: _vectorSources, meta: ctxResult.retrieval_meta });
       }
@@ -10332,6 +10338,56 @@ ipcMain.handle('vector:queue-status', async () => {
   if (!vectorQueue) return { success: false };
   return { success: true, ...vectorQueue.getStats() };
 });
+
+// v3.1: 记忆利用率统计
+ipcMain.handle('memory:utilization', async () => {
+  if (!memoryActivation) return { success: false };
+  return { success: true, ...memoryActivation.getUtilizationStats() };
+});
+
+// v3.1: 记忆晋升检查（手动触发）
+ipcMain.handle('memory:check-promotion', async () => {
+  if (!memoryActivation) return { success: false };
+  const result = await memoryActivation.checkPromotion();
+  return { success: true, ...result };
+});
+
+// v3.1: 记忆遗忘检查（手动触发）
+ipcMain.handle('memory:check-forgetting', async () => {
+  if (!memoryActivation) return { success: false };
+  const result = await memoryActivation.checkForgetting();
+  return { success: true, ...result };
+});
+
+// v3.1: Prompt 优化器审计日志
+ipcMain.handle('audit:log-prompt-optimization', async (event, data) => {
+  if (!auditLogger) return { success: false };
+  try {
+    auditLogger.log({
+      module: 'prompt_optimization',
+      action: 'optimize',
+      input: {
+        prompt_module: data.module,
+        old_version: data.old_version,
+        bad_cases_count: data.bad_cases_count,
+        old_pass_rate: data.old_pass_rate,
+      },
+      output: {
+        new_version: data.new_version,
+        new_pass_rate: data.new_pass_rate,
+        improvement: data.improvement,
+        failure_patterns: data.failure_patterns,
+        improvements: data.improvements,
+        applied: data.applied,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 
 // 渲染进程同步日志（用于在崩溃前精确定位位置）
 ipcMain.on('sync-log', (event, msg) => {
@@ -12770,6 +12826,8 @@ app.whenReady().then(() => {
       const ok = await vectorIndex.init(app.getPath('userData'));
       if (ok) {
         unifiedContextLayer = new UnifiedContextLayer(vectorIndex, embeddingService);
+        const MemoryActivationService = require('./src/services/memoryActivation');
+        memoryActivation = new MemoryActivationService(memoryStore, vectorIndex);
         console.log('[Vector] Vector database services initialized');
         // 启动时一致性检查
         _checkVectorConsistency();

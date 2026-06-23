@@ -174,6 +174,40 @@ async function main() {
     expected_improvements: optimization.expected_improvements
   }, null, 2), 'utf8');
 
+  // v3.1: 写入审计日志（与主进程审计日志格式兼容）
+  const auditDir = path.join(path.dirname(CONFIG.feedbackDir), 'audit');
+  if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
+  const auditFile = path.join(auditDir, `audit_${new Date().toISOString().slice(0, 10)}.json`);
+  let auditRecords = [];
+  try { if (fs.existsSync(auditFile)) auditRecords = JSON.parse(fs.readFileSync(auditFile, 'utf8')); } catch {}
+  auditRecords.push({
+    id: `audit_opt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    module: 'prompt_optimization',
+    action: 'optimize',
+    timestamp: new Date().toISOString(),
+    input: {
+      prompt_module: opts.module,
+      old_version: currentPrompt.version,
+      bad_cases_count: badCases.length,
+      train_size: trainSet.length,
+      test_size: testSet.length,
+      old_pass_rate: oldEval.rate,
+    },
+    output: {
+      new_version: newVersion,
+      new_pass_rate: newEval.rate,
+      improvement: improvement,
+      version_bump: optimization.version_bump,
+      failure_patterns: optimization.failure_patterns,
+      improvements: optimization.improvements,
+      expected_improvements: optimization.expected_improvements,
+      applied: improvement >= 0.05 && opts.autoApply,
+    },
+    latencyMs: 0, // 由外层计算
+  });
+  fs.writeFileSync(auditFile, JSON.stringify(auditRecords, null, 2), 'utf8');
+  console.log(`📊 审计日志已写入: ${auditFile}`);
+
   console.log(`📦 候选 Prompt：${candidatePath}`);
   console.log(`📊 评测报告：${reportPath}\n`);
 
