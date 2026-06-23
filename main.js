@@ -5050,6 +5050,7 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 
   // v3.1: 统一上下文层 — CC 模式精准注入（替代全量 CLAUDE.md）
   let _ccVectorSources = [];
+  let _ccVectorMeta = null;
   if (unifiedContextLayer && message) {
     try {
       const ctxResult = await unifiedContextLayer.retrieve(message, {
@@ -5061,6 +5062,7 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
       if (ctxResult.context && typeof prompt === 'string') {
         prompt = `${ctxResult.context}\n\n---\n\n${prompt}`;
         _ccVectorSources = ctxResult.sources || [];
+        _ccVectorMeta = ctxResult.retrieval_meta || null;
         event.sender.send('context:sources', { sources: _ccVectorSources, meta: ctxResult.retrieval_meta });
       }
     } catch (e) {
@@ -5175,6 +5177,7 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   let _ccAuditFullText = '';
   let _ccAuditModel = providerEnv?.ANTHROPIC_MODEL || (useOpenRouter ? (openRouterModel || 'openrouter') : config.model);
   let _ccAuditProvider = activeProvider?.name || activeProviderId || 'coding_plan';
+  const _ccTraceId = _ccVectorMeta?.trace_id || `cc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   (async () => {
     // v3.1: 多任务事件路由
     const send = (data) => {
@@ -5394,6 +5397,8 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
                 tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
                 latencyMs: Date.now() - _ccAuditStart,
                 error: errMsg,
+                traceId: _ccTraceId,
+                vectorSources: _ccVectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
               });
             }
             send({ event: 'error', error: errMsg });
@@ -5419,6 +5424,9 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
             output: { status: 200, contentLen: _ccAuditFullText.length, content: _ccAuditFullText, finishReason: 'completed' },
             tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
             latencyMs: Date.now() - _ccAuditStart,
+            traceId: _ccTraceId,
+            vectorSources: _ccVectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
+            vectorMeta: _ccVectorMeta,
           });
         }
         send({ event: 'done', sessionId: newSessionId });
@@ -5438,6 +5446,8 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
             tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
             latencyMs: Date.now() - _ccAuditStart,
             error: e.message,
+            traceId: _ccTraceId,
+            vectorSources: _ccVectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
           });
         }
         send({ event: 'error', error: e.message });
@@ -5453,6 +5463,8 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
             output: { status: 200, contentLen: _ccAuditFullText.length, content: _ccAuditFullText, finishReason: 'aborted' },
             tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
             latencyMs: Date.now() - _ccAuditStart,
+            traceId: _ccTraceId,
+            vectorSources: _ccVectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
           });
         }
         send({ event: 'done', sessionId: newSessionId, aborted: true });
@@ -8373,6 +8385,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
 
   // v3.1: 统一上下文层 — 自动向量检索并注入（非专家模式）
   let _vectorSources = [];
+  let _adpVectorMeta = null;
   if (unifiedContextLayer && message && !expertAppKey) {
     try {
       const ctxResult = await unifiedContextLayer.retrieve(message, { mode: 'adp' });
@@ -8381,6 +8394,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
           ? `${localSystemRole}\n\n${ctxResult.context}`
           : ctxResult.context;
         _vectorSources = ctxResult.sources || [];
+        _adpVectorMeta = ctxResult.retrieval_meta || null;
         // v3.1: 更新记忆活跃度
         const memoryIds = _vectorSources.filter(s => s.source_type === 'memory').map(s => s.source_id);
         if (memoryIds.length > 0 && memoryActivation) {
@@ -8393,6 +8407,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
       console.warn('[Vector] ADP context injection failed:', e.message);
     }
   }
+  const _adpTraceId = _adpVectorMeta?.trace_id || `adp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const requestBody = {
     RequestId: requestId,
@@ -8447,6 +8462,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
           tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
           latencyMs: Date.now(),
           error: `HTTP ${response.status}`,
+          traceId: _adpTraceId,
+          vectorSources: _vectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
         });
       }
       return { success: false, error: `ADP请求失败: HTTP ${response.status}`, configSource };
@@ -8499,6 +8516,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
                       output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'completed' },
                       tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
                       latencyMs: Date.now() - _adpChatStartTime,
+                      traceId: _adpTraceId,
+                      vectorSources: _vectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
                     });
                   }
                   _sendEvent({ event: 'done', data: null, configSource });
@@ -8561,6 +8580,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
             output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'stream_end' },
             tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
             latencyMs: Date.now() - _adpChatStartTime,
+            traceId: _adpTraceId,
+            vectorSources: _vectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
           });
         }
         _sendEvent({ event: 'done', data: null, configSource });
@@ -8578,6 +8599,8 @@ ipcMain.handle('send-adp-message', async (event, data) => {
               output: { status: 200, contentLen: _adpChatFullText.length, content: _adpChatFullText, finishReason: 'aborted' },
               tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
               latencyMs: Date.now() - _adpChatStartTime,
+              traceId: _adpTraceId,
+              vectorSources: _vectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
             });
           }
           _sendEvent({ event: 'done', data: null, configSource, aborted: true });

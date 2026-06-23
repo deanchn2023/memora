@@ -116,6 +116,8 @@ const App = {
       this._pendingContextSources = null;
       window.electronAPI.onContextSources((data) => {
         this._pendingContextSources = data;
+        // 动态插入 Badge 到当前助手消息前（处理异步到达的情况）
+        this._renderContextSourcesBadge(data);
       });
     }
     
@@ -306,6 +308,39 @@ const App = {
       el.classList.add('hidden');
     });
     console.log('[Emergency] UI reset — all modals/overlays hidden');
+  },
+
+  /**
+   * v3.1: 动态渲染上下文来源 Badge
+   * 当 context:sources 事件异步到达时，插入到当前助手消息前
+   */
+  _renderContextSourcesBadge(data) {
+    if (!data?.sources?.length) return;
+
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+
+    // 查找最后一个助手消息
+    const lastAssistant = chatMessages.querySelector('.message.assistant:last-of-type');
+    if (!lastAssistant) return;
+
+    // 如果已有 badge 则不重复插入
+    if (lastAssistant.querySelector('.context-sources-badge')) return;
+
+    const sources = data.sources;
+    const icons = { notebook: '📝', memory: '🧠', tasks: '✅', knowledge: '📚' };
+    const chips = sources.map(s => {
+      const icon = icons[s.source_type] || '📌';
+      const score = Math.round((s.score || 0) * 100);
+      return `<span class="ctx-source-chip" data-source-type="${s.source_type}" data-source-id="${s.source_id}" title="${this.escapeHtml(s.title || '')} (${score}%)">${icon} ${this.escapeHtml((s.title || '').substring(0, 15))} ${score}%</span>`;
+    }).join('');
+
+    const badge = document.createElement('div');
+    badge.className = 'context-sources-badge';
+    badge.innerHTML = `📚 已参考 ${sources.length} 条本地数据：${chips}`;
+
+    // 插入到助手消息内部最前面
+    lastAssistant.insertBefore(badge, lastAssistant.firstChild);
   },
 
   bindEvents() {
