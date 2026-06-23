@@ -96,6 +96,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeCCInstallProgressListeners: () => {
     ipcRenderer.removeAllListeners('cc:install-progress');
   },
+  // CC 权限请求（canUseTool 回调）
+  onCCPermissionRequest: (callback) => {
+    ipcRenderer.on('cc:permission-request', (event, data) => callback(data));
+  },
+  removeCCPermissionRequestListeners: () => {
+    ipcRenderer.removeAllListeners('cc:permission-request');
+  },
+  ccPermissionResponse: (requestId, response) => {
+    ipcRenderer.send(`cc:permission-response:${requestId}`, response);
+  },
   
   // ADP配置
   getADPConfig: () => ipcRenderer.invoke('get-adp-config'),
@@ -277,6 +287,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notebookSaveCategories: (categories) => ipcRenderer.invoke('notebook-save-categories', categories),
   notebookExportMarkdown: (data) => ipcRenderer.invoke('notebook-export-markdown', data),
 
+  // v3.1: 向量数据库
+  vectorSearch: (params) => ipcRenderer.invoke('vector:search', params),
+  vectorSearchNotes: (params) => ipcRenderer.invoke('vector:search-notes', params),
+  vectorRetrieveRAG: (params) => ipcRenderer.invoke('vector:retrieve-rag', params),
+  vectorRetrieveCC: (params) => ipcRenderer.invoke('vector:retrieve-cc', params),
+  vectorRebuild: () => ipcRenderer.invoke('vector:rebuild'),
+  vectorStatus: () => ipcRenderer.invoke('vector:status'),
+  vectorQueueStatus: () => ipcRenderer.invoke('vector:queue-status'),
+
   // Agent 产物系统
   artifactsGetBasePath: () => ipcRenderer.invoke('artifacts:get-base-path'),
   artifactsChangeDir: () => ipcRenderer.invoke('artifacts:change-dir'),
@@ -332,7 +351,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // v1.1 Agent 智能助手
   agent: {
-    invoke: (query, agentType, attachments) => ipcRenderer.invoke('agent:invoke', { query, agentType, attachments }),
+    invoke: (query, agentType, attachments, model) => ipcRenderer.invoke('agent:invoke', { query, agentType, attachments, model }),
     stop: () => ipcRenderer.invoke('agent:stop'),
   },
   onAgentStream: (callback) => {

@@ -1,6 +1,6 @@
 {
   "name": "memora",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "忆境 Memora - AI驱动的个人记忆与事项管理助手",
   "main": "main.js",
   "author": "Dean Zhu",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.183",
+    "@zvec/zvec": "^0.5.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "dotenv": "^17.4.2",
     "form-data": "^4.0.5",
@@ -80,7 +81,8 @@
       "scripts/**",
       "resources/**",
       "node_modules/@anthropic-ai/claude-agent-sdk/**",
-      "node_modules/@anthropic-ai/claude-agent-sdk-*/**"
+      "node_modules/@anthropic-ai/claude-agent-sdk-*/**",
+      "node_modules/@zvec/**"
     ],
     "files": [
       "main.js",

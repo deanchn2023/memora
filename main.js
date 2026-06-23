@@ -329,6 +329,19 @@ async function auditedDeepSeekCall({ module, apiConfig, messages, fetchOptions =
       ...fetchOptions,
     };
 
+    // 🔧 防御：如果调用方没传 signal，自动加 30s 超时
+    // 防止 API 无响应时 fetch 永远挂起，导致剪贴板 isAnalyzing 卡死
+    let ownAbortController = null;
+    let effectiveSignal = signal;
+    if (!signal) {
+      ownAbortController = new AbortController();
+      effectiveSignal = ownAbortController.signal;
+      setTimeout(() => {
+        ownAbortController.abort();
+        console.warn(`[AI] ⚠️ fetch 超时 30s，已自动中断 (module=${module})`);
+      }, 30000);
+    }
+
     const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -336,7 +349,7 @@ async function auditedDeepSeekCall({ module, apiConfig, messages, fetchOptions =
         'Authorization': `Bearer ${apiConfig.apiKey}`,
       },
       body: JSON.stringify(body),
-      ...(signal ? { signal } : {}),
+      signal: effectiveSignal,
     });
 
     auditRecord.output.status = response.status;
@@ -917,6 +930,12 @@ class FeedbackLogger {
 }
 
 let feedbackLogger;
+
+// v3.1: 向量数据库服务
+let embeddingService;
+let vectorIndex;
+let vectorQueue;
+let unifiedContextLayer;
 
 // === 用户画像 ===
 function getDefaultProfile() {
@@ -2346,22 +2365,39 @@ async function analyzeClipboardText(text) {
       // 仅有效信息保存到记事本
       let savedNoteId = null;
       if (result.is_valid_info && notebook) {
+        // SMART 标签：根据 smart_level 添加对应标签
+        const smartTags = [];
+        if (result.smart_level === 'smart_full') {
+          smartTags.push('SMART');
+        } else if (result.smart_level === 'smart_partial') {
+          smartTags.push('待完善');
+        } else if (result.smart_level === 'smart_insufficient') {
+          smartTags.push('信息不全');
+        }
+
         const noteData = {
           content: optimizedText,
+          // 使用 AI 提炼的标题，而非原文截断
+          title: result.title || null,
           category: noteCategory,
+          tags: [...(result.tags || []), ...smartTags],
           analyzed: true,
           analysis: {
             traceId: traceId,
             isTask: result.is_task,
             taskTitle: result.title,
             taskPriority: result.priority,
-            tags: result.tags,
+            tags: [...(result.tags || []), ...smartTags],
             reason: result.reason,
             time: result.time,
             description: result.description,
             confidence: confidence,
             needsRecommendation: result.needs_recommendation || false,
-            recommendationIntent: result.recommendation_intent || null
+            recommendationIntent: result.recommendation_intent || null,
+            // SMART 评估结果
+            smartLevel: result.smart_level || null,
+            smartMissing: result.smart_missing || [],
+            smartOptimized: result.smart_optimized || false
           }
         };
 
@@ -2432,7 +2468,9 @@ async function analyzeClipboardText(text) {
                   sentiment: memoryResult.sentiment || 'neutral',
                   entities: memoryResult.entities || [],
                   originalNoteId: savedNoteId,
-                  extractedFrom: 'clipboard'
+                  extractedFrom: 'clipboard',
+                  smartLevel: memoryResult.smart_level || null,
+                  smartMissing: memoryResult.smart_missing || []
                 },
                 confidence: confidence,
                 importance: memoryResult.importance || 'normal'
@@ -2811,7 +2849,11 @@ ipcMain.handle('analyze-task', async (event, text) => {
           reason: result.reason || '',
           // v2.1: AI 分析增强 — 识别周期性任务和 AI 小助手任务
           taskType: result.task_type || 'manual',
-          recurrence: result.recurrence || null
+          recurrence: result.recurrence || null,
+          // v3.1: SMART 评估
+          smartLevel: result.smart_level || null,
+          smartMissing: result.smart_missing || [],
+          smartOptimized: result.smart_optimized || false
         }
       };
     }
@@ -5008,6 +5050,90 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   // 每次对话前刷新 CLAUDE.md（将 memora 最新记忆同步到 CC 工作目录）
   syncCLAUDEMdToCC(ccWorkdir);
 
+  // ─── canUseTool 权限回调 ───
+  // 当 permissionMode 非 bypassPermissions 时，SDK 需要此回调来向用户请求工具执行权限。
+  // 没有此回调，SDK 在 'default' 模式下无法弹出权限请求，导致 Write/Bash 等操作被静默拒绝。
+  if (config.permissionMode !== 'bypassPermissions') {
+    // 内存缓存：用户选择"总是允许"的工具列表
+    if (!global._ccAllowedToolsCache) global._ccAllowedToolsCache = new Set();
+
+    options.canUseTool = async (toolName, input, opts) => {
+      // 如果用户之前选了"总是允许"该工具，直接放行
+      if (global._ccAllowedToolsCache.has(toolName)) {
+        return { behavior: 'allow' };
+      }
+
+      // signal 已 abort 时直接拒绝
+      if (opts?.signal?.aborted) {
+        return { behavior: 'deny', message: '操作已取消' };
+      }
+
+      const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      console.log(`[CC] Permission request: ${toolName} | input: ${JSON.stringify(input).substring(0, 200)} | requestId: ${requestId}`);
+
+      // 通知 UI 显示权限请求弹窗
+      const targetWindow = taskId ? null : mainWindow;
+      if (targetWindow) {
+        targetWindow.webContents.send('cc:permission-request', {
+          requestId,
+          toolName,
+          input,
+        });
+      } else if (taskId) {
+        // 子任务模式：通过 task:stream 通道发送
+        mainWindow?.webContents.send('task:stream', {
+          taskId,
+          event: 'permission-request',
+          requestId,
+          toolName,
+          input,
+        });
+      }
+
+      // 等待渲染进程的响应（超时 120 秒自动拒绝）
+      return new Promise((resolve) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            console.warn(`[CC] Permission request ${requestId} timed out`);
+            resolve({ behavior: 'deny', message: '权限请求超时（120秒未响应）' });
+          }
+        }, 120000);
+
+        // 监听 abort
+        const onAbort = () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            resolve({ behavior: 'deny', message: '操作已取消' });
+          }
+        };
+        if (opts?.signal) {
+          opts.signal.addEventListener('abort', onAbort, { once: true });
+        }
+
+        const channel = `cc:permission-response:${requestId}`;
+        ipcMain.once(channel, (event, response) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          if (opts?.signal) {
+            opts.signal.removeEventListener('abort', onAbort);
+          }
+          console.log(`[CC] Permission response for ${requestId}: ${response?.behavior || 'deny'}`);
+          if (response?.behavior === 'allow' && response?.alwaysAllow) {
+            global._ccAllowedToolsCache.add(toolName);
+          }
+          resolve(response?.behavior === 'allow'
+            ? { behavior: 'allow' }
+            : { behavior: 'deny', message: response?.message || '用户拒绝了操作' }
+          );
+        });
+      });
+    };
+  }
+
   // v3.1: 支持 per-task 控制器
   const _ccController = new AbortController();
   if (taskId) { taskControllers.set(taskId, _ccController); } else { ccAbortController = _ccController; }
@@ -5024,6 +5150,10 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   }, CC_TIMEOUT_MS);
 
   // 异步消费流，逐消息推送到渲染进程
+  const _ccAuditStart = Date.now();
+  let _ccAuditFullText = '';
+  let _ccAuditModel = providerEnv?.ANTHROPIC_MODEL || (useOpenRouter ? (openRouterModel || 'openrouter') : config.model);
+  let _ccAuditProvider = activeProvider?.name || activeProviderId || 'coding_plan';
   (async () => {
     // v3.1: 多任务事件路由
     const send = (data) => {
@@ -5174,6 +5304,7 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
               // 无内容响应
               send({ event: 'error', error: 'CC 返回了空结果，可能是 API 调用失败。请检查网络和配置后重试。' });
             } else {
+              _ccAuditFullText = resultText || '';
               send({
                 event: 'done',
                 sessionId: msg.session_id || newSessionId,
@@ -5230,6 +5361,20 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
             }
             if (!errMsg) errMsg = 'CC 查询失败，请查看控制台日志';
             console.error('[CC] Result error:', errMsg);
+            // 审计日志：CC 结果错误
+            if (auditLogger) {
+              auditLogger.record({
+                module: 'cc_chat',
+                model: _ccAuditModel,
+                skill: skill || null,
+                baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl || '',
+                input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+                output: { status: msg.api_error_status || 500, contentLen: 0, content: '', finishReason: 'error' },
+                tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                latencyMs: Date.now() - _ccAuditStart,
+                error: errMsg,
+              });
+            }
             send({ event: 'error', error: errMsg });
           }
           break;
@@ -5242,13 +5387,53 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
       } else if (!ccHasText) {
         send({ event: 'error', error: 'CC 未返回任何内容。请检查 API 配置和网络连接。' });
       } else {
+        // 审计日志：CC 完成
+        if (auditLogger) {
+          auditLogger.record({
+            module: 'cc_chat',
+            model: _ccAuditModel,
+            skill: skill || null,
+            baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl || '',
+            input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+            output: { status: 200, contentLen: _ccAuditFullText.length, content: _ccAuditFullText, finishReason: 'completed' },
+            tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latencyMs: Date.now() - _ccAuditStart,
+          });
+        }
         send({ event: 'done', sessionId: newSessionId });
       }
     } catch (e) {
       if (e.name !== 'AbortError') {
         console.error('[CC] Stream error:', e);
+        // 审计日志：CC 异常
+        if (auditLogger) {
+          auditLogger.record({
+            module: 'cc_chat',
+            model: _ccAuditModel,
+            skill: skill || null,
+            baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl || '',
+            input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+            output: { status: 500, contentLen: 0, content: '', finishReason: null },
+            tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latencyMs: Date.now() - _ccAuditStart,
+            error: e.message,
+          });
+        }
         send({ event: 'error', error: e.message });
       } else {
+        // 审计日志：CC 被用户中止
+        if (auditLogger) {
+          auditLogger.record({
+            module: 'cc_chat',
+            model: _ccAuditModel,
+            skill: skill || null,
+            baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl || '',
+            input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+            output: { status: 200, contentLen: _ccAuditFullText.length, content: _ccAuditFullText, finishReason: 'aborted' },
+            tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            latencyMs: Date.now() - _ccAuditStart,
+          });
+        }
         send({ event: 'done', sessionId: newSessionId, aborted: true });
       }
     } finally {
@@ -7793,6 +7978,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   // 3. v2.6 专家模式：data = { message, appKey, adpUrl, _expertMode } — 专家级配置覆盖
   // 4. v2.7 本地上下文注入：data = { message, ..., systemRole } — 意图分类后的本地上下文
   let message, attachments, expertAppKey, expertAdpUrl, localSystemRole;
+  let _skillHint = '', _modelHint = '', _providerHint = '';
   if (typeof data === 'string') {
     message = data;
     attachments = [];
@@ -7802,6 +7988,9 @@ ipcMain.handle('send-adp-message', async (event, data) => {
     expertAppKey = data.appKey || '';   // v2.6: 专家级 AppKey
     expertAdpUrl = data.adpUrl || '';   // v2.6: 专家级 URL
     localSystemRole = data.systemRole || '';  // v2.7: 本地上下文注入
+    _skillHint = data.skillHint || '';    // 🔧 用户选择的 Skill
+    _modelHint = data.modelHint || '';    // 🔧 用户选择的模型
+    _providerHint = data.providerHint || '';  // 🔧 用户选择的供应商
   }
 
   // v2.6: 专家模式优先使用专家配置的 appKey/url
@@ -7835,7 +8024,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
   
   // 记录当前使用的 appKey 用于审计（脱敏）
   const _adpChatAppKey = appKey;
-  const _adpChatModel = `adp_v2${configSource !== 'default' ? `(${configSource})` : ''}`;
+  const _adpChatModel = `adp_v2${configSource !== 'default' ? `(${configSource})` : ''}${_skillHint ? `+skill:${_skillHint}` : ''}${_modelHint ? `+model:${_modelHint}` : ''}`;
   
   // v3.1 多任务并发支持：提取 taskId，创建事件路由辅助函数
   const _taskId = data?.taskId || null;
@@ -8206,6 +8395,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
         auditLogger.record({
           module: 'adp_chat',
           model: _adpChatModel,
+          skill: _skillHint || null,
           baseUrl: httpUrl,
           adpAppKey: _adpChatAppKey,
           input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
@@ -8258,6 +8448,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
                     auditLogger.record({
                       module: 'adp_chat',
                       model: _adpChatModel,
+                      skill: _skillHint || null,
                       baseUrl: httpUrl,
                       adpAppKey: _adpChatAppKey,
                       input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
@@ -8319,6 +8510,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
           auditLogger.record({
             module: 'adp_chat',
             model: _adpChatModel,
+            skill: _skillHint || null,
             baseUrl: httpUrl,
             adpAppKey: _adpChatAppKey,
             input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
@@ -8335,6 +8527,7 @@ ipcMain.handle('send-adp-message', async (event, data) => {
             auditLogger.record({
               module: 'adp_chat',
               model: _adpChatModel,
+              skill: _skillHint || null,
               baseUrl: httpUrl,
               adpAppKey: _adpChatAppKey,
               input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
@@ -9533,18 +9726,24 @@ ipcMain.handle('get-memories', async (event, options) => {
 ipcMain.handle('add-memory', async (event, memory) => {
   if (!memoryStore) return { success: false };
   const result = memoryStore.addMemory(memory);
+  // v3.1: 异步向量化
+  if (result) vectorQueue?.enqueue('upsert', 'memories', result);
   return { success: true, memory: result };
 });
 
 ipcMain.handle('update-memory', async (event, id, updates) => {
   if (!memoryStore) return { success: false };
   const result = memoryStore.updateMemory(id, updates);
+  // v3.1: 异步向量化更新
+  if (result) vectorQueue?.enqueue('upsert', 'memories', result);
   return { success: true, memory: result };
 });
 
 ipcMain.handle('delete-memory', async (event, id) => {
   if (!memoryStore) return { success: false };
   memoryStore.deleteMemory(id);
+  // v3.1: 异步删除向量
+  vectorQueue?.enqueue('delete', 'memories', { id });
   return { success: true };
 });
 
@@ -9981,6 +10180,121 @@ ipcMain.handle('audit:cleanup', async () => {
   return { success: true };
 });
 
+// ========== v3.1: 向量数据库 IPC ==========
+
+/**
+ * 启动时一致性检查：检测向量索引与原始数据的差异
+ */
+async function _checkVectorConsistency() {
+  if (!vectorIndex || !vectorIndex.initialized) return;
+  try {
+    const status = vectorIndex.getStatus();
+    const noteCount = notebook ? notebook.getAllNotes().length : 0;
+    const indexedNoteCount = status.collections.notes?.docCount || 0;
+
+    if (noteCount > 0 && indexedNoteCount === 0) {
+      // 首次启动或索引丢失，自动全量重建
+      console.log(`[Vector] Consistency check: notes=${noteCount} vs indexed=${indexedNoteCount}, auto-rebuilding...`);
+      const notes = notebook.getAllNotes();
+      const memories = memoryStore ? memoryStore.getAllMemories() : [];
+      const tasks = db?.data?.tasks || [];
+      const result = await vectorIndex.rebuildAll(notes, memories, tasks, []);
+      console.log('[Vector] Auto-rebuild complete:', result);
+    } else {
+      console.log(`[Vector] Consistency check passed: notes=${noteCount} vs indexed=${indexedNoteCount}`);
+    }
+  } catch (e) {
+    console.error('[Vector] Consistency check failed:', e.message);
+  }
+}
+
+// 混合语义搜索
+ipcMain.handle('vector:search', async (event, { query, sources, category, timeRange, limit, topK }) => {
+  if (!vectorIndex || !vectorIndex.initialized) {
+    return { success: false, error: 'Vector index not initialized', results: [] };
+  }
+  try {
+    const results = await vectorIndex.hybridSearch(query, { sources, category, timeRange, limit, topK });
+    return { success: true, results };
+  } catch (e) {
+    console.error('[Vector] search failed:', e.message);
+    return { success: false, error: e.message, results: [] };
+  }
+});
+
+// 笔记语义搜索
+ipcMain.handle('vector:search-notes', async (event, { query, category, limit }) => {
+  if (!vectorIndex || !vectorIndex.initialized) {
+    return { success: false, error: 'Vector index not initialized', results: [] };
+  }
+  try {
+    const results = await vectorIndex.hybridSearch(query, { sources: ['notes'], category, limit: limit || 20, topK: limit || 20 });
+    return { success: true, results };
+  } catch (e) {
+    return { success: false, error: e.message, results: [] };
+  }
+});
+
+// RAG 上下文检索
+ipcMain.handle('vector:retrieve-rag', async (event, { query, intent, mode }) => {
+  if (!unifiedContextLayer) {
+    return { success: false, error: 'Context layer not initialized', context: '', sources: [] };
+  }
+  try {
+    const result = await unifiedContextLayer.retrieve(query, { intent, mode: mode || 'adp' });
+    return { success: true, ...result };
+  } catch (e) {
+    console.error('[Vector] RAG retrieve failed:', e.message);
+    return { success: false, error: e.message, context: '', sources: [] };
+  }
+});
+
+// CC 模式上下文检索
+ipcMain.handle('vector:retrieve-cc', async (event, { query, workdir }) => {
+  if (!unifiedContextLayer) {
+    return { success: false, error: 'Context layer not initialized', context: '', sources: [] };
+  }
+  try {
+    const result = await unifiedContextLayer.retrieve(query, {
+      mode: 'cc',
+      topK: 5,
+      tokenBudget: 1000,
+      sources: ['memories', 'notes'],
+    });
+    return { success: true, ...result };
+  } catch (e) {
+    return { success: false, error: e.message, context: '', sources: [] };
+  }
+});
+
+// 全量重建索引
+ipcMain.handle('vector:rebuild', async () => {
+  if (!vectorIndex || !vectorIndex.initialized) {
+    return { success: false, error: 'Vector index not initialized' };
+  }
+  try {
+    const notes = notebook ? notebook.getAllNotes() : [];
+    const memories = memoryStore ? memoryStore.getAllMemories() : [];
+    const tasks = db?.data?.tasks || [];
+    const result = await vectorIndex.rebuildAll(notes, memories, tasks, []);
+    return { success: true, ...result };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 索引状态
+ipcMain.handle('vector:status', async () => {
+  if (!vectorIndex) return { success: false, initialized: false };
+  return { success: true, ...vectorIndex.getStatus(), queue: vectorQueue?.getStats() };
+});
+
+// 队列状态
+ipcMain.handle('vector:queue-status', async () => {
+  if (!vectorQueue) return { success: false };
+  return { success: true, ...vectorQueue.getStats() };
+});
+
 // 渲染进程同步日志（用于在崩溃前精确定位位置）
 ipcMain.on('sync-log', (event, msg) => {
   console.log('[Renderer]', msg);
@@ -10272,6 +10586,8 @@ ipcMain.handle('notebook-add-note', async (event, note) => {
   const result = notebook.addNote(note);
   // addNote 返回 null 表示当天重复内容
   if (!result) return { success: true, duplicate: true, note: null };
+  // v3.1: 异步向量化
+  vectorQueue?.enqueue('upsert', 'notes', result);
   return { success: true, note: result };
 });
 
@@ -10411,6 +10727,8 @@ ipcMain.handle('notebook-update-note', async (event, id, updates) => {
       });
     }
   }
+  // v3.1: 异步向量化更新
+  if (result) vectorQueue?.enqueue('upsert', 'notes', result);
   return { success: result !== null, note: result };
 });
 
@@ -10463,6 +10781,8 @@ ipcMain.handle('notebook-delete-note', async (event, id, reason) => {
   }
 
   const result = notebook.deleteNote(id);
+  // v3.1: 异步删除向量
+  vectorQueue?.enqueue('delete', 'notes', { id });
   return { success: result !== null };
 });
 
@@ -12395,6 +12715,34 @@ app.whenReady().then(() => {
   feedbackLogger = new FeedbackLogger();
   console.log('[Feedback] Feedback logger initialized');
   
+  // v3.1: 初始化向量数据库服务
+  const EmbeddingService = require('./src/services/embeddingService');
+  const VectorIndexManager = require('./src/services/vectorIndexManager');
+  const VectorizationQueue = require('./src/services/vectorQueue');
+  const UnifiedContextLayer = require('./src/services/unifiedContextLayer');
+  
+  embeddingService = new EmbeddingService();
+  vectorIndex = new VectorIndexManager(embeddingService);
+  vectorQueue = new VectorizationQueue(vectorIndex, embeddingService);
+  
+  // 异步初始化（不阻塞应用启动）
+  (async () => {
+    try {
+      await embeddingService.init();
+      const ok = await vectorIndex.init(app.getPath('userData'));
+      if (ok) {
+        unifiedContextLayer = new UnifiedContextLayer(vectorIndex, embeddingService);
+        console.log('[Vector] Vector database services initialized');
+        // 启动时一致性检查
+        _checkVectorConsistency();
+      } else {
+        console.warn('[Vector] Vector database init failed, vector search disabled');
+      }
+    } catch (e) {
+      console.error('[Vector] Init error:', e.message);
+    }
+  })();
+  
   createWindow();
   console.log('[App] Window created');
   // Set mainWindow for SubTaskPoller
@@ -12671,9 +13019,14 @@ ipcMain.handle('profile:update', (_, updates) => {
   return profile;
 });
 
-ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments }) => {
+ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments, model: userSelectedModel }) => {
   try {
-    const apiConfig = getAPIConfig();
+    let apiConfig = getAPIConfig();
+    // 🔧 如果用户在 UI 选择了特定模型，覆盖默认配置
+    if (userSelectedModel) {
+      apiConfig = { ...apiConfig, model: userSelectedModel };
+      console.log('[Agent] User selected model override:', userSelectedModel);
+    }
     if (!canMakeAICall()) return { success: false, error: '每日调用次数已达上限' };
 
     const profile = loadProfile();
@@ -15242,8 +15595,8 @@ ipcMain.handle('knowledge:extract-keywords', async (event, { query }) => {
       model = remoteConfig.api.model;
     } else {
       apiKey = getSetting('api_key') || DEFAULT_API_KEY;
-      baseUrl = getSetting('base_url') || DEFAULT_BASE_URL;
-      model = getSetting('model') || DEFAULT_MODEL;
+      baseUrl = getSetting('api_base_url') || DEFAULT_BASE_URL;
+      model = getSetting('api_model') || DEFAULT_MODEL;
     }
 
     const { response } = await callAI({
