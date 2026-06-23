@@ -10363,6 +10363,60 @@ ipcMain.handle('vector:status', async () => {
   return { success: true, ...vectorIndex.getStatus(), queue: vectorQueue?.getStats() };
 });
 
+// 浏览向量库内容（分页查看）
+ipcMain.handle('vector:browse', async (event, { collection, limit, offset }) => {
+  if (!vectorIndex || !vectorIndex.initialized) {
+    return { success: false, error: 'Vector index not initialized', docs: [] };
+  }
+  const col = vectorIndex.collections[collection];
+  if (!col) return { success: false, error: 'Collection not found: ' + collection, docs: [] };
+
+  try {
+    const stats = col.stats;
+    const topk = Math.min(limit || 50, 200);
+    // 用空 filter 查询所有，利用 topk 限制
+    const results = col.querySync({ topk, filter: '' });
+    const start = offset || 0;
+    const paged = results.slice(start, start + topk);
+
+    return {
+      success: true,
+      collection,
+      total: stats.docCount,
+      docs: paged.map(doc => {
+        const f = doc.fields || {};
+        return {
+          id: doc.id,
+          score: doc.score,
+          title: f.title || f.content?.substring(0, 60) || f.note_id || f.memory_id || f.task_id || f.atom_id || doc.id,
+          content: f.content?.substring(0, 200) || '',
+          category: f.category || '',
+          type: f.type || '',
+          status: f.status || '',
+          created_at: f.created_at ? new Date(f.created_at).toLocaleString('zh-CN') : '',
+          source_id: f.note_id || f.memory_id || f.task_id || f.atom_id || '',
+        };
+      }),
+    };
+  } catch (e) {
+    return { success: false, error: e.message, docs: [] };
+  }
+});
+
+// 向量库搜索测试
+ipcMain.handle('vector:debug-search', async (event, { query, collection, topK }) => {
+  if (!vectorIndex || !vectorIndex.initialized) {
+    return { success: false, error: 'Vector index not initialized', results: [] };
+  }
+  try {
+    const sources = collection ? [collection] : ['notes', 'memories', 'tasks', 'knowledge'];
+    const results = await vectorIndex.hybridSearch(query, { sources, topK: topK || 10, limit: topK || 10 });
+    return { success: true, query, results };
+  } catch (e) {
+    return { success: false, error: e.message, results: [] };
+  }
+});
+
 // 队列状态
 ipcMain.handle('vector:queue-status', async () => {
   if (!vectorQueue) return { success: false };

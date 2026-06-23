@@ -1248,6 +1248,10 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
+          <label for="noteEditorTitleInput">标题</label>
+          <input type="text" id="noteEditorTitleInput" class="note-title-input" placeholder="笔记标题（默认为首行内容）" maxlength="100" />
+        </div>
+        <div class="form-group">
           <label>内容</label>
           <div id="noteEditorContainer"></div>
         </div>
@@ -1535,6 +1539,7 @@
           <button class="settings-tab" data-tab="reminder" data-i18n="settings.tab.reminder">提醒</button>
           <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">语音</button>
           <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
+          <button class="settings-tab" data-tab="vector">向量库</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
         
@@ -2864,6 +2869,32 @@
               <button class="btn secondary" id="testASRConfigBtn">🎤 测试麦克风</button>
             </div>
             <div id="asrConfigStatus" style="margin-top:12px;font-size:13px;"></div>
+          </div>
+        </div>
+
+        <!-- 向量数据库 -->
+        <div class="settings-panel hidden" id="vectorPanel">
+          <div style="padding: 20px;">
+            <h3 style="margin-bottom: 16px;">🗄️ 向量数据库 (Zvec)</h3>
+            <div id="vectorStatusInfo" style="margin-bottom: 20px; font-size: 13px; color: var(--text-secondary);"></div>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
+              <select id="vectorCollectionSelect" class="settings-input" style="width: auto;">
+                <option value="notes">📝 笔记 (notes)</option>
+                <option value="memories">🧠 记忆 (memories)</option>
+                <option value="tasks">✅ 待办 (tasks)</option>
+                <option value="knowledge">📚 知识 (knowledge)</option>
+              </select>
+              <button class="btn primary" id="vectorBrowseBtn" style="padding: 6px 16px;">浏览数据</button>
+              <button class="btn secondary" id="vectorRebuildBtn" style="padding: 6px 16px;">🔄 重建索引</button>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+              <input type="text" id="vectorSearchInput" class="settings-input" placeholder="输入搜索词测试语义检索..." style="width: 60%; display: inline-block;" />
+              <button class="btn primary" id="vectorSearchBtn" style="padding: 6px 16px; margin-left: 8px;">🔍 搜索</button>
+            </div>
+
+            <div id="vectorResults" style="max-height: 500px; overflow-y: auto; border: 1px solid var(--border-light, rgba(0,0,0,0.08)); border-radius: 8px; padding: 12px; font-size: 12px;"></div>
           </div>
         </div>
 

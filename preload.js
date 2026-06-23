@@ -298,6 +298,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   vectorRebuild: () => ipcRenderer.invoke('vector:rebuild'),
   vectorStatus: () => ipcRenderer.invoke('vector:status'),
   vectorQueueStatus: () => ipcRenderer.invoke('vector:queue-status'),
+  vectorBrowse: (params) => ipcRenderer.invoke('vector:browse', params),
+  vectorDebugSearch: (params) => ipcRenderer.invoke('vector:debug-search', params),
   memoryUtilization: () => ipcRenderer.invoke('memory:utilization'),
   memoryCheckPromotion: () => ipcRenderer.invoke('memory:check-promotion'),
   memoryCheckForgetting: () => ipcRenderer.invoke('memory:check-forgetting'),

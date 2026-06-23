@@ -1407,6 +1407,119 @@ const App = {
       if (tabName === 'reminder') this._loadReminderSettings();
       if (tabName === 'context') this._loadContextSettings();
       if (tabName === 'voice') this._loadVoiceSettings();
+      if (tabName === 'vector') this._loadVectorPanel();
+    }
+  },
+
+  // v3.1: 向量数据库面板
+  async _loadVectorPanel() {
+    const statusEl = document.getElementById('vectorStatusInfo');
+    const resultsEl = document.getElementById('vectorResults');
+    if (!statusEl) return;
+
+    // 加载状态
+    try {
+      const status = await window.electronAPI?.vectorStatus?.();
+      if (status?.success) {
+        const cols = status.collections || {};
+        const colInfo = Object.entries(cols).map(([name, info]) =>
+          `${name}: ${info.docCount} 条`).join(' | ');
+        statusEl.innerHTML = `
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <span>📊 状态: ${status.initialized ? '✅ 已初始化' : '❌ 未初始化'}</span>
+            <span>📐 维度: ${status.dimension || 'N/A'}</span>
+            <span>📋 ${colInfo}</span>
+            <span>⏳ 队列: ${status.queue?.pending || 0} 待处理 / ${status.queue?.totalProcessed || 0} 已完成</span>
+          </div>
+        `;
+      } else {
+        statusEl.textContent = '❌ 向量数据库未初始化';
+      }
+    } catch (e) {
+      statusEl.textContent = '加载状态失败: ' + e.message;
+    }
+
+    // 绑定按钮（只绑一次）
+    if (!resultsEl._vectorBound) {
+      resultsEl._vectorBound = true;
+
+      document.getElementById('vectorBrowseBtn')?.addEventListener('click', async () => {
+        const col = document.getElementById('vectorCollectionSelect')?.value || 'notes';
+        resultsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">加载中...</div>';
+        try {
+          const result = await window.electronAPI?.vectorBrowse?.({ collection: col, limit: 50 });
+          if (result?.success) {
+            if (result.docs.length === 0) {
+              resultsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">暂无数据</div>';
+              return;
+            }
+            resultsEl.innerHTML = `<div style="margin-bottom:8px;color:var(--text-tertiary);">共 ${result.total} 条，显示前 ${result.docs.length} 条：</div>` +
+              result.docs.map((doc, i) => `
+                <div style="padding:8px;margin-bottom:4px;border-bottom:1px solid var(--border-light,rgba(0,0,0,0.04));">
+                  <div style="font-weight:600;color:var(--text-primary);">${i+1}. ${this.escapeHtml(doc.title)}</div>
+                  ${doc.content ? `<div style="color:var(--text-secondary);margin-top:2px;">${this.escapeHtml(doc.content.substring(0, 120))}</div>` : ''}
+                  <div style="color:var(--text-tertiary);font-size:11px;margin-top:2px;">
+                    ${doc.category ? '分类: ' + doc.category : ''} ${doc.type ? ' | 类型: ' + doc.type : ''} ${doc.status ? ' | 状态: ' + doc.status : ''} ${doc.created_at ? ' | ' + doc.created_at : ''}
+                  </div>
+                </div>
+              `).join('');
+          } else {
+            resultsEl.innerHTML = '<div style="color:var(--danger);">' + this.escapeHtml(result?.error || '加载失败') + '</div>';
+          }
+        } catch (e) {
+          resultsEl.innerHTML = '<div style="color:var(--danger);">' + e.message + '</div>';
+        }
+      });
+
+      document.getElementById('vectorSearchBtn')?.addEventListener('click', async () => {
+        const query = document.getElementById('vectorSearchInput')?.value?.trim();
+        if (!query) return;
+        resultsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">🔍 搜索中...</div>';
+        try {
+          const result = await window.electronAPI?.vectorDebugSearch?.({ query, topK: 10 });
+          if (result?.success) {
+            if (result.results.length === 0) {
+              resultsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">无匹配结果</div>';
+              return;
+            }
+            resultsEl.innerHTML = `<div style="margin-bottom:8px;color:var(--text-tertiary);">查询: "${this.escapeHtml(query)}" → ${result.results.length} 条结果：</div>` +
+              result.results.map((r, i) => `
+                <div style="padding:8px;margin-bottom:4px;border-bottom:1px solid var(--border-light,rgba(0,0,0,0.04));">
+                  <div style="font-weight:600;color:var(--text-primary);">
+                    ${i+1}. [${Math.round(r.score * 100)}%] ${this.escapeHtml(r.title)}
+                    <span style="font-size:10px;color:var(--text-tertiary);margin-left:4px;">${r.source_type} | ${r.match_type}</span>
+                  </div>
+                  ${r.content_preview ? `<div style="color:var(--text-secondary);margin-top:2px;">${this.escapeHtml(r.content_preview.substring(0, 120))}</div>` : ''}
+                </div>
+              `).join('');
+          } else {
+            resultsEl.innerHTML = '<div style="color:var(--danger);">' + this.escapeHtml(result?.error || '搜索失败') + '</div>';
+          }
+        } catch (e) {
+          resultsEl.innerHTML = '<div style="color:var(--danger);">' + e.message + '</div>';
+        }
+      });
+
+      document.getElementById('vectorRebuildBtn')?.addEventListener('click', async () => {
+        if (!confirm('确认重建向量索引？这可能需要几分钟。')) return;
+        resultsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">🔄 重建中...</div>';
+        try {
+          const result = await window.electronAPI?.vectorRebuild?.();
+          if (result?.success) {
+            resultsEl.innerHTML = `<div style="color:var(--success);">✅ 重建完成: 笔记 ${result.count?.notes || 0} / 记忆 ${result.count?.memories || 0} / 待办 ${result.count?.tasks || 0}</div>`;
+            this._loadVectorPanel(); // 刷新状态
+          } else {
+            resultsEl.innerHTML = '<div style="color:var(--danger);">' + this.escapeHtml(result?.error || '重建失败') + '</div>';
+          }
+        } catch (e) {
+          resultsEl.innerHTML = '<div style="color:var(--danger);">' + e.message + '</div>';
+        }
+      });
+
+      // 回车搜索
+      document.getElementById('vectorSearchInput')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('vectorSearchBtn')?.click();
+      });
     }
   },
 
