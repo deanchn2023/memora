@@ -2099,6 +2099,7 @@ async function analyzeClipboardText(text) {
     let confidence = 0;
     let isTask = false;
     let taskTitle = null;
+    let _skipOriginalFlow = false;
     
     if (!preResult.shouldAnalyze) {
       console.log('[AI] Pre-classification rejected:', preResult.reason);
@@ -2167,6 +2168,44 @@ async function analyzeClipboardText(text) {
     
     // 构建 system prompt，注入动态数据
     _sendLog('[AI] 🔧 构建 system prompt...');
+    
+    // v3.1: 优先使用拆分式 Prompt（Level 1 分类 → Level 2 并行提取）
+    const useSplitPrompt = getSetting('clipboard_split_prompt_enabled') !== false; // 默认开启
+    if (useSplitPrompt) {
+      _sendLog('[AI] 🔀 使用拆分式 Prompt (L1→L2)');
+      const splitResult = await analyzeClipboardSplit(text, traceId, userPrompt, isBufferMerged, preResult);
+      
+      if (splitResult === null) {
+        // 降级为单体 Prompt
+        _sendLog('[AI] ⚠️ 拆分模式降级，使用单体 Prompt');
+      } else if (splitResult.skipped) {
+        // L1 判定为闲聊，跳过
+        console.log('[AI] Skipped (split mode):', splitResult.reason);
+        _sendLog(`[AI] 🚫 拆分模式跳过: ${splitResult.reason}`);
+        // 记录反馈
+        if (feedbackLogger) {
+          feedbackLogger.recordFeedback({
+            module: 'clipboard_analysis',
+            action: 'skip',
+            trace_id: traceId,
+            ai_output: splitResult.classification,
+            context: { source_input: text.substring(0, 200) },
+            reason: splitResult.reason,
+          });
+        }
+        return;
+      } else {
+        // 拆分模式成功，使用合并结果
+        analysisResult = splitResult;
+        confidence = splitResult.confidence || 0;
+        isTask = splitResult.is_task;
+        taskTitle = splitResult.title;
+        // 跳过后续的单体 Prompt 调用
+        _skipOriginalFlow = true;
+      }
+    }
+    
+    if (!_skipOriginalFlow) {
     let systemPrompt;
     try {
       systemPrompt = buildClipboardAnalysisPrompt(traceId);
@@ -2282,9 +2321,11 @@ async function analyzeClipboardText(text) {
         }
         return;
       }
+    } // end if (!_skipOriginalFlow)
       
       // 保存到记事本 —— 仅保存有效信息（闲聊/无效内容不入记事本）
       // 动态匹配分类：优先使用 AI 返回的 category，再根据 tags 匹配
+      let result = analysisResult; // 兼容拆分模式和单体模式
       let noteCategory = result.category || null; // AI 直接返回的 category key
       
       if (!noteCategory) {
@@ -13671,7 +13712,11 @@ function buildInlinePrompt(intent, profile, ctx) {
 
 // === Prompt 文件管理 IPC ===
 const PROMPT_META = [
-  { file: 'task_recognition_v2.0.md', name: '任务识别 v2.0', icon: '📋', desc: '从剪贴板/输入文本识别待办事项，用于智能任务分析和剪贴板检测', used_in: '剪贴板检测 + AI任务分析 + Agent系统' },
+  { file: 'task_recognition_v2.0.md', name: '任务识别 v2.0 (单体/降级)', icon: '📋', desc: '从剪贴板/输入文本识别待办事项（单体 Prompt，拆分模式降级时使用）', used_in: '剪贴板检测降级 + AI任务分析' },
+  { file: 'clipboard_classify.md', name: '剪贴板意图分类 (L1)', icon: '🏷️', desc: 'Level 1 轻量意图分类，判断 chat/task/info/question，决定后续路由', used_in: '剪贴板检测 Level 1（高频）' },
+  { file: 'clipboard_task_create.md', name: '任务创建 (L2a)', icon: '✅', desc: 'Level 2a 任务详情提取：时间解析/SMART/优先级/周期性', used_in: '剪贴板检测 Level 2a（L1判定为task时）' },
+  { file: 'clipboard_info_extract.md', name: '信息提取 (L2b)', icon: '📝', desc: 'Level 2b 有效信息提取：标题提炼/分类/SMART简化版', used_in: '剪贴板检测 Level 2b（L1判定为info时）' },
+  { file: 'clipboard_recommend.md', name: '推荐分类 (L2c)', icon: '💡', desc: 'Level 2c 推荐意图分类：疑问/技术问题/求证', used_in: '剪贴板检测 Level 2c（L1判定为question时）' },
   { file: 'memory_extraction_v2.0.md', name: '记忆提取 v2.0', icon: '🧠', desc: '从文本中提取结构化记忆（人物/主题/关键观点/实体等）', used_in: '记忆提炼 + 剪贴板记忆提取' },
   { file: 'priority_agent.md', name: '优先级规划 Agent', icon: '🎯', desc: '今日排程和任务优先级排序，生成 Top 5 和时间分配建议', used_in: 'Agent 对话（今日排程/优先级）' },
   { file: 'knowledge_agent.md', name: '知识梳理 Agent', icon: '📚', desc: '笔记聚类、重复检测和知识整理，发现主题和关联', used_in: 'Agent 对话（整理笔记/知识梳理）' },
@@ -14186,7 +14231,393 @@ function buildClipboardAnalysisPrompt(traceId) {
   return rendered;
 }
 
-// 剪贴板意图分类（作为 AI 判断的降级备选方案）
+// ===== v3.1: 拆分 Prompt 构建函数 =====
+
+function _getCurrentTimeStr() {
+  const now = new Date();
+  const dow = ['日','一','二','三','四','五','六'][now.getDay()];
+  const h = now.getHours();
+  const period = h < 6 ? '凌晨' : h < 12 ? '上午' : h < 18 ? '下午' : '晚上';
+  return `${now.toLocaleString('zh-CN')} 周${dow} ${period}`;
+}
+
+function _getProfileVars() {
+  const profile = loadProfile();
+  return {
+    profile,
+    frequent_persons: profile.frequent_persons || [],
+    active_projects: profile.active_projects || [],
+    priority_signals: profile.preferences?.priority_signals || [],
+    low_priority_signals: profile.preferences?.low_priority_signals || [],
+    custom_categories: notebook ? notebook.getCustomCategories() : {},
+    frequent_persons_names: (profile.frequent_persons || []).map(p => p.name).join(', '),
+  };
+}
+
+function _getFeedbackExamples(module, limit = 3) {
+  if (!feedbackLogger) return { positive: [], negative: [] };
+  return {
+    positive: feedbackLogger.queryFeedback({ module, action: 'accept', limit })
+      .map(p => ({
+        input_text: p.context?.source_input || '',
+        user_final: typeof p.user_final === 'string' ? p.user_final : JSON.stringify(p.user_final),
+        note: p.reason || ''
+      })),
+    negative: feedbackLogger.queryFeedback({ module, action: 'reject', limit })
+      .map(n => ({
+        input_text: n.context?.source_input || '',
+        ai_output: typeof n.ai_output === 'string' ? n.ai_output : JSON.stringify(n.ai_output),
+        reject_reason: n.reason || ''
+      })),
+  };
+}
+
+// Level 1: 轻量意图分类
+function buildClassifyPrompt(traceId) {
+  const templatePath = path.join(PROMPT_DIR, 'clipboard_classify.md');
+  if (!fs.existsSync(templatePath)) return null;
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const { profile, frequent_persons_names } = _getProfileVars();
+  const vars = {
+    'user_profile.name': profile.user?.name || '用户',
+    'user_profile.english_name': profile.user?.english_name || '',
+    current_time: _getCurrentTimeStr(),
+    frequent_persons_names: frequent_persons_names || '（无）',
+    input_text: '',
+  };
+  let rendered = promptEngine.render(template, vars);
+  return rendered.replace(/__TRACE_ID__/g, traceId);
+}
+
+// Level 2a: 任务创建
+function buildTaskCreatePrompt(traceId) {
+  const templatePath = path.join(PROMPT_DIR, 'clipboard_task_create.md');
+  if (!fs.existsSync(templatePath)) return null;
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const { profile, frequent_persons, active_projects, priority_signals, low_priority_signals, custom_categories } = _getProfileVars();
+  const examples = _getFeedbackExamples('clipboard_analysis', 3);
+  const vars = {
+    'user_profile.name': profile.user?.name || '用户',
+    'user_profile.english_name': profile.user?.english_name || '',
+    'user_profile.role': profile.user?.role || '',
+    current_time: _getCurrentTimeStr(),
+    frequent_persons,
+    active_projects,
+    priority_signals,
+    low_priority_signals,
+    custom_categories,
+    positive_examples: examples.positive,
+    negative_examples: examples.negative,
+    input_text: '',
+  };
+  let rendered = promptEngine.render(template, vars);
+  return rendered.replace(/__TRACE_ID__/g, traceId);
+}
+
+// Level 2b: 信息提取
+function buildInfoExtractPrompt(traceId) {
+  const templatePath = path.join(PROMPT_DIR, 'clipboard_info_extract.md');
+  if (!fs.existsSync(templatePath)) return null;
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const { profile, frequent_persons, active_projects, custom_categories } = _getProfileVars();
+  const vars = {
+    'user_profile.name': profile.user?.name || '用户',
+    'user_profile.english_name': profile.user?.english_name || '',
+    'user_profile.role': profile.user?.role || '',
+    frequent_persons,
+    active_projects,
+    custom_categories,
+    input_text: '',
+  };
+  let rendered = promptEngine.render(template, vars);
+  return rendered.replace(/__TRACE_ID__/g, traceId);
+}
+
+// Level 2c: 推荐分类
+function buildRecommendPrompt(traceId) {
+  const templatePath = path.join(PROMPT_DIR, 'clipboard_recommend.md');
+  if (!fs.existsSync(templatePath)) return null;
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const vars = { input_text: '' };
+  let rendered = promptEngine.render(template, vars);
+  return rendered.replace(/__TRACE_ID__/g, traceId);
+}
+
+/**
+ * v3.1: 拆分式剪贴板分析
+ * Level 1 分类 → Level 2 并行提取 → 合并结果
+ * 降级：Level 1 失败或低置信度时回退到单体 Prompt
+ */
+async function analyzeClipboardSplit(text, traceId, userPrompt, isBufferMerged, preResult) {
+  // Level 1: 轻量意图分类
+  const classifyPrompt = buildClassifyPrompt(traceId);
+  if (!classifyPrompt) {
+    _sendLog('[AI] ⚠️ classify prompt 不存在，降级为单体 Prompt');
+    return null; // 降级信号
+  }
+
+  const classifyStartTime = Date.now();
+  let classification;
+  try {
+    const { response } = await callAI({
+      module: 'clipboard_classify',
+      category: 'highvol',
+      messages: [
+        { role: 'system', content: classifyPrompt },
+        { role: 'user', content: text }
+      ],
+      fetchOptions: { temperature: 0.1, max_tokens: 200 },
+      traceId,
+      structured: true,
+    });
+
+    if (!response.ok) {
+      _sendLog('[AI] ⚠️ Level 1 分类失败，降级为单体 Prompt');
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    incrementAICallCount();
+
+    // 解析 JSON
+    let jsonStr = content;
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    classification = JSON.parse(jsonStr);
+
+    const classifyDuration = Date.now() - classifyStartTime;
+    _sendLog(`[AI] 🏷️ L1 分类: intent=${classification.intent} confidence=${classification.confidence} (${classifyDuration}ms)`);
+
+    // 审计日志
+    if (auditLogger) {
+      auditLogger.log({
+        module: 'clipboard_classify',
+        action: 'classify',
+        input: { text_preview: text.substring(0, 100), text_length: text.length },
+        output: classification,
+        latencyMs: classifyDuration,
+        traceId,
+      });
+    }
+  } catch (e) {
+    _sendLog(`[AI] ⚠️ Level 1 解析失败: ${e.message}，降级为单体 Prompt`);
+    return null;
+  }
+
+  // 高置信度闲聊 → 直接丢弃，不调后续 AI
+  if (classification.intent === 'chat' && classification.confidence > 0.85) {
+    _sendLog('[AI] 🚫 L1 判定为闲聊 (confidence>' + classification.confidence + ')，跳过后续分析');
+    return {
+      skipped: true,
+      reason: 'chat',
+      classification,
+      is_task: false,
+      is_valid_info: false,
+      needs_recommendation: false,
+    };
+  }
+
+  // 判断需要哪些 Level 2
+  const needTask = classification.is_task;
+  const needInfo = classification.is_valid_info;
+  const needRecommend = classification.needs_recommendation;
+
+  // 如果全为 false 且置信度不高 → 降级
+  if (!needTask && !needInfo && !needRecommend) {
+    if (classification.confidence < 0.85) {
+      _sendLog('[AI] ⚠️ L1 全 false 且低置信度，降级为单体 Prompt');
+      return null;
+    }
+    // 高置信度全 false → 当作闲聊
+    return {
+      skipped: true,
+      reason: 'all_false_high_confidence',
+      classification,
+      is_task: false,
+      is_valid_info: false,
+      needs_recommendation: false,
+    };
+  }
+
+  // Level 2: 并行调用
+  _sendLog(`[AI] 🔀 L2 路由: task=${needTask} info=${needInfo} recommend=${needRecommend}`);
+  const level2Promises = [];
+
+  if (needTask) {
+    const taskPrompt = buildTaskCreatePrompt(traceId);
+    if (taskPrompt) {
+      level2Promises.push(
+        callAI({
+          module: 'clipboard_task_create',
+          category: 'highvol',
+          messages: [
+            { role: 'system', content: taskPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          fetchOptions: { temperature: 0.1 },
+          traceId,
+          structured: true,
+        }).then(({ response }) => response.ok ? response.json() : null).then(data => {
+          if (!data) return null;
+          const content = data.choices?.[0]?.message?.content || '';
+          let jsonStr = content;
+          const m = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (m) jsonStr = m[1].trim();
+          try { return { type: 'task', data: JSON.parse(jsonStr) }; }
+          catch { return { type: 'task', data: null, error: 'parse_failed' }; }
+        }).catch(e => ({ type: 'task', data: null, error: e.message }))
+      );
+      incrementAICallCount();
+    }
+  }
+
+  if (needInfo) {
+    const infoPrompt = buildInfoExtractPrompt(traceId);
+    if (infoPrompt) {
+      level2Promises.push(
+        callAI({
+          module: 'clipboard_info_extract',
+          category: 'highvol',
+          messages: [
+            { role: 'system', content: infoPrompt },
+            { role: 'user', content: text }
+          ],
+          fetchOptions: { temperature: 0.1 },
+          traceId,
+          structured: true,
+        }).then(({ response }) => response.ok ? response.json() : null).then(data => {
+          if (!data) return null;
+          const content = data.choices?.[0]?.message?.content || '';
+          let jsonStr = content;
+          const m = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (m) jsonStr = m[1].trim();
+          try { return { type: 'info', data: JSON.parse(jsonStr) }; }
+          catch { return { type: 'info', data: null, error: 'parse_failed' }; }
+        }).catch(e => ({ type: 'info', data: null, error: e.message }))
+      );
+      incrementAICallCount();
+    }
+  }
+
+  if (needRecommend) {
+    const recommendPrompt = buildRecommendPrompt(traceId);
+    if (recommendPrompt) {
+      level2Promises.push(
+        callAI({
+          module: 'clipboard_recommend',
+          category: 'highvol',
+          messages: [
+            { role: 'system', content: recommendPrompt },
+            { role: 'user', content: text }
+          ],
+          fetchOptions: { temperature: 0.1, max_tokens: 200 },
+          traceId,
+          structured: true,
+        }).then(({ response }) => response.ok ? response.json() : null).then(data => {
+          if (!data) return null;
+          const content = data.choices?.[0]?.message?.content || '';
+          let jsonStr = content;
+          const m = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (m) jsonStr = m[1].trim();
+          try { return { type: 'recommend', data: JSON.parse(jsonStr) }; }
+          catch { return { type: 'recommend', data: null, error: 'parse_failed' }; }
+        }).catch(e => ({ type: 'recommend', data: null, error: e.message }))
+      );
+      incrementAICallCount();
+    }
+  }
+
+  // 等待所有 Level 2 完成
+  const level2Results = await Promise.all(level2Promises);
+
+  // 合并结果为与原单体 Prompt 兼容的格式
+  const merged = {
+    trace_id: traceId,
+    is_task: false,
+    is_valid_info: false,
+    needs_recommendation: false,
+    confidence: classification.confidence,
+    title: null,
+    description: null,
+    time: { raw: null, normalized: null, is_all_day: false },
+    priority: null,
+    task_type: 'manual',
+    recurrence: null,
+    tags: [],
+    linked_persons: [],
+    linked_projects: [],
+    recommendation_intent: null,
+    recommendation_query: null,
+    category: null,
+    smart_level: null,
+    smart_missing: [],
+    smart_optimized: false,
+    reason: classification.quick_reason || '',
+    reasoning_steps: [`L1: intent=${classification.intent} (${classification.confidence})`],
+    _split_mode: true,
+  };
+
+  let allFailed = true;
+  for (const result of level2Results) {
+    if (!result || !result.data) continue;
+    allFailed = false;
+
+    if (result.type === 'task' && result.data) {
+      merged.is_task = true;
+      merged.title = result.data.title || merged.title;
+      merged.description = result.data.description || merged.description;
+      merged.time = result.data.time || merged.time;
+      merged.priority = result.data.priority || 'medium';
+      merged.task_type = result.data.task_type || 'manual';
+      merged.recurrence = result.data.recurrence || null;
+      merged.tags = result.data.tags || merged.tags;
+      merged.linked_persons = result.data.linked_persons || merged.linked_persons;
+      merged.linked_projects = result.data.linked_projects || merged.linked_projects;
+      merged.category = result.data.category || merged.category;
+      merged.smart_level = result.data.smart_level || merged.smart_level;
+      merged.smart_missing = result.data.smart_missing || merged.smart_missing;
+      merged.smart_optimized = result.data.smart_optimized || merged.smart_optimized;
+      merged.reasoning_steps.push('L2a: task extracted');
+    }
+
+    if (result.type === 'info' && result.data) {
+      merged.is_valid_info = true;
+      if (!merged.title) merged.title = result.data.title;
+      if (!merged.description) merged.description = result.data.description;
+      merged.tags = [...new Set([...merged.tags, ...(result.data.tags || [])])];
+      merged.linked_persons = [...new Set([...merged.linked_persons, ...(result.data.linked_persons || [])])];
+      merged.linked_projects = [...new Set([...merged.linked_projects, ...(result.data.linked_projects || [])])];
+      if (!merged.category) merged.category = result.data.category;
+      if (!merged.smart_level) merged.smart_level = result.data.smart_level;
+      if (!merged.smart_missing?.length) merged.smart_missing = result.data.smart_missing || [];
+      merged.smart_optimized = merged.smart_optimized || result.data.smart_optimized;
+      merged.reasoning_steps.push('L2b: info extracted');
+    }
+
+    if (result.type === 'recommend' && result.data) {
+      merged.needs_recommendation = true;
+      merged.recommendation_intent = result.data.recommendation_intent || null;
+      merged.recommendation_query = result.data.recommendation_query || null;
+      merged.reasoning_steps.push('L2c: recommend classified');
+    }
+  }
+
+  // 如果所有 L2 都失败 → 降级
+  if (allFailed) {
+    _sendLog('[AI] ⚠️ 所有 L2 调用失败，降级为单体 Prompt');
+    return null;
+  }
+
+  // 如果 task 或 info 任一成功，标记 is_valid_info
+  if (merged.is_task && !merged.is_valid_info) {
+    merged.is_valid_info = true; // task 同时也是有效信息
+  }
+
+  _sendLog(`[AI] ✅ 拆分分析完成: task=${merged.is_task} info=${merged.is_valid_info} recommend=${merged.needs_recommendation}`);
+  return merged;
+}
+
 function classifyClipboardIntent(text, aiResult) {
   if (!text || text.trim().length === 0) return null;
 
