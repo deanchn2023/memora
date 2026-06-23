@@ -118,9 +118,6 @@ const App = {
         this._pendingContextSources = data;
       });
     }
-    } catch (e) {
-      console.error('[App] bindEvents() failed:', e);
-    }
     
     try {
       this.renderTaskList();
@@ -290,6 +287,25 @@ const App = {
   updateInitTest(msg) {
     const el = document.getElementById('init-test');
     if (el) el.textContent = msg || 'Done';
+  },
+
+  /**
+   * v3.1.1: 紧急 UI 重置 — 强制隐藏所有 modal/overlay，确保页面可交互
+   * 在全局错误或初始化失败时调用
+   */
+  _emergencyUIReset() {
+    // 隐藏所有 modal
+    document.querySelectorAll('.modal:not(.hidden)').forEach(el => el.classList.add('hidden'));
+    // 隐藏所有 overlay
+    document.querySelectorAll('.modal-overlay, .audit-overlay, .prompt-editor-overlay, .voice-overlay, .connector-modal-overlay, .dialog-overlay, .image-viewer-overlay').forEach(el => {
+      el.classList.add('hidden');
+      el.style.display = 'none';
+    });
+    // 隐藏独立 overlay 容器
+    document.querySelectorAll('[id$="Overlay"]:not(.hidden), [id$="Modal"]:not(.hidden)').forEach(el => {
+      el.classList.add('hidden');
+    });
+    console.log('[Emergency] UI reset — all modals/overlays hidden');
   },
 
   bindEvents() {
@@ -12733,7 +12749,7 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
   },
   
-  // 拖拽合并两个记事项
+  // 拖拽合并两个记事项（直接合并 + 撤销）
   async mergeNotes(sourceId, targetId) {
     if (!window.electronAPI || sourceId === targetId) return;
     try {
@@ -12748,43 +12764,93 @@ ${JSON.stringify(reportData, null, 2)}`;
         return;
       }
 
-      // 确认弹窗
       const srcTitle = srcNote.title || '无标题';
       const tgtTitle = tgtNote.title || '无标题';
-      const confirmed = await this._showMergeConfirmDialog(srcTitle, tgtTitle);
-      if (!confirmed) return;
 
-      // 合并内容：目标 + 分隔线 + 来源
+      // 备份原始数据（用于撤销）
+      const backup = {
+        sourceNote: { ...srcNote },
+        targetNote: { ...tgtNote },
+      };
+
+      // 直接合并（无确认弹窗）
       const mergedContent = tgtNote.content + '\n\n---\n\n' + srcNote.content;
-      // 合并 htmlContent（如果都有）
       let mergedHtml = tgtNote.htmlContent || '';
       if (srcNote.htmlContent) {
         mergedHtml += (mergedHtml ? '<hr style="border:none;border-top:1px solid var(--border-light);margin:16px 0;">' : '') + srcNote.htmlContent;
       }
-      // 合并 tags（去重）
       const mergedTags = [...new Set([...(tgtNote.tags || []), ...(srcNote.tags || [])])];
-      // 保留目标的标题、分类、图片等，只合并内容和标签
       const updates = {
         content: mergedContent,
         htmlContent: mergedHtml || null,
         tags: mergedTags,
       };
 
-      // 更新目标记事项
       const updateResult = await window.electronAPI.notebookUpdateNote(targetId, updates);
       if (!updateResult?.success) {
         this.showToast('合并失败', 'error');
         return;
       }
-      // 删除来源记事项
       await window.electronAPI.notebookDeleteNote(sourceId, 'merged into ' + targetId);
-      this.showToast(`已合并「${srcTitle}」到「${tgtTitle}」`, 'success');
+
       // 刷新列表
       const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
       this.loadNotes(activeCat);
+
+      // 显示带撤销按钮的 Toast
+      this._showMergeUndoToast(srcTitle, tgtTitle, backup);
     } catch (err) {
       console.error('合并记事项失败:', err);
       this.showToast('合并失败', 'error');
+    }
+  },
+
+  /**
+   * 显示合并成功的撤销 Toast
+   */
+  _showMergeUndoToast(srcTitle, tgtTitle, backup) {
+    // 移除已有的撤销 toast
+    document.getElementById('mergeUndoToast')?.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'mergeUndoToast';
+    toast.className = 'merge-undo-toast';
+    toast.innerHTML = `
+      <span class="merge-undo-text">✅ 已合并「${this.escapeHtml(srcTitle)}」到「${this.escapeHtml(tgtTitle)}」</span>
+      <button class="merge-undo-btn" id="mergeUndoBtn">撤销</button>
+    `;
+    document.body.appendChild(toast);
+
+    // 自动消失（10秒）
+    const autoHide = setTimeout(() => toast.remove(), 10000);
+
+    // 撤销按钮
+    toast.querySelector('#mergeUndoBtn')?.addEventListener('click', async () => {
+      clearTimeout(autoHide);
+      toast.remove();
+      await this._undoMerge(backup);
+    });
+  },
+
+  /**
+   * 撤销合并
+   */
+  async _undoMerge(backup) {
+    try {
+      // 恢复目标笔记原始内容
+      await window.electronAPI.notebookUpdateNote(backup.targetNote.id, {
+        content: backup.targetNote.content,
+        htmlContent: backup.targetNote.htmlContent || null,
+        tags: backup.targetNote.tags || [],
+      });
+      // 重新创建来源笔记（恢复删除）
+      await window.electronAPI.notebookAddNote(backup.sourceNote);
+      this.showToast('已撤销合并');
+      const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+      this.loadNotes(activeCat);
+    } catch (e) {
+      console.error('撤销合并失败:', e);
+      this.showToast('撤销失败: ' + e.message, 'error');
     }
   },
 
@@ -16374,6 +16440,8 @@ window.addEventListener('error', (e) => {
   console.error('[Global Error]', e.error || e.message, e.filename, e.lineno);
   // 阻止错误冒泡导致页面崩溃
   e.preventDefault();
+  // v3.1.1: 紧急 UI 重置 — 确保所有 modal/overlay 隐藏，页面可交互
+  App._emergencyUIReset?.();
 });
 
 window.addEventListener('unhandledrejection', (e) => {

@@ -88,6 +88,15 @@ const Audit = {
         memory_organize: '📚 记忆整理',
         agent: '🤖 Agent助手',
         adp_chat: '💬 ADP对话',
+        adp_analyze_task: '✅ ADP任务分析',
+        adp_analyze_clipboard: '📋 ADP剪贴板识别',
+        adp_memory_extract: '🧠 ADP记忆提取',
+        adp_memory_extract_ipc: '🧠 ADP记忆提取(IPC)',
+        adp_memory_organize: '📚 ADP记忆整理',
+        adp_optimize_prompt: '🔧 ADP Prompt优化',
+        adp_estimate_duration: '⏱️ ADP时间预估',
+        adp_knowledge_extract_atoms: '⚛️ ADP知识萃取',
+        adp_knowledge_clustering: '🔗 ADP知识聚类',
         knowledge_extract_atoms: '⚛️ 知识萃取',
         knowledge_clustering: '🔗 知识聚类',
         knowledge_article: '📄 知识文章',
@@ -95,6 +104,17 @@ const Audit = {
         knowledge_recommend: '💡 知识推荐',
         search_keyword: '🔍 搜索关键词',
         profile_import: '👤 画像导入',
+        context_classify: '🧩 上下文意图分类',
+        prompt_optimization: '🔄 Prompt自动优化',
+        unified_context: '📚 统一上下文注入',
+        memory_activation: '⚡ 记忆激活',
+        insight_memory: '📊 记忆洞察',
+        insight_notebook: '📊 笔记洞察',
+        insight_knowledge: '📊 知识洞察',
+        insight_task: '📊 任务洞察',
+        insight_relationship: '📊 人脉洞察',
+        insight_summary: '📊 综合洞察',
+        insight_adp_call: '📊 洞察ADP调用',
       };
       for (const mod of modules) {
         const opt = document.createElement('option');
@@ -302,6 +322,7 @@ const Audit = {
           <div><b>时间:</b> ${ts}</div>
           <div><b>模块:</b> ${r.module}</div>
           <div><b>模型:</b> ${r.model || '-'}</div>
+          <div><b>Skill:</b> ${r.skill || '-'}</div>
           <div><b>状态:</b> ${r.output?.status || '-'} ${r.error ? '(错误)' : ''}</div>
           <div><b>耗时:</b> ${r.latencyMs || 0}ms</div>
           <div><b>TraceID:</b> ${r.traceId || '-'}</div>

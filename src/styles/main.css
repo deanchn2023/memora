@@ -2902,6 +2902,50 @@ body {
   color: var(--primary-color, #007AFF);
 }
 
+/* v3.1: 合并撤销 Toast */
+.merge-undo-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-primary, #ffffff);
+  border: 0.5px solid var(--border-color, #d1d1d6);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  z-index: 10000;
+  animation: mergeUndoSlideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.merge-undo-text {
+  color: var(--text-primary, #1d1d1f);
+}
+
+.merge-undo-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--primary-color, #007AFF);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.merge-undo-btn:hover {
+  opacity: 0.85;
+}
+
+@keyframes mergeUndoSlideUp {
+  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
 .message.assistant .message-avatar svg {
   width: 100%;
   height: 100%;

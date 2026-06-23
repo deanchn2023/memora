@@ -10234,18 +10234,25 @@ async function _checkVectorConsistency() {
   try {
     const status = vectorIndex.getStatus();
     const noteCount = notebook ? notebook.getAllNotes().length : 0;
+    const memoryCount = memoryStore ? (memoryStore.getAllMemories()?.length || memoryStore.memories?.length || 0) : 0;
+    const taskCount = db?.data?.tasks?.length || 0;
     const indexedNoteCount = status.collections.notes?.docCount || 0;
+    const indexedMemoryCount = status.collections.memories?.docCount || 0;
+    const indexedTaskCount = status.collections.tasks?.docCount || 0;
 
-    if (noteCount > 0 && indexedNoteCount === 0) {
-      // 首次启动或索引丢失，自动全量重建
-      console.log(`[Vector] Consistency check: notes=${noteCount} vs indexed=${indexedNoteCount}, auto-rebuilding...`);
-      const notes = notebook.getAllNotes();
-      const memories = memoryStore ? memoryStore.getAllMemories() : [];
+    const totalDataCount = noteCount + memoryCount + taskCount;
+    const totalIndexedCount = indexedNoteCount + indexedMemoryCount + indexedTaskCount;
+
+    // 如果索引为0但有数据，或索引量与数据量差异超过20%，全量重建
+    if (totalDataCount > 0 && (totalIndexedCount === 0 || totalIndexedCount < totalDataCount * 0.8)) {
+      console.log(`[Vector] Consistency check: data=${totalDataCount} vs indexed=${totalIndexedCount}, auto-rebuilding...`);
+      const notes = notebook ? notebook.getAllNotes() : [];
+      const memories = memoryStore ? (memoryStore.getAllMemories() || memoryStore.memories || []) : [];
       const tasks = db?.data?.tasks || [];
       const result = await vectorIndex.rebuildAll(notes, memories, tasks, []);
       console.log('[Vector] Auto-rebuild complete:', result);
     } else {
-      console.log(`[Vector] Consistency check passed: notes=${noteCount} vs indexed=${indexedNoteCount}`);
+      console.log(`[Vector] Consistency check passed: notes=${noteCount}/${indexedNoteCount}, memories=${memoryCount}/${indexedMemoryCount}, tasks=${taskCount}/${indexedTaskCount}`);
     }
   } catch (e) {
     console.error('[Vector] Consistency check failed:', e.message);
@@ -12965,6 +12972,21 @@ ipcMain.handle('db-get-tasks', async () => {
 
 ipcMain.handle('db-save-tasks', async (event, tasks) => {
   if (!db) return { success: false };
+  // v3.1: 检测任务变更，异步向量化
+  const oldTaskIds = new Set((db.data?.tasks || []).map(t => t.id));
+  const newTaskIds = new Set(tasks.map(t => t.id));
+  // 新增/更新的任务
+  for (const task of tasks) {
+    if (!oldTaskIds.has(task.id) || JSON.stringify(task) !== JSON.stringify(db.data.tasks.find(t => t.id === task.id))) {
+      vectorQueue?.enqueue('upsert', 'tasks', task);
+    }
+  }
+  // 删除的任务
+  for (const oldId of oldTaskIds) {
+    if (!newTaskIds.has(oldId)) {
+      vectorQueue?.enqueue('delete', 'tasks', { id: oldId });
+    }
+  }
   db.data.tasks = tasks;
   db.save();
   return { success: true };
