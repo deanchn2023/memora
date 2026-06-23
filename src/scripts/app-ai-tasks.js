@@ -424,6 +424,26 @@ Object.assign(App, {
       }
     }
 
+    // v3.1: 向量检索增强 — 用任务标题检索语义相关上下文
+    if (window.electronAPI?.vectorRetrieveRAG) {
+      try {
+        const ragResult = await window.electronAPI.vectorRetrieveRAG({
+          query: task.title,
+          intent: forcedClassification,
+          mode: 'scheduled',
+        });
+        if (ragResult.success && ragResult.context) {
+          localContextSystemRole = localContextSystemRole
+            ? `${localContextSystemRole}\n\n${ragResult.context}`
+            : ragResult.context;
+          localContextSources = [...localContextSources, ...(ragResult.sources?.map(s => `vector:${s.source_type}`) || [])];
+          console.log('[AI Task] Vector RAG enhanced, sources:', ragResult.sources?.length || 0);
+        }
+      } catch (e) {
+        console.warn('[AI Task] Vector RAG failed:', e.message);
+      }
+    }
+
     const basePrompt = task.description
       ? `${task.title}\n\n${task.description}`
       : task.title;

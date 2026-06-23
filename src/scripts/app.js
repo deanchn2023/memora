@@ -110,6 +110,17 @@ const App = {
     } catch (e) {
       console.error('[App] bindEvents() failed:', e);
     }
+
+    // v3.1: 监听向量检索上下文来源
+    if (window.electronAPI?.onContextSources) {
+      this._pendingContextSources = null;
+      window.electronAPI.onContextSources((data) => {
+        this._pendingContextSources = data;
+      });
+    }
+    } catch (e) {
+      console.error('[App] bindEvents() failed:', e);
+    }
     
     try {
       this.renderTaskList();
@@ -870,6 +881,50 @@ const App = {
       document.querySelectorAll('.category-item, .category-item-wrapper').forEach(c => {
         c.classList.remove('drop-target', 'drop-hover');
       });
+      document.querySelectorAll('.note-item.merge-drop-target').forEach(n => {
+        n.classList.remove('merge-drop-target');
+      });
+    });
+
+    // 笔记项之间拖拽合并：dragover / dragenter / dragleave / drop
+    document.getElementById('notebookList')?.addEventListener('dragover', (e) => {
+      const targetItem = e.target.closest('.note-item[draggable="true"]');
+      if (!targetItem || !this._dragNoteId) return;
+      // 不能拖到自己身上
+      if (targetItem.dataset.id === this._dragNoteId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'merge';
+    });
+    document.getElementById('notebookList')?.addEventListener('dragenter', (e) => {
+      const targetItem = e.target.closest('.note-item[draggable="true"]');
+      if (!targetItem || !this._dragNoteId) return;
+      if (targetItem.dataset.id === this._dragNoteId) return;
+      e.preventDefault();
+      // 清除之前的高亮
+      document.querySelectorAll('.note-item.merge-drop-target').forEach(n => {
+        if (n !== targetItem) n.classList.remove('merge-drop-target');
+      });
+      targetItem.classList.add('merge-drop-target');
+    });
+    document.getElementById('notebookList')?.addEventListener('dragleave', (e) => {
+      const targetItem = e.target.closest('.note-item[draggable="true"]');
+      if (!targetItem) return;
+      // 只在真正离开元素时移除高亮（不是进入子元素）
+      const rect = targetItem.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+        targetItem.classList.remove('merge-drop-target');
+      }
+    });
+    document.getElementById('notebookList')?.addEventListener('drop', async (e) => {
+      const targetItem = e.target.closest('.note-item[draggable="true"]');
+      if (!targetItem || !this._dragNoteId) return;
+      const targetId = targetItem.dataset.id;
+      if (targetId === this._dragNoteId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      targetItem.classList.remove('merge-drop-target');
+      await this.mergeNotes(this._dragNoteId, targetId);
     });
 
     // 笔记列表复选框事件委托
@@ -1207,6 +1262,9 @@ const App = {
         console.log('[App] Button clicked, action:', action, 'noteId:', noteId);
         
         switch(action) {
+          case 'edit':
+            this.editNote(noteId);
+            break;
           case 'convert':
             this.convertToTask(noteId);
             break;
@@ -3706,7 +3764,24 @@ const App = {
     const assistantMessage = document.createElement('div');
     assistantMessage.className = 'message assistant';
     assistantMessage.dataset.sendTime = new Date().toISOString();
+
+    // v3.1: 渲染上下文来源 Badge（如果向量检索有结果）
+    let contextBadgeHtml = '';
+    if (this._pendingContextSources?.sources?.length > 0) {
+      const sources = this._pendingContextSources.sources;
+      const icons = { notebook: '📝', memory: '🧠', tasks: '✅', knowledge: '📚' };
+      const chips = sources.map(s => {
+        const icon = icons[s.source_type] || '📌';
+        const score = Math.round((s.score || 0) * 100);
+        return `<span class="ctx-source-chip" data-source-type="${s.source_type}" data-source-id="${s.source_id}" title="${this.escapeHtml(s.title || '')} (${score}%)">${icon} ${this.escapeHtml((s.title || '').substring(0, 15))} ${score}%</span>`;
+      }).join('');
+      contextBadgeHtml = `<div class="context-sources-badge">📚 已参考 ${sources.length} 条本地数据：${chips}</div>`;
+      // 清空待处理
+      this._pendingContextSources = null;
+    }
+
     assistantMessage.innerHTML = `
+      ${contextBadgeHtml}
       <div class="message-avatar">${this._assistantAvatarSvg}</div>
       <div class="message-content">
         <div class="agent-thinking">
@@ -3726,7 +3801,50 @@ const App = {
       // 构建默认上下文信息（当前时间 + 用户画像），注入到发送给 AI 的消息中
       const defaultContext = await this._buildDefaultContext();
       const sendMessage = defaultContext ? (defaultContext + '\n' + resolvedMessage) : resolvedMessage;
-      
+
+      // v2.7 本地上下文注入：所有模式统一执行，在发送前检索本地数据
+      // 如果调用方已传入 systemRole（如定时任务），则跳过 LLM 分类
+      let localContextSystemRole = options.systemRole || '';
+      let localContextSources = options.sources || [];
+      const contextEnabled = this._settings?.localContextEnabled !== false; // 默认开启
+      const userMsgEl = this._currentUserMsgContent;
+      if (!localContextSystemRole && contextEnabled && message) {
+        try {
+          // 显示检索提示
+          const contextIndicator = userMsgEl?.querySelector('.local-context-indicator');
+          if (contextIndicator) contextIndicator.style.display = 'flex';
+
+          // Phase 1: LLM 意图分类
+          const classifyResult = await window.electronAPI.contextClassifyIntent(message);
+          const classification = classifyResult?.classification;
+
+          // Phase 2+3: 检索本地数据 + 组装 SystemRole
+          let contextData;
+          if (classification) {
+            contextData = await this._retrieveLocalContext(classification);
+          } else {
+            // 兜底策略
+            contextData = await this._retrieveLocalContextFallback();
+          }
+          localContextSystemRole = contextData.systemRole;
+          localContextSources = contextData.sources;
+
+          // 隐藏检索提示，显示参考数据源
+          if (contextIndicator) contextIndicator.style.display = 'none';
+          if (localContextSources.length > 0) {
+            const sourceTag = userMsgEl?.querySelector('.local-context-sources');
+            if (sourceTag) {
+              sourceTag.textContent = `🧠 已参考: ${localContextSources.join(', ')}`;
+              sourceTag.style.display = 'inline-block';
+            }
+          }
+
+          console.log('[Chat] Local context injected, sources:', localContextSources.join(', '));
+        } catch (e) {
+          console.warn('[Chat] Local context injection failed:', e);
+        }
+      }
+
       // 根据 AI 助手模式决定调用路径：
       // - agent 模式：使用 ADP 智能体（工具调用、多步推理等）
       // - llm 模式：使用已配置的大模型 API 直接对话（简单聊天）
@@ -3789,49 +3907,6 @@ const App = {
           console.log('[Chat] Pre-send: no convId yet, will be generated on main side');
         }
 
-        // v2.7 本地上下文注入：在发送给 ADP 前检索本地数据
-        // 如果调用方已传入 systemRole（如定时任务），则跳过 LLM 分类
-        let localContextSystemRole = options.systemRole || '';
-        let localContextSources = options.sources || [];
-        const contextEnabled = this._settings?.localContextEnabled !== false; // 默认开启
-        const userMsgEl = this._currentUserMsgContent;
-        if (!localContextSystemRole && contextEnabled && message) {
-          try {
-            // 显示检索提示
-            const contextIndicator = userMsgEl?.querySelector('.local-context-indicator');
-            if (contextIndicator) contextIndicator.style.display = 'flex';
-
-            // Phase 1: LLM 意图分类
-            const classifyResult = await window.electronAPI.contextClassifyIntent(message);
-            const classification = classifyResult?.classification;
-
-            // Phase 2+3: 检索本地数据 + 组装 SystemRole
-            let contextData;
-            if (classification) {
-              contextData = await this._retrieveLocalContext(classification);
-            } else {
-              // 兜底策略
-              contextData = await this._retrieveLocalContextFallback();
-            }
-            localContextSystemRole = contextData.systemRole;
-            localContextSources = contextData.sources;
-
-            // 隐藏检索提示，显示参考数据源
-            if (contextIndicator) contextIndicator.style.display = 'none';
-            if (localContextSources.length > 0) {
-              const sourceTag = userMsgEl?.querySelector('.local-context-sources');
-              if (sourceTag) {
-                sourceTag.textContent = `🧠 已参考: ${localContextSources.join(', ')}`;
-                sourceTag.style.display = 'inline-block';
-              }
-            }
-
-            console.log('[Chat] Local context injected, sources:', localContextSources.join(', '));
-          } catch (e) {
-            console.warn('[Chat] Local context injection failed:', e);
-          }
-        }
-
         // 启动流式请求 — 传递结构化数据（message + attachments + systemRole）
         // v2.6: 专家模式传递专家级 appKey/url
         // v2.7: 本地上下文注入 systemRole
@@ -3847,6 +3922,20 @@ const App = {
         }
         if (localContextSystemRole) {
           adpMessageData.systemRole = localContextSystemRole;
+        }
+        // 🔧 传递用户选择的 skill 和模型到 ADP（注入到 systemRole）
+        const selectedSkill = document.getElementById('ccSkillSelect')?.value || '';
+        const selectedModel = document.getElementById('ccOpenRouterSelect')?.value || '';
+        const selectedProviderId = document.getElementById('ccProviderSelect')?.value || '';
+        if (selectedSkill) {
+          const skillPrefix = `\n\n[用户要求使用 Skill: ${selectedSkill}]\n请在回答中优先使用 ${selectedSkill} 这个技能来完成任务。`;
+          adpMessageData.systemRole = (adpMessageData.systemRole || '') + skillPrefix;
+        }
+        if (selectedModel) {
+          adpMessageData.modelHint = selectedModel;
+        }
+        if (selectedProviderId) {
+          adpMessageData.providerHint = selectedProviderId;
         }
         result = await window.electronAPI.sendADPMessage(adpMessageData);
 
@@ -3970,6 +4059,11 @@ const App = {
         this._ccAutoApproveCommands = false;
         // Clean up any previous subtask listeners before starting new message
         window.electronAPI?.removeCCSubTaskListeners?.();
+        // 注册权限请求监听器
+        window.electronAPI?.removeCCPermissionRequestListeners?.();
+        window.electronAPI?.onCCPermissionRequest?.((data) => {
+          this._showCCPermissionDialog(data);
+        });
         window.electronAPI.onCCStream((evt) => {
           this._ccLastEventTime = Date.now();
           if (this._ccStreamListening) {
@@ -3989,7 +4083,7 @@ const App = {
           message: sendMessage,
           attachments: attachmentData,
           sessionId: ccSessionId,
-          systemRole: options.systemRole || '',
+          systemRole: localContextSystemRole || options.systemRole || '',
           workdir: this._getCCWorkdir(),
           skill: document.getElementById('ccSkillSelect')?.value || '',
           connectorIds: this._getSelectedConnectorIds(),
@@ -4036,6 +4130,18 @@ const App = {
         // Agent 或 LLM 模式：使用本地 AI 流式输出
         const agentType = this._aiAssistantMode === 'llm' ? 'chat' : undefined;
 
+        // 🔧 将用户选择的 skill 注入到消息中
+        const _selectedSkill = document.getElementById('ccSkillSelect')?.value || '';
+        const _selectedModel = document.getElementById('ccOpenRouterSelect')?.value || '';
+        let _agentMessage = sendMessage;
+        if (_selectedSkill) {
+          _agentMessage = `[用户要求使用 Skill: ${_selectedSkill}]\n请在回答中优先使用 ${_selectedSkill} 这个技能来完成任务。\n\n${sendMessage}`;
+        }
+        // 注入本地上下文到消息前部
+        if (localContextSystemRole) {
+          _agentMessage = `${localContextSystemRole}\n\n${_agentMessage}`;
+        }
+
         // 先注册流式监听器（防止竞态：invoke 返回前主进程可能已开始推送事件）
         this._agentStreamBuffer = [];
         this._agentStreamListening = true;
@@ -4046,7 +4152,7 @@ const App = {
           }
         });
 
-        result = await window.electronAPI.agent.invoke(sendMessage, agentType, attachmentData);
+        result = await window.electronAPI.agent.invoke(_agentMessage, agentType, attachmentData, _selectedModel);
         
         if (result.success && result.streaming) {
           // 流式模式：处理缓冲事件 + 后续事件
@@ -5865,6 +5971,80 @@ const App = {
       if (nextSibling?.classList?.contains('agent-artifact-btns')) {
         nextSibling.remove();
       }
+    });
+  },
+
+  /** 显示 CC 工具权限请求弹窗（canUseTool 回调） */
+  _showCCPermissionDialog({ requestId, toolName, input }) {
+    // 避免重复弹窗
+    if (document.querySelector(`.cc-permission-dialog[data-request-id="${requestId}"]`)) return;
+
+    // 格式化工具输入信息
+    let inputDesc = '';
+    try {
+      if (toolName === 'Bash' && input?.command) {
+        inputDesc = `<div class="cc-perm-label">命令：</div><pre class="cc-perm-code">${this.escapeHtml(input.command)}</pre>`;
+      } else if (toolName === 'Write' && input?.file_path) {
+        inputDesc = `<div class="cc-perm-label">写入文件：</div><pre class="cc-perm-code">${this.escapeHtml(input.file_path)}</pre>`;
+      } else if (toolName === 'Edit' && input?.file_path) {
+        inputDesc = `<div class="cc-perm-label">编辑文件：</div><pre class="cc-perm-code">${this.escapeHtml(input.file_path)}</pre>`;
+      } else if (toolName === 'Read' && input?.file_path) {
+        inputDesc = `<div class="cc-perm-label">读取文件：</div><pre class="cc-perm-code">${this.escapeHtml(input.file_path)}</pre>`;
+      } else {
+        const inputStr = JSON.stringify(input, null, 2);
+        const truncated = inputStr.length > 500 ? inputStr.substring(0, 500) + '...' : inputStr;
+        inputDesc = `<div class="cc-perm-label">参数：</div><pre class="cc-perm-code">${this.escapeHtml(truncated)}</pre>`;
+      }
+    } catch (_) {
+      inputDesc = `<pre class="cc-perm-code">${this.escapeHtml(String(input || ''))}</pre>`;
+    }
+
+    // 工具名中文映射
+    const toolNameMap = {
+      'Bash': '执行命令',
+      'Write': '写入文件',
+      'Edit': '编辑文件',
+      'Read': '读取文件',
+      'WebSearch': '网络搜索',
+      'Glob': '文件搜索',
+      'Grep': '内容搜索',
+    };
+    const toolLabel = toolNameMap[toolName] || toolName;
+    const iconMap = { 'Bash': '⚡', 'Write': '✏️', 'Edit': '📝', 'Read': '📖', 'WebSearch': '🔍', 'Glob': '📂', 'Grep': '🔎' };
+    const icon = iconMap[toolName] || '🔧';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'cc-permission-dialog-overlay';
+    overlay.dataset.requestId = requestId;
+    overlay.innerHTML = `
+      <div class="cc-permission-dialog" data-request-id="${requestId}">
+        <div class="cc-perm-header">
+          <span class="cc-perm-icon">${icon}</span>
+          <span class="cc-perm-title">工具权限请求 — ${this.escapeHtml(toolLabel)}</span>
+        </div>
+        <div class="cc-perm-body">
+          <div class="cc-perm-desc">M-Agent 请求执行以下操作，请确认是否允许：</div>
+          ${inputDesc}
+        </div>
+        <div class="cc-perm-actions">
+          <button class="cc-perm-btn cc-perm-allow">允许</button>
+          <button class="cc-perm-btn cc-perm-always">总是允许</button>
+          <button class="cc-perm-btn cc-perm-deny">拒绝</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const respond = (behavior, alwaysAllow = false) => {
+      window.electronAPI?.ccPermissionResponse?.(requestId, { behavior, alwaysAllow });
+      overlay.remove();
+    };
+
+    overlay.querySelector('.cc-perm-allow').addEventListener('click', () => respond('allow', false));
+    overlay.querySelector('.cc-perm-always').addEventListener('click', () => respond('allow', true));
+    overlay.querySelector('.cc-perm-deny').addEventListener('click', () => respond('deny', false));
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) respond('deny', false);
     });
   },
 
@@ -8738,6 +8918,261 @@ const App = {
     return `[上下文信息]\n${parts.join('\n')}\n`;
   },
 
+  /**
+   * 根据时间段过滤日期
+   */
+  _filterByTimeRange(items, timeRange, dateField = 'createdAt') {
+    if (!timeRange || timeRange === 'all') return items;
+    const now = new Date();
+    const ranges = {
+      today: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+      yesterday: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1),
+      tomorrow: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
+      this_week: new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()),
+      last_week: new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() - 7),
+      '7d': new Date(now.getTime() - 7 * 86400000),
+      '30d': new Date(now.getTime() - 30 * 86400000),
+      last_month: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+      '90d': new Date(now.getTime() - 90 * 86400000),
+    };
+    const threshold = ranges[timeRange];
+    if (!threshold) return items;
+    return items.filter(item => {
+      const d = new Date(item[dateField] || item.created_at || item.updatedAt || item.dueDate || 0);
+      return d >= threshold;
+    });
+  },
+
+  /**
+   * Phase 2+3: 根据 LLM 分类结果检索本地数据并组装 SystemRole
+   */
+  async _retrieveLocalContext(classification) {
+    const sources = [];
+    const parts = [];
+    const now = new Date();
+    const timeStr = now.toLocaleString('zh-CN', { hour12: false });
+    parts.push(`当前时间: ${timeStr}`);
+
+    const tasks = [];
+
+    // 1. 用户画像
+    if (classification.need_profile !== false) {
+      tasks.push((async () => {
+        try {
+          const profile = await window.electronAPI?.profile?.get?.();
+          if (profile) {
+            const userInfo = profile.user || {};
+            const profileParts = [];
+            if (userInfo.name) profileParts.push(`姓名: ${userInfo.name}`);
+            if (userInfo.profession) profileParts.push(`职业: ${userInfo.profession}`);
+            if (userInfo.organization) profileParts.push(`组织: ${userInfo.organization}`);
+            if (userInfo.industry) profileParts.push(`行业: ${userInfo.industry}`);
+            const projects = profile.active_projects?.filter(p => p.status === 'active') || [];
+            if (projects.length > 0) profileParts.push(`活跃项目: ${projects.map(p => p.name).join(', ')}`);
+            const persons = (profile.frequent_persons || []).slice(0, 5);
+            if (persons.length > 0) profileParts.push(`高频联系人: ${persons.map(p => p.name).join(', ')}`);
+            if (profileParts.length > 0) {
+              parts.push(`[用户画像]\n${profileParts.join('\n')}`);
+              sources.push('画像');
+            }
+          }
+        } catch (e) { /* ignore */ }
+      })());
+    }
+
+    // 2. 待办任务
+    if (classification.need_tasks) {
+      tasks.push((async () => {
+        try {
+          const allTasks = await window.electronAPI?.dbGetTasks?.() || [];
+          let filtered = allTasks;
+          const taskFilter = classification.task_filter || 'pending';
+          if (taskFilter === 'pending') {
+            filtered = allTasks.filter(t => t.status !== 'completed' && !t.completedAt);
+          } else if (taskFilter === 'completed') {
+            filtered = allTasks.filter(t => t.status === 'completed' || t.completedAt);
+          } else if (taskFilter === 'overdue') {
+            const now = new Date();
+            filtered = allTasks.filter(t => (t.status !== 'completed' && !t.completedAt) && t.dueDate && new Date(t.dueDate) < now);
+          }
+          // 时间范围过滤
+          if (classification.task_time_range && classification.task_time_range !== 'all') {
+            filtered = this._filterByTimeRange(filtered, classification.task_time_range, 'dueDate');
+          }
+          filtered = filtered.slice(0, 10);
+          if (filtered.length > 0) {
+            const taskLines = filtered.map(t => {
+              const isDone = t.status === 'completed' || t.completedAt;
+              const status = isDone ? '✅' : (t.dueDate && new Date(t.dueDate) < new Date() ? '🔴逾期' : '⬜');
+              const due = t.dueDate ? ` (截止: ${new Date(t.dueDate).toLocaleDateString('zh-CN')})` : '';
+              const priority = t.priority === 'high' ? '🔴' : (t.priority === 'low' ? '🟢' : '🟡');
+              return `${status} ${priority} ${t.title}${due}`;
+            });
+            parts.push(`[待办任务]\n${taskLines.join('\n')}`);
+            sources.push(`任务×${filtered.length}`);
+          }
+        } catch (e) { /* ignore */ }
+      })());
+    }
+
+    // 3. 记事本
+    if (classification.need_notebook) {
+      tasks.push((async () => {
+        try {
+          const query = classification.notebook_query || '';
+          const result = query
+            ? await window.electronAPI?.notebookSearch?.(query)
+            : await window.electronAPI?.notebookGetNotes?.();
+          let notes = result?.notes || [];
+          if (classification.notebook_time_range && classification.notebook_time_range !== 'all') {
+            notes = this._filterByTimeRange(notes, classification.notebook_time_range, 'createdAt');
+          }
+          notes = notes.slice(0, 5);
+          if (notes.length > 0) {
+            const noteLines = notes.map(n => {
+              const date = n.createdAt ? new Date(n.createdAt).toLocaleDateString('zh-CN') : '';
+              const content = (n.content || '').substring(0, 500);
+              return `📅 ${date} | ${n.title || '无标题'}\n${content}`;
+            });
+            parts.push(`[记事本]\n${noteLines.join('\n---\n')}`);
+            sources.push(`记事本×${notes.length}`);
+          }
+        } catch (e) { /* ignore */ }
+      })());
+    }
+
+    // 4. 记忆
+    if (classification.need_memory) {
+      tasks.push((async () => {
+        try {
+          const query = classification.memory_query || '';
+          // getMemories 不支持搜索，取最近记忆后本地过滤
+          const memResult = await window.electronAPI?.getMemories?.({ limit: 20 });
+          let memories = memResult?.memories || [];
+          if (query) {
+            const lowerQ = query.toLowerCase();
+            memories = memories.filter(m => m.content?.toLowerCase().includes(lowerQ));
+          }
+          if (classification.memory_time_range && classification.memory_time_range !== 'all') {
+            memories = this._filterByTimeRange(memories, classification.memory_time_range, 'createdAt');
+          }
+          memories = memories.slice(0, 5);
+          if (memories.length > 0) {
+            const memLines = memories.map(m => {
+              const cat = m.category ? `[${m.category}]` : '';
+              const content = (m.content || '').substring(0, 300);
+              return `${cat} ${content}`;
+            });
+            parts.push(`[用户记忆]\n${memLines.join('\n')}`);
+            sources.push(`记忆×${memories.length}`);
+          }
+        } catch (e) { /* ignore */ }
+      })());
+    }
+
+    // 5. 知识文章
+    if (classification.need_knowledge) {
+      tasks.push((async () => {
+        try {
+          const query = classification.knowledge_query || '';
+          const limit = classification.knowledge_limit || 3;
+          if (query) {
+            const result = await window.electronAPI?.knowledgeSearchLocal?.({ query, limit });
+            const items = result?.results || [];
+            if (items.length > 0) {
+              const kLines = items.map(k => {
+                const content = (k.content || k.summary || '').substring(0, 300);
+                return `${k.title || '无标题'} (${k.type || '知识'})\n${content}`;
+              });
+              parts.push(`[相关知识]\n${kLines.join('\n---\n')}`);
+              sources.push(`知识×${items.length}`);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      })());
+    }
+
+    // 6. 人脉
+    if (classification.need_relationship) {
+      tasks.push((async () => {
+        try {
+          const relData = await window.electronAPI?.relationshipGetAll?.() || {};
+          let persons = relData.persons || [];
+          const names = classification.relationship_person_names || [];
+          if (names.length > 0) {
+            persons = persons.filter(r => names.some(n => r.name?.includes(n)));
+          }
+          persons = persons.slice(0, 3);
+          if (persons.length > 0) {
+            const rLines = persons.map(r => {
+              const p = [r.name];
+              if (r.company) p.push(`公司: ${r.company}`);
+              if (r.relation) p.push(`关系: ${r.relation}`);
+              return p.join(' | ');
+            });
+            parts.push(`[人脉信息]\n${rLines.join('\n')}`);
+            sources.push(`人脉×${persons.length}`);
+          }
+        } catch (e) { /* ignore */ }
+      })());
+    }
+
+    await Promise.all(tasks);
+
+    const systemRole = parts.length > 1
+      ? `[本地上下文]\n${parts.join('\n\n')}\n\n请基于以上用户上下文回答问题。如果上下文中没有相关信息，请如实说明。`
+      : '';
+
+    return { systemRole, sources };
+  },
+
+  /**
+   * 兜底策略：LLM 分类失败时，带 profile + 最近待办
+   */
+  async _retrieveLocalContextFallback() {
+    const sources = [];
+    const parts = [];
+    const now = new Date();
+    const timeStr = now.toLocaleString('zh-CN', { hour12: false });
+    parts.push(`当前时间: ${timeStr}`);
+
+    try {
+      const profile = await window.electronAPI?.profile?.get?.();
+      if (profile) {
+        const userInfo = profile.user || {};
+        const profileParts = [];
+        if (userInfo.name) profileParts.push(`姓名: ${userInfo.name}`);
+        if (userInfo.profession) profileParts.push(`职业: ${userInfo.profession}`);
+        if (userInfo.organization) profileParts.push(`组织: ${userInfo.organization}`);
+        const projects = profile.active_projects?.filter(p => p.status === 'active') || [];
+        if (projects.length > 0) profileParts.push(`活跃项目: ${projects.map(p => p.name).join(', ')}`);
+        if (profileParts.length > 0) {
+          parts.push(`[用户画像]\n${profileParts.join('\n')}`);
+          sources.push('画像');
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const allTasks = await window.electronAPI?.dbGetTasks?.() || [];
+      const pending = allTasks.filter(t => t.status !== 'completed' && !t.completedAt).slice(0, 5);
+      if (pending.length > 0) {
+        const taskLines = pending.map(t => {
+          const due = t.dueDate ? ` (截止: ${new Date(t.dueDate).toLocaleDateString('zh-CN')})` : '';
+          return `⬜ ${t.title}${due}`;
+        });
+        parts.push(`[待办任务]\n${taskLines.join('\n')}`);
+        sources.push(`任务×${pending.length}`);
+      }
+    } catch (e) { /* ignore */ }
+
+    const systemRole = parts.length > 1
+      ? `[本地上下文]\n${parts.join('\n\n')}\n\n请基于以上用户上下文回答问题。如果上下文中没有相关信息，请如实说明。`
+      : '';
+
+    return { systemRole, sources };
+  },
+
   async buildAttachmentData(attachments) {
     const result = [];
     for (const att of attachments) {
@@ -8954,10 +9389,14 @@ const App = {
           console.log('[Chat] Restored active session', lastActiveId, 'with convId:', session.conversationId);
         }
       } else if (this._chatSessions.length > 0) {
-        // 没有激活记录，默认选第一个（最新的）
-        this._activeSessionId = this._chatSessions[0].id;
-        if (this._chatSessions[0].conversationId) {
-          window.electronAPI?.setADPConversationId?.(this._chatSessions[0].conversationId);
+        // 没有激活记录，默认选最近更新的会话（按 updatedAt 倒序取第一个）
+        const sortedSessions = [...this._chatSessions].sort((a, b) =>
+          new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)
+        );
+        const latestSession = sortedSessions[0];
+        this._activeSessionId = latestSession.id;
+        if (latestSession.conversationId) {
+          window.electronAPI?.setADPConversationId?.(latestSession.conversationId);
         }
       }
     } catch (e) {
@@ -10084,6 +10523,26 @@ const App = {
     const sendMessage = defaultContext ? (defaultContext + '\n' + resolvedMessage) : resolvedMessage;
     const attachmentData = await this.buildAttachmentData(attachments);
 
+    // v2.7 本地上下文注入（并行模式）
+    let parallelContextSystemRole = options.systemRole || '';
+    const parallelContextEnabled = this._settings?.localContextEnabled !== false;
+    if (!parallelContextSystemRole && parallelContextEnabled && message) {
+      try {
+        const classifyResult = await window.electronAPI.contextClassifyIntent(message);
+        const classification = classifyResult?.classification;
+        let contextData;
+        if (classification) {
+          contextData = await this._retrieveLocalContext(classification);
+        } else {
+          contextData = await this._retrieveLocalContextFallback();
+        }
+        parallelContextSystemRole = contextData.systemRole;
+        console.log('[Chat] Parallel context injected, sources:', contextData.sources.join(', '));
+      } catch (e) {
+        console.warn('[Chat] Parallel context injection failed:', e);
+      }
+    }
+
     // 确定要调用的 AI 模式
     const modes = this._getParallelModes();
     if (modes.length === 0) {
@@ -10132,7 +10591,7 @@ const App = {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     // 并行启动所有任务
-    await Promise.all(tasks.map(({ taskId, mode }) => this._startParallelTask(taskId, mode, sendMessage, attachmentData, options)));
+    await Promise.all(tasks.map(({ taskId, mode }) => this._startParallelTask(taskId, mode, sendMessage, attachmentData, { ...options, systemRole: parallelContextSystemRole })));
   },
 
   /**
@@ -11331,9 +11790,11 @@ ${JSON.stringify(reportData, null, 2)}`;
              </div>`;
         // 纯图片笔记隐藏"转为待办"和"提炼记忆"按钮
         const imageActions = isPureImage
-          ? `<button class="note-btn note-btn-download" data-action="download" title="下载图片">📥</button>
+          ? `<button class="note-btn note-btn-edit" data-action="edit" title="编辑笔记">✏️</button>
+             <button class="note-btn note-btn-download" data-action="download" title="下载图片">📥</button>
              <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>`
-          : `<button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
+          : `<button class="note-btn note-btn-edit" data-action="edit" title="编辑笔记">✏️</button>
+             <button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
              <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
              <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>
              <button class="note-btn note-btn-danger" data-action="delete" title="删除笔记">🗑️</button>`;
@@ -11496,13 +11957,27 @@ ${JSON.stringify(reportData, null, 2)}`;
 
   getAnalysisStatusTag(note) {
     if (!note.analysis) return '';
+    let tags = '';
     const status = note.analysis.status;
+    
+    // SMART 标签（优先展示）
+    const smartLevel = note.analysis.smartLevel;
+    if (smartLevel === 'smart_full') {
+      tags += '<span class="note-status-tag tag-smart-full" title="SMART五要素齐全">SMART</span>';
+    } else if (smartLevel === 'smart_partial') {
+      const missing = note.analysis.smartMissing || [];
+      tags += `<span class="note-status-tag tag-smart-partial" title="缺少: ${missing.join(', ')}">待完善</span>`;
+    } else if (smartLevel === 'smart_insufficient') {
+      const missing = note.analysis.smartMissing || [];
+      tags += `<span class="note-status-tag tag-smart-insufficient" title="缺少: ${missing.join(', ')}">信息不全</span>`;
+    }
+    
     if (!status) {
       // 兼容旧数据：根据已有字段推断状态
-      if (note.analysis.hasRecommendation) return '<span class="note-status-tag tag-recommended">已推荐知识</span>';
-      if (note.analysis.isTask) return '<span class="note-status-tag tag-task">已创建待办</span>';
-      if (note.analyzed) return '<span class="note-status-tag tag-analyzed">已分析</span>';
-      return '';
+      if (note.analysis.hasRecommendation) tags += '<span class="note-status-tag tag-recommended">已推荐知识</span>';
+      else if (note.analysis.isTask) tags += '<span class="note-status-tag tag-task">已创建待办</span>';
+      else if (note.analyzed) tags += '<span class="note-status-tag tag-analyzed">已分析</span>';
+      return tags;
     }
     const tagMap = {
       '闲聊': 'note-status-tag tag-chat',
@@ -11513,7 +11988,8 @@ ${JSON.stringify(reportData, null, 2)}`;
       '已提炼记忆': 'note-status-tag tag-memory'
     };
     const cls = tagMap[status] || 'note-status-tag tag-skip';
-    return `<span class="${cls}">${status}</span>`;
+    tags += `<span class="${cls}">${status}</span>`;
+    return tags;
   },
 
   getNoteCategoryLabel(category) {
@@ -11695,11 +12171,19 @@ ${JSON.stringify(reportData, null, 2)}`;
   async addNote() {
     this._noteEditorMode = 'add';
     this._noteEditorTargetId = null;
+    // 清空标题输入
+    const titleInput = document.getElementById('noteEditorTitleInput');
+    if (titleInput) titleInput.value = '';
     this.showNoteEditorModal('新建笔记', '');
   },
   
-  showNoteEditorModal(title, content) {
+  showNoteEditorModal(title, content, noteTitle) {
     document.getElementById('noteEditorTitle').textContent = title || '新建笔记';
+    // 设置标题输入框
+    const titleInput = document.getElementById('noteEditorTitleInput');
+    if (titleInput) {
+      titleInput.value = noteTitle || '';
+    }
     const container = document.getElementById('noteEditorContainer');
     
     // 初始化编辑器
@@ -11739,6 +12223,10 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
     
     const html = this._noteEditor.getHTML();
+    // 从标题输入框读取用户自定义标题，为空则用首行内容
+    const titleInput = document.getElementById('noteEditorTitleInput');
+    const customTitle = titleInput ? titleInput.value.trim() : '';
+    const noteTitle = customTitle || this.extractNoteTitle(text);
     
     try {
       if (window.electronAPI) {
@@ -11746,6 +12234,7 @@ ${JSON.stringify(reportData, null, 2)}`;
           const category = this.autoClassifyNote(text);
           const result = await window.electronAPI.notebookAddNote({
             content: text,
+            title: noteTitle,
             htmlContent: html,
             category: category
           });
@@ -11759,7 +12248,7 @@ ${JSON.stringify(reportData, null, 2)}`;
             }
           }
         } else if (this._noteEditorMode === 'edit' && this._noteEditorTargetId) {
-          await this.updateNoteContent(this._noteEditorTargetId, text, html);
+          await this.updateNoteContent(this._noteEditorTargetId, text, html, noteTitle);
         }
         this.hideNoteEditorModal();
         this.loadNotes();
@@ -12244,6 +12733,93 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
   },
   
+  // 拖拽合并两个记事项
+  async mergeNotes(sourceId, targetId) {
+    if (!window.electronAPI || sourceId === targetId) return;
+    try {
+      const [srcResult, tgtResult] = await Promise.all([
+        window.electronAPI.notebookGetNote(sourceId),
+        window.electronAPI.notebookGetNote(targetId),
+      ]);
+      const srcNote = srcResult?.note;
+      const tgtNote = tgtResult?.note;
+      if (!srcNote || !tgtNote) {
+        this.showToast('合并失败：未找到记事项', 'error');
+        return;
+      }
+
+      // 确认弹窗
+      const srcTitle = srcNote.title || '无标题';
+      const tgtTitle = tgtNote.title || '无标题';
+      const confirmed = await this._showMergeConfirmDialog(srcTitle, tgtTitle);
+      if (!confirmed) return;
+
+      // 合并内容：目标 + 分隔线 + 来源
+      const mergedContent = tgtNote.content + '\n\n---\n\n' + srcNote.content;
+      // 合并 htmlContent（如果都有）
+      let mergedHtml = tgtNote.htmlContent || '';
+      if (srcNote.htmlContent) {
+        mergedHtml += (mergedHtml ? '<hr style="border:none;border-top:1px solid var(--border-light);margin:16px 0;">' : '') + srcNote.htmlContent;
+      }
+      // 合并 tags（去重）
+      const mergedTags = [...new Set([...(tgtNote.tags || []), ...(srcNote.tags || [])])];
+      // 保留目标的标题、分类、图片等，只合并内容和标签
+      const updates = {
+        content: mergedContent,
+        htmlContent: mergedHtml || null,
+        tags: mergedTags,
+      };
+
+      // 更新目标记事项
+      const updateResult = await window.electronAPI.notebookUpdateNote(targetId, updates);
+      if (!updateResult?.success) {
+        this.showToast('合并失败', 'error');
+        return;
+      }
+      // 删除来源记事项
+      await window.electronAPI.notebookDeleteNote(sourceId, 'merged into ' + targetId);
+      this.showToast(`已合并「${srcTitle}」到「${tgtTitle}」`, 'success');
+      // 刷新列表
+      const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
+      this.loadNotes(activeCat);
+    } catch (err) {
+      console.error('合并记事项失败:', err);
+      this.showToast('合并失败', 'error');
+    }
+  },
+
+  // 合并确认弹窗
+  _showMergeConfirmDialog(srcTitle, tgtTitle) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+      const dialog = document.createElement('div');
+      dialog.style.cssText = 'background:var(--bg-primary);border-radius:16px;padding:28px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+      dialog.innerHTML = `
+        <h3 style="margin:0 0 16px;font-size:17px;font-weight:600;color:var(--text-primary);">合并记事项</h3>
+        <p style="margin:0 0 8px;font-size:14px;color:var(--text-secondary);line-height:1.6;">
+          将 <strong style="color:var(--text-primary);">${this.escapeHtml(srcTitle)}</strong> 的内容合并到 <strong style="color:var(--text-primary);">${this.escapeHtml(tgtTitle)}</strong> 中？
+        </p>
+        <p style="margin:0 0 20px;font-size:12px;color:var(--text-tertiary);">来源记事项合并后将被删除，内容以分隔线连接。</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button id="mergeCancelBtn" style="padding:8px 20px;border-radius:10px;border:1px solid var(--border-light);background:var(--bg-primary);color:var(--text-secondary);cursor:pointer;font-size:14px;font-weight:500;transition:all 0.15s;">取消</button>
+          <button id="mergeConfirmBtn" style="padding:8px 20px;border-radius:10px;border:none;background:var(--primary-color);color:#fff;cursor:pointer;font-size:14px;font-weight:500;transition:all 0.15s;">合并</button>
+        </div>
+      `;
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      const close = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+      dialog.querySelector('#mergeConfirmBtn').onclick = () => close(true);
+      dialog.querySelector('#mergeCancelBtn').onclick = () => close(false);
+      overlay.onclick = (e) => { if (e.target === overlay) close(false); };
+    });
+  },
+
   async copyNoteFromPreview(noteId) {
     if (window.electronAPI) {
       const result = await window.electronAPI.notebookGetNote(noteId);
@@ -12264,12 +12840,26 @@ ${JSON.stringify(reportData, null, 2)}`;
     const previewContainer = previewContent.closest('.note-preview');
     if (!previewContainer) return;
 
+    // 获取当前笔记标题（从 note-header 中读取）
+    const noteItem = previewContent.closest('.note-item');
+    const titleEl = noteItem?.querySelector('.note-title');
+    const currentTitle = titleEl ? titleEl.textContent : '';
+
     // 保存原始内容用于取消
     const originalHTML = previewContent.innerHTML;
     const originalText = previewContent.textContent;
 
     // 隐藏原始内容
     previewContent.style.display = 'none';
+
+    // 创建标题输入框
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'note-inline-title-input';
+    titleInput.value = currentTitle;
+    titleInput.placeholder = '标题（留空则自动取首行内容）';
+    titleInput.maxLength = 100;
+    previewContainer.insertBefore(titleInput, previewContent);
 
     // 创建富文本编辑器容器
     const editorWrapper = document.createElement('div');
@@ -12307,12 +12897,16 @@ ${JSON.stringify(reportData, null, 2)}`;
       if (save) {
         const html = editor.getHTML();
         const text = editor.getText();
-        // 保存富文本内容
-        this.updateNoteContent(noteId, text, html);
+        const newTitle = titleInput.value.trim() || this.extractNoteTitle(text);
+        // 保存富文本内容和标题
+        this.updateNoteContent(noteId, text, html, newTitle);
+        // 同步更新列表中的标题显示
+        if (titleEl) titleEl.textContent = newTitle;
       }
       // 恢复原始显示
       editor.destroy();
       editorWrapper.remove();
+      titleInput.remove();
       actionBar.remove();
       previewContent.style.display = '';
       if (save) {
@@ -12337,12 +12931,12 @@ ${JSON.stringify(reportData, null, 2)}`;
     editorWrapper.addEventListener('keydown', handleKeydown);
   },
   
-  async updateNoteContent(noteId, newContent, htmlContent) {
+  async updateNoteContent(noteId, newContent, htmlContent, title) {
     if (window.electronAPI) {
       try {
         const updates = { 
           content: newContent, 
-          title: this.extractNoteTitle(newContent)
+          title: title || this.extractNoteTitle(newContent)
         };
         // 如果有富文本内容，也保存
         if (htmlContent !== undefined) {
@@ -12358,21 +12952,14 @@ ${JSON.stringify(reportData, null, 2)}`;
   },
   
   async editNote(id) {
-    // 先尝试内联编辑（双击展开后的笔记）
-    const previewContent = document.querySelector(`.note-preview-content[data-note-id="${id}"]`);
-    if (previewContent && previewContent.closest('.note-preview') && !previewContent.closest('.note-preview').classList.contains('hidden')) {
-      this.enterEditMode(id);
-    } else {
-      // 使用弹窗编辑
-      if (window.electronAPI) {
-        const result = await window.electronAPI.notebookGetNote(id);
-        if (result.note) {
-          this._noteEditorMode = 'edit';
-          this._noteEditorTargetId = id;
-          this.showNoteEditorModal('编辑笔记', result.note.htmlContent || result.note.content);
-        }
-      }
+    // 内联编辑（无弹窗）：先确保预览已展开，再进入编辑模式
+    const preview = document.getElementById(`note-preview-${id}`);
+    if (preview && preview.classList.contains('hidden')) {
+      preview.classList.remove('hidden');
     }
+    // 等待 DOM 展开后再初始化编辑器
+    await new Promise(r => setTimeout(r, 50));
+    this.enterEditMode(id);
   },
   
   // 将笔记转为待办任务
@@ -12542,11 +13129,34 @@ ${JSON.stringify(reportData, null, 2)}`;
     const query = document.getElementById('notebookSearchInput').value;
     if (!window.electronAPI) return;
     
-    const result = await window.electronAPI.notebookSearch(query);
     const noteList = document.getElementById('notebookList');
     
-    if (result.notes && result.notes.length > 0) {
-      noteList.innerHTML = result.notes.map(note => {
+    // v3.1: 优先使用向量语义搜索，降级为关键词搜索
+    let notes = [];
+    if (query.trim() && window.electronAPI?.vectorSearchNotes) {
+      try {
+        const vecResult = await window.electronAPI.vectorSearchNotes({ query, limit: 50 });
+        if (vecResult.success && vecResult.results.length > 0) {
+          // 从向量结果获取完整笔记数据
+          const allNotes = Store.getNotes();
+          const noteMap = new Map(allNotes.map(n => [n.id, n]));
+          notes = vecResult.results
+            .map(r => noteMap.get(r.source_id))
+            .filter(Boolean);
+        }
+      } catch (e) {
+        console.warn('[Notebook] Vector search failed, falling back to keyword:', e.message);
+      }
+    }
+    
+    // 降级：关键词搜索
+    if (notes.length === 0) {
+      const result = await window.electronAPI.notebookSearch(query);
+      notes = result.notes || [];
+    }
+    
+    if (notes.length > 0) {
+      noteList.innerHTML = notes.map(note => {
         const hasHtmlContent = note.htmlContent && note.htmlContent.trim();
         const contentPreview = hasHtmlContent
           ? `<div class="note-content note-rich-preview">${note.htmlContent}</div>`
@@ -12573,6 +13183,7 @@ ${JSON.stringify(reportData, null, 2)}`;
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
               ${this.getAnalysisStatusTag(note)}
               <div class="note-actions">
+                <button class="note-btn note-btn-edit" data-action="edit" title="编辑笔记">✏️</button>
                 <button class="note-btn note-btn-download" data-action="download" title="下载为 Markdown">📥</button>
                 <button class="note-btn note-btn-primary" data-action="convert" title="转为待办任务">✅</button>
                 <button class="note-btn note-btn-secondary" data-action="extract" title="提炼记忆">🧠</button>

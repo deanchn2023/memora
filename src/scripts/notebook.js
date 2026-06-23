@@ -154,11 +154,37 @@ class Notebook {
   }
 
   extractTitle(content) {
+    if (!content || !content.trim()) return '无标题';
     const lines = content.split('\n').filter(line => line.trim());
-    if (lines.length > 0) {
-      return lines[0].substring(0, 50) + (lines[0].length > 50 ? '...' : '');
+    if (lines.length === 0) return '无标题';
+
+    // 尝试从内容中提取有意义的标题
+    const firstLine = lines[0].trim();
+
+    // 如果第一行是 markdown 标题语法，提取标题文字
+    const mdHeaderMatch = firstLine.match(/^#{1,6}\s+(.+)/);
+    if (mdHeaderMatch) {
+      return mdHeaderMatch[1].substring(0, 50) + (mdHeaderMatch[1].length > 50 ? '...' : '');
     }
-    return '无标题';
+
+    // 如果内容很短（≤30字），直接用原文
+    if (firstLine.length <= 30) {
+      return firstLine;
+    }
+
+    // 尝试提取句号/问号前的核心内容作为标题
+    const sentenceEnd = firstLine.search(/[。！？？\.\!\?]/);
+    if (sentenceEnd > 0 && sentenceEnd <= 50) {
+      return firstLine.substring(0, sentenceEnd + 1);
+    }
+
+    // 提取前50字但在逗号/分号处断句，避免截断词语
+    let truncated = firstLine.substring(0, 50);
+    const lastPunct = Math.max(truncated.lastIndexOf('，'), truncated.lastIndexOf('；'), truncated.lastIndexOf('、'), truncated.lastIndexOf(' '));
+    if (lastPunct > 15) {
+      truncated = truncated.substring(0, lastPunct);
+    }
+    return truncated + (firstLine.length > truncated.length ? '...' : '');
   }
 
   searchNotes(query) {
@@ -170,6 +196,14 @@ class Notebook {
       note.content.toLowerCase().includes(lowerQuery) ||
       note.tags.some(tag => tag.toLowerCase().includes(lowerQuery))
     );
+  }
+
+  /**
+   * v3.1: 语义搜索（向量检索 + 关键词降级）
+   * 由前端 app.js 调用 electronAPI.vectorSearchNotes，此处保留 keyword 版作为降级
+   */
+  getAllNotes() {
+    return this.notes;
   }
 
   getNotesByCategory(category) {

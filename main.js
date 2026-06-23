@@ -5047,6 +5047,26 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   const promptLogStr = typeof prompt === 'string' ? prompt.substring(0, 50) : `[multimodal: ${Array.isArray(prompt) ? prompt.length : 0} blocks]`;
   console.log(`[CC] Invoke | prompt: "${promptLogStr}..." | sessionId(resume): ${sessionId || 'null(新会话)'} | workdir: ${ccWorkdir} | provider: ${activeProvider?.name || activeProviderId} | route: ${useOpenRouter ? 'proxy' : (providerEnv ? 'direct' : 'default')}`);
 
+  // v3.1: 统一上下文层 — CC 模式精准注入（替代全量 CLAUDE.md）
+  let _ccVectorSources = [];
+  if (unifiedContextLayer && message) {
+    try {
+      const ctxResult = await unifiedContextLayer.retrieve(message, {
+        mode: 'cc',
+        topK: 5,
+        tokenBudget: 1000,
+        sources: ['memories', 'notes'],
+      });
+      if (ctxResult.context && typeof prompt === 'string') {
+        prompt = `${ctxResult.context}\n\n---\n\n${prompt}`;
+        _ccVectorSources = ctxResult.sources || [];
+        event.sender.send('context:sources', { sources: _ccVectorSources, meta: ctxResult.retrieval_meta });
+      }
+    } catch (e) {
+      console.warn('[Vector] CC context injection failed:', e.message);
+    }
+  }
+
   // 每次对话前刷新 CLAUDE.md（将 memora 最新记忆同步到 CC 工作目录）
   syncCLAUDEMdToCC(ccWorkdir);
 
@@ -8347,6 +8367,24 @@ ipcMain.handle('send-adp-message', async (event, data) => {
       console.log(`[ADP Chat] 🖼 Markdown Image: ${c.Text.substring(0, 80)}...`);
     } else if (c.Type === 'text' && c.Text?.match(/\[.*\]\(https?:\/\/.*\)/)) {
       console.log(`[ADP Chat] 📎 Markdown Link: ${c.Text.substring(0, 80)}...`);
+    }
+  }
+
+  // v3.1: 统一上下文层 — 自动向量检索并注入（非专家模式）
+  let _vectorSources = [];
+  if (unifiedContextLayer && message && !expertAppKey) {
+    try {
+      const ctxResult = await unifiedContextLayer.retrieve(message, { mode: 'adp' });
+      if (ctxResult.context) {
+        localSystemRole = localSystemRole
+          ? `${localSystemRole}\n\n${ctxResult.context}`
+          : ctxResult.context;
+        _vectorSources = ctxResult.sources || [];
+        // 通知前端展示引用来源
+        event.sender.send('context:sources', { sources: _vectorSources, meta: ctxResult.retrieval_meta });
+      }
+    } catch (e) {
+      console.warn('[Vector] ADP context injection failed:', e.message);
     }
   }
 
@@ -13032,6 +13070,23 @@ ipcMain.handle('agent:invoke', async (event, { query, agentType, attachments, mo
     const profile = loadProfile();
     let intent = agentType || classifyIntent(query);
     const context = await retrieveContext(query, intent, profile);
+
+    // v3.1: 统一上下文层 — 向量检索增强（叠加在现有 retrieveContext 之上）
+    let _agentVectorSources = [];
+    if (unifiedContextLayer && query) {
+      try {
+        const ctxResult = await unifiedContextLayer.retrieve(query, { mode: 'llm', intent: { need_notebook: true, need_memory: true, need_tasks: true } });
+        if (ctxResult.context) {
+          // 向量检索结果追加到现有 context
+          context.vector_context = ctxResult.context;
+          _agentVectorSources = ctxResult.sources || [];
+          event.sender.send('context:sources', { sources: _agentVectorSources, meta: ctxResult.retrieval_meta });
+        }
+      } catch (e) {
+        console.warn('[Vector] Agent context injection failed:', e.message);
+      }
+    }
+
     const positiveExamples = getFeedbackExamples(intent, 'accept', 3);
     const negativeExamples = getFeedbackExamples(intent, 'reject', 2);
 
@@ -13371,6 +13426,11 @@ function buildTemplateVars(intent, profile, ctx, positiveExamples, negativeExamp
       reject_reason: n.reason || ''
     }))
   };
+
+  // v3.1: 向量检索增强上下文
+  if (ctx.vector_context) {
+    vars.vector_context = ctx.vector_context;
+  }
 
   // 根据意图注入特定变量
   switch (intent) {

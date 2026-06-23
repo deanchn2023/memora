@@ -79,6 +79,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCCStream: (callback) => {
     ipcRenderer.on('cc:stream', (event, data) => callback(data));
   },
+  onContextSources: (callback) => {
+    ipcRenderer.on('context:sources', (event, data) => callback(data));
+  },
   removeCCListeners: () => {
     ipcRenderer.removeAllListeners('cc:stream');
   },
