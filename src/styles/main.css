@@ -2958,6 +2958,15 @@ body {
   border-radius: var(--radius-lg);
   background: var(--bg-primary);
   box-shadow: var(--shadow-xs);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'kern' 1, 'liga' 1;
+  text-rendering: optimizeLegibility;
   line-height: 1.7;
   border: 1px solid var(--border-light);
   overflow-wrap: break-word;
@@ -3167,7 +3176,13 @@ body {
 .adp-response-text {
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.7;
+  line-height: 1.65;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* ADP 流式回复（光标闪烁） */
@@ -8685,4 +8700,148 @@ body {
 .adp-widget-completed .adp-widget-option {
   cursor: default;
   pointer-events: none;
+}
+
+/* v3.1.2: 剪贴板配置面板 */
+.clipboard-config-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  border: 0.5px solid var(--border-color);
+}
+.clipboard-config-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.clipboard-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  flex-wrap: wrap;
+  color: var(--text-primary);
+}
+.clipboard-toggle {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--primary-color);
+}
+.clipboard-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+.clipboard-freq-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.clipboard-freq-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--bg-card);
+  border-radius: 8px;
+  border: 0.5px solid var(--border-color);
+}
+.clipboard-freq-item label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.clipboard-freq-mode {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.clipboard-freq-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.clipboard-freq-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.clipboard-freq-input {
+  width: 100px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 0.5px solid var(--border-color);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+}
+.clipboard-freq-input:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px var(--input-focus-glow, rgba(0,0,0,0.04));
+}
+.clipboard-freq-unit {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+@media (max-width: 768px) {
+  .clipboard-freq-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* v3.1.2: AI 对话文件路径链接 */
+.chat-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin: 2px 0;
+  background: var(--primary-light, rgba(0,122,255,0.08));
+  border: 0.5px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+  color: var(--primary-color);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.chat-file-link:hover {
+  background: var(--primary-glow, rgba(0,122,255,0.15));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-xs);
+}
+.chat-file-link:active {
+  transform: translateY(0);
+}
+.chat-file-link .chat-file-icon {
+  font-size: 13px;
+}
+.chat-file-link .chat-file-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 4px;
+  border-left: 0.5px solid var(--border-color);
+}
+.chat-file-link .chat-file-action-btn {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.chat-file-link .chat-file-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }

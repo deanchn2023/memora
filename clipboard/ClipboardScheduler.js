@@ -45,13 +45,9 @@ class ClipboardScheduler {
       }
     });
 
-    // 频率控制器
-    this.freqController = new FreqController({
-      normalInterval: 1000,
-      activeInterval: 400,
-      idleInterval: 15000,
-      idleThreshold: 60000
-    });
+    // 频率控制器（初始值从设置读取，后续可通过 updateFreqConfig 更新）
+    this.freqController = new FreqController(this._readFreqConfig());
+    this._disabledInterval = this._readDisabledInterval();
 
     // 状态检测器
     this.stateDetector = new StateDetector(this.powerMonitor);
@@ -74,6 +70,11 @@ class ClipboardScheduler {
     // 待重试的分析队列
     this.pendingAnalysis = [];
     this.maxPending = 5;
+
+    // 🔧 安全重置：如果 isAnalyzing 卡住超过 60s，自动恢复
+    // 防止 API 超时或异常导致 isAnalyzing 永远为 true
+    this._analysisStartTime = null;
+    this._safetyResetTimer = null;
 
     // 清理计时器
     this.cleanupTimer = null;
@@ -130,7 +131,8 @@ class ClipboardScheduler {
     // 🔧 每60秒输出心跳日志，确认调度器在运行
     this._heartbeatTimer = setInterval(() => {
       if (this.isRunning) {
-        this._log(`[Scheduler] 💓 心跳 | 运行中 | isAnalyzing=${this.isAnalyzing} | 缓冲区=${this.buffer.fragmentCount}条 | 已处理=${this.processedHashes.size} | 排队=${this.pendingAnalysis.length}`);
+        const analyzingDur = this.isAnalyzing && this._analysisStartTime ? ` ${Math.round((Date.now() - this._analysisStartTime) / 1000)}s` : '';
+        this._log(`[Scheduler] 💓 心跳 | 运行中 | isAnalyzing=${this.isAnalyzing}${analyzingDur} | 缓冲区=${this.buffer.fragmentCount}条 | 已处理=${this.processedHashes.size} | 排队=${this.pendingAnalysis.length}`);
       }
     }, 60000);
   }
@@ -152,6 +154,10 @@ class ClipboardScheduler {
       clearInterval(this._heartbeatTimer);
       this._heartbeatTimer = null;
     }
+    if (this._safetyResetTimer) {
+      clearTimeout(this._safetyResetTimer);
+      this._safetyResetTimer = null;
+    }
     this.buffer.destroy();
     this.stateDetector.destroy();
     this.pendingAnalysis = [];
@@ -166,11 +172,11 @@ class ClipboardScheduler {
 
     const interval = this._isEnabled('clipboard_freq_enabled')
       ? this.freqController.computeInterval()
-      : 10000;
+      : this._disabledInterval;
 
     // 只在间隔变化时输出日志，避免刷屏
     if (interval !== this._lastPollInterval) {
-      const mode = interval <= 500 ? '🟢活跃' : interval <= 1500 ? '🟡正常' : '⚪空闲';
+      const mode = interval <= 300 ? '🟢活跃' : interval <= 1000 ? '🟡正常' : interval >= 10000 ? (interval >= 15000 ? '⚪空闲' : '🔴频率控制已关闭') : '⚪空闲';
       this._log(`[Scheduler] ⏱️ 轮询间隔变化: ${this._lastPollInterval}ms → ${interval}ms ${mode}`);
       this._lastPollInterval = interval;
     }
@@ -323,6 +329,24 @@ class ClipboardScheduler {
 
     // 🔧 关键修复：设置 isAnalyzing 标志
     this.isAnalyzing = true;
+    this._analysisStartTime = Date.now();
+
+    // 🔧 安全重置：60s 后如果 isAnalyzing 仍为 true，强制恢复
+    if (this._safetyResetTimer) clearTimeout(this._safetyResetTimer);
+    this._safetyResetTimer = setTimeout(() => {
+      if (this.isAnalyzing) {
+        this._log(`[Scheduler] ⚠️ isAnalyzing 已持续 ${Math.round((Date.now() - this._analysisStartTime) / 1000)}s，可能卡死，强制恢复`);
+        this.isAnalyzing = false;
+        this._pendingFragmentHashes = null;
+        this._analysisStartTime = null;
+        // 处理待重试队列
+        if (this.pendingAnalysis.length > 0) {
+          const next = this.pendingAnalysis.shift();
+          this._log(`[Scheduler] 🔄 安全重置后处理排队内容 (剩余排队: ${this.pendingAnalysis.length})`);
+          setImmediate(() => this._doAnalyze(next));
+        }
+      }
+    }, 60000);
 
     if (this.analyzeFn) {
       this._log(`[Scheduler] 🚀 开始AI分析 (${text.length}字)...`);
@@ -337,6 +361,11 @@ class ClipboardScheduler {
         this._log(`[Scheduler] ❌ analyzeFn 异常: ${err.message}\n${err.stack}`);
         // 即使出错也要重置 isAnalyzing
         this.isAnalyzing = false;
+        this._analysisStartTime = null;
+        if (this._safetyResetTimer) {
+          clearTimeout(this._safetyResetTimer);
+          this._safetyResetTimer = null;
+        }
         this._pendingFragmentHashes = null;
         // 处理待重试队列
         if (this.pendingAnalysis.length > 0) {
@@ -355,8 +384,14 @@ class ClipboardScheduler {
    * 🔧 修复：分析完成后才标记片段哈希为已处理
    */
   onAnalysisComplete() {
+    const elapsed = this._analysisStartTime ? Math.round((Date.now() - this._analysisStartTime) / 1000) : 0;
     this.isAnalyzing = false;
-    this._log(`[Scheduler] ✅ AI分析完成`);
+    this._analysisStartTime = null;
+    if (this._safetyResetTimer) {
+      clearTimeout(this._safetyResetTimer);
+      this._safetyResetTimer = null;
+    }
+    this._log(`[Scheduler] ✅ AI分析完成 (耗时: ${elapsed}s)`);
 
     // 🔧 关键修复：AI分析完成后，才标记片段哈希为已处理
     if (this._pendingFragmentHashes && this._pendingFragmentHashes.length > 0) {
@@ -477,6 +512,53 @@ class ClipboardScheduler {
       return val !== false && val !== 'false';
     }
     return true;
+  }
+
+  /**
+   * 从设置读取频率配置
+   */
+  _readFreqConfig() {
+    const get = (key, defaultVal) => {
+      if (this.getSettingFn) {
+        const v = parseInt(this.getSettingFn(key));
+        return isNaN(v) ? defaultVal : v;
+      }
+      return defaultVal;
+    };
+    return {
+      activeInterval: get('clipboard_freq_active', 200),
+      normalInterval: get('clipboard_freq_normal', 800),
+      idleInterval: get('clipboard_freq_idle', 15000),
+      idleThreshold: get('clipboard_idle_threshold', 60000),
+      activeThreshold: get('clipboard_active_threshold', 10000),
+    };
+  }
+
+  /**
+   * 从设置读取频率控制关闭时的固定间隔
+   */
+  _readDisabledInterval() {
+    if (this.getSettingFn) {
+      const v = parseInt(this.getSettingFn('clipboard_freq_disabled'));
+      if (!isNaN(v)) return v;
+    }
+    return 10000;
+  }
+
+  /**
+   * 更新频率配置（设置变更后调用）
+   */
+  updateFreqConfig() {
+    const config = this._readFreqConfig();
+    this.freqController.normalInterval = config.normalInterval;
+    this.freqController.activeInterval = config.activeInterval;
+    this.freqController.idleInterval = config.idleInterval;
+    this.freqController.idleThreshold = config.idleThreshold;
+    this.freqController.activeThreshold = config.activeThreshold;
+    this._disabledInterval = this._readDisabledInterval();
+    // 重置上次间隔记录，强制下次轮询输出新间隔日志
+    this._lastPollInterval = -1;
+    this._log(`[Scheduler] ⚙️ 频率配置已更新: 活跃=${config.activeInterval}ms 正常=${config.normalInterval}ms 空闲=${config.idleInterval}ms 关闭=${this._disabledInterval}ms`);
   }
 }
 

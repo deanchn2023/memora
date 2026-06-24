@@ -7,11 +7,11 @@
 
 class FreqController {
   constructor(options = {}) {
-    this.normalInterval = options.normalInterval || 1000;    // 正常轮询间隔
-    this.activeInterval = options.activeInterval || 400;     // 活跃复制时轮询间隔（加速，3s内多次复制不漏检）
+    this.normalInterval = options.normalInterval || 800;     // 正常轮询间隔
+    this.activeInterval = options.activeInterval || 200;     // 活跃复制时轮询间隔（10s内有复制 → 加速检测）
     this.idleInterval = options.idleInterval || 15000;       // 空闲轮询间隔
-    this.idleThreshold = options.idleThreshold || 60000;     // 空闲判定阈值
-    this.activeThreshold = options.activeThreshold || 10000; // 活跃判定阈值（10s内有复制）
+    this.idleThreshold = options.idleThreshold || 60000;     // 空闲判定阈值（60s无复制 → 空闲）
+    this.activeThreshold = options.activeThreshold || 10000; // 活跃判定阈值（10s内有复制 → 活跃）
 
     this.lastCopyTimestamps = []; // 最近 N 次复制时间
     this.maxHistory = 50;

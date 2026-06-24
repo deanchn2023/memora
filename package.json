@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.183",
+    "@xenova/transformers": "^2.17.2",
     "@zvec/zvec": "^0.5.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "dotenv": "^17.4.2",
@@ -37,7 +38,7 @@
         {
           "target": "dmg",
           "arch": [
-            "universal"
+            "arm64"
           ]
         }
       ],
@@ -82,7 +83,9 @@
       "resources/**",
       "node_modules/@anthropic-ai/claude-agent-sdk/**",
       "node_modules/@anthropic-ai/claude-agent-sdk-*/**",
-      "node_modules/@zvec/**"
+      "node_modules/@zvec/**",
+      "node_modules/@xenova/transformers/**",
+      "node_modules/onnxruntime-web/**"
     ],
     "files": [
       "main.js",

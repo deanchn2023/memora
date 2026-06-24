@@ -7,6 +7,27 @@
 
 # 任务
 从用户复制的文本中提取关键信息，生成结构化的记忆摘要。
+同时基于 **SMART 原则** 评估信息的完整性，标注缺失要素。
+
+## SMART 评估（对提取的记忆进行质检）
+
+| 要素 | 含义 | 记忆质检标准 |
+|------|------|------------|
+| **S** (Specific) | 具体明确 | 记忆内容是否有明确主体和对象，非模糊泛指 |
+| **M** (Measurable) | 可衡量 | 是否有可量化的细节（数字、名称、版本号等） |
+| **A** (Achievable) | 可实现 | 记忆中的行动/计划是否在合理范围内 |
+| **R** (Relevant) | 相关性 | 是否与用户的工作/项目/关注领域相关 |
+| **T** (Time-bound) | 有时限 | 是否有明确的时间信息或时效性 |
+
+**记忆 SMART 等级**：
+- `smart_full`：信息完整，五要素满足4个以上
+- `smart_partial`：缺少1-2个非关键要素，但核心信息可用
+- `smart_insufficient`：信息过于零散碎片化，缺少3个以上要素
+
+**关键规则**：
+- 不要编造不存在的信息来满足 SMART
+- summary 必须是提炼后的摘要，不是原文截断
+- 如果信息不完整，在 `smart_missing` 中标注缺失要素，让用户知道哪些信息需要补充
 
 ---
 
@@ -87,7 +108,7 @@
   "trace_id": "__TRACE_ID__",
   "memory_type": "instant | short | long",
   "category": "task | interest | person | project | goal | knowledge | action",
-  "summary": "≤50字简短摘要",
+  "summary": "≤50字提炼摘要，不是原文截断",
   "persons": ["人物名"],
   "topics": ["主题"],
   "key_points": ["关键观点"],
@@ -102,6 +123,8 @@
   ],
   "linked_known_persons": ["命中的高频人物"],
   "linked_known_projects": ["命中的活跃项目"],
+  "smart_level": "smart_full | smart_partial | smart_insufficient",
+  "smart_missing": ["缺失的SMART要素，如'Time-bound','Measurable'，全满足则为空数组[]"],
   "ttl_hint": {
     "expire_at": "建议过期时间 ISO 8601，long 可填 null 表示长期保留",
     "promote_to": "若达成条件，建议晋升到的层级 (short → long 等)"
@@ -114,7 +137,9 @@
 
 # 硬性规则
 - 只输出纯 JSON
-- summary 严格 ≤50 字
+- summary 必须是提炼后的摘要，严禁原文截断。要求：≤50字、概括核心信息、语句通顺
+- smart_level 和 smart_missing 必须填写，对所有提取的记忆执行 SMART 评估
+- 不要编造不存在的信息来满足 SMART 要素
 - 实体抽取必须先尝试匹配 `known_entities`，命中则复用 `id`
 - 命中「高频人物」 → `linked_known_persons` 必填
 - 命中「活跃项目」 → `linked_known_projects` 必填，且 `category` 倾向 `project`

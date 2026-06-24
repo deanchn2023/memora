@@ -1540,6 +1540,7 @@
           <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">语音</button>
           <button class="settings-tab" data-tab="backup" data-i18n="settings.tab.backup">备份</button>
           <button class="settings-tab" data-tab="vector">向量库</button>
+          <button class="settings-tab" data-tab="clipboard">剪贴板</button>
           <button class="settings-tab" data-tab="about" data-i18n="settings.tab.about">关于</button>
         </div>
         
@@ -2895,6 +2896,126 @@
             </div>
 
             <div id="vectorResults" style="max-height: 500px; overflow-y: auto; border: 1px solid var(--border-light, rgba(0,0,0,0.08)); border-radius: 8px; padding: 12px; font-size: 12px;"></div>
+          </div>
+        </div>
+
+        <!-- 剪贴板配置 -->
+        <div class="settings-panel hidden" id="clipboardPanel">
+          <div style="padding: 20px;">
+            <h3 style="margin-bottom: 16px;">📋 剪贴板检测配置</h3>
+
+            <!-- 功能开关 -->
+            <div class="clipboard-config-section">
+              <h4 style="margin-bottom: 12px; font-size: 14px;">功能开关</h4>
+              <div class="clipboard-config-row">
+                <label class="clipboard-toggle-label">
+                  <input type="checkbox" id="cbFreqEnabled" class="clipboard-toggle" />
+                  <span>动态频率控制</span>
+                  <span class="clipboard-hint">关闭后使用固定间隔轮询</span>
+                </label>
+              </div>
+              <div class="clipboard-config-row">
+                <label class="clipboard-toggle-label">
+                  <input type="checkbox" id="cbBufferEnabled" class="clipboard-toggle" />
+                  <span>暂存聚合</span>
+                  <span class="clipboard-hint">多次快速复制合并为一次分析</span>
+                </label>
+              </div>
+              <div class="clipboard-config-row">
+                <label class="clipboard-toggle-label">
+                  <input type="checkbox" id="cbAssociationEnabled" class="clipboard-toggle" />
+                  <span>关联检测</span>
+                  <span class="clipboard-hint">检测新内容与已有笔记的关联</span>
+                </label>
+              </div>
+              <div class="clipboard-config-row">
+                <label class="clipboard-toggle-label">
+                  <input type="checkbox" id="cbSplitPromptEnabled" class="clipboard-toggle" />
+                  <span>拆分式 Prompt (L1→L2)</span>
+                  <span class="clipboard-hint">轻量分类 → 并行提取，减少 Token 消耗</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 频率配置 -->
+            <div class="clipboard-config-section">
+              <h4 style="margin-bottom: 12px; font-size: 14px;">轮询频率（毫秒）</h4>
+              <div class="clipboard-freq-grid">
+                <div class="clipboard-freq-item">
+                  <label for="cbFreqActive">
+                    <span class="clipboard-freq-mode">🟢 活跃模式</span>
+                    <span class="clipboard-freq-desc">10秒内有复制操作时</span>
+                  </label>
+                  <div class="clipboard-freq-input-wrap">
+                    <input type="number" id="cbFreqActive" class="settings-input clipboard-freq-input" min="100" max="5000" step="50" value="200" />
+                    <span class="clipboard-freq-unit">ms</span>
+                  </div>
+                </div>
+                <div class="clipboard-freq-item">
+                  <label for="cbFreqNormal">
+                    <span class="clipboard-freq-mode">🟡 正常模式</span>
+                    <span class="clipboard-freq-desc">默认轮询间隔</span>
+                  </label>
+                  <div class="clipboard-freq-input-wrap">
+                    <input type="number" id="cbFreqNormal" class="settings-input clipboard-freq-input" min="500" max="10000" step="100" value="800" />
+                    <span class="clipboard-freq-unit">ms</span>
+                  </div>
+                </div>
+                <div class="clipboard-freq-item">
+                  <label for="cbFreqIdle">
+                    <span class="clipboard-freq-mode">⚪ 空闲模式</span>
+                    <span class="clipboard-freq-desc">长时间无复制操作时</span>
+                  </label>
+                  <div class="clipboard-freq-input-wrap">
+                    <input type="number" id="cbFreqIdle" class="settings-input clipboard-freq-input" min="5000" max="60000" step="1000" value="15000" />
+                    <span class="clipboard-freq-unit">ms</span>
+                  </div>
+                </div>
+                <div class="clipboard-freq-item">
+                  <label for="cbFreqDisabled">
+                    <span class="clipboard-freq-mode">🔴 频率控制关闭</span>
+                    <span class="clipboard-freq-desc">动态频率关闭时的固定间隔</span>
+                  </label>
+                  <div class="clipboard-freq-input-wrap">
+                    <input type="number" id="cbFreqDisabled" class="settings-input clipboard-freq-input" min="1000" max="30000" step="500" value="10000" />
+                    <span class="clipboard-freq-unit">ms</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 阈值配置 -->
+              <div class="clipboard-freq-grid" style="margin-top: 12px;">
+                <div class="clipboard-freq-item">
+                  <label for="cbActiveThreshold">
+                    <span class="clipboard-freq-mode">活跃判定阈值</span>
+                    <span class="clipboard-freq-desc">在此时间内有复制 → 进入活跃模式</span>
+                  </label>
+                  <div class="clipboard-freq-input-wrap">
+                    <input type="number" id="cbActiveThreshold" class="settings-input clipboard-freq-input" min="3000" max="30000" step="1000" value="10000" />
+                    <span class="clipboard-freq-unit">ms</span>
+                  </div>
+                </div>
+                <div class="clipboard-freq-item">
+                  <label for="cbIdleThreshold">
+                    <span class="clipboard-freq-mode">空闲判定阈值</span>
+                    <span class="clipboard-freq-desc">超过此时间无复制 → 进入空闲模式</span>
+                  </label>
+                  <div class="clipboard-freq-input-wrap">
+                    <input type="number" id="cbIdleThreshold" class="settings-input clipboard-freq-input" min="30000" max="300000" step="5000" value="60000" />
+                    <span class="clipboard-freq-unit">ms</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div style="margin-top: 20px; display: flex; gap: 12px;">
+              <button class="btn primary" id="cbSaveConfigBtn" style="padding: 8px 24px;">💾 保存配置</button>
+              <button class="btn" id="cbResetConfigBtn" style="padding: 8px 24px;">↩️ 恢复默认</button>
+            </div>
+
+            <!-- 当前状态 -->
+            <div id="cbStatusInfo" style="margin-top: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px; color: var(--text-secondary); border: 0.5px solid var(--border-light);"></div>
           </div>
         </div>
 

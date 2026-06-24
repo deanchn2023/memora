@@ -1,8 +1,10 @@
 /**
  * EmbeddingService — 向量化服务
- * 支持多供应商：火山引擎 doubao-embedding / DeepSeek / 本地 BGE（降级）
- * 
- * v3.1 Phase 1
+ * 支持多供应商：火山引擎 doubao-embedding / DeepSeek API / BGE 本地 ONNX / 哈希降级
+ *
+ * 降级链路：用户配置 > API（火山/DeepSeek）> BGE 本地 > 哈希降级
+ *
+ * v3.1.2: 新增 BGE-small-zh-v1.5 INT8 本地嵌入
  */
 
 const crypto = require('crypto');
@@ -11,68 +13,108 @@ const fs = require('fs');
 
 class EmbeddingService {
   constructor() {
-    this.provider = null;         // 'volcano' | 'deepseek' | 'local'
+    this.provider = null;         // 'volcano' | 'deepseek' | 'bge-local' | 'local'
     this.apiConfig = null;
     this.cache = new Map();       // content hash → vector
     this.cacheMaxSize = 5000;
     this.initialized = false;
-    this.embeddingDim = 2048;     // 默认维度（doubao-embedding-text）
+    this.embeddingDim = 512;      // BGE-small-zh-v1.5 维度
+
+    // BGE 模型相关
+    this._bgePipeline = null;     // 懒加载的 pipeline 实例
+    this._bgeLoading = false;     // 防止并发加载
+    this._bgeLastUsed = 0;        // 最后使用时间
+    this._bgeUnloadTimer = null;  // 自动卸载计时器
+    this._bgeIdleTimeout = 300000; // 5 分钟空闲后卸载
   }
 
   /**
    * 初始化：读取配置，确定供应商
+   * 降级策略：用户配置 > 火山引擎 API > BGE 本地 ONNX > 哈希降级
    */
   async init() {
     try {
-      // 读取设置（复用 main.js 的 getSetting 逻辑）
-      this.provider = 'deepseek'; // 默认用 DeepSeek（已有 API Key）
-
-      // 尝试从环境变量或设置中读取 Embedding 配置
+      // 1. 尝试从设置中读取 Embedding API 配置
       const embeddingConfig = this._loadEmbeddingConfig();
-      if (embeddingConfig) {
+      if (embeddingConfig && embeddingConfig.apiKey) {
         this.provider = embeddingConfig.provider || 'deepseek';
         this.apiConfig = embeddingConfig;
         this.embeddingDim = embeddingConfig.dimension || 1024;
-      } else {
-        // 降级：使用 DeepSeek 的 API 配置
-        const apiKey = process.env.DEEPSEEK_API_KEY || this._getDeepSeekApiKey();
-        if (apiKey) {
-          this.provider = 'deepseek';
-          this.apiConfig = {
-            provider: 'deepseek',
-            apiKey: apiKey,
-            baseUrl: 'https://api.deepseek.com/v1',
-            model: 'deepseek-embedding',
-            dimension: 1024,
-          };
-          this.embeddingDim = 1024;
-        } else {
-          console.warn('[EmbeddingService] No API key found, embedding service disabled');
-          this.provider = null;
-          return;
-        }
+        this.initialized = true;
+        console.log(`[EmbeddingService] Initialized with provider: ${this.provider}, dim: ${this.embeddingDim}`);
+        return;
       }
 
+      // 2. 尝试 BGE 本地模型
+      const bgeModelPath = this._getBgeModelPath();
+      if (bgeModelPath) {
+        this.provider = 'bge-local';
+        this.apiConfig = null;
+        this.embeddingDim = 512;
+        this.initialized = true;
+        this._bgeModelPath = bgeModelPath;
+        console.log(`[EmbeddingService] Will use BGE local embedding (lazy load), dim: ${this.embeddingDim}, path: ${bgeModelPath}`);
+        return;
+      }
+
+      // 3. 降级：本地哈希嵌入
+      this.provider = 'local';
+      this.apiConfig = null;
+      this.embeddingDim = 1024;
       this.initialized = true;
-      console.log(`[EmbeddingService] Initialized with provider: ${this.provider}, dim: ${this.embeddingDim}`);
+      console.warn('[EmbeddingService] BGE model not found, falling back to hash embedding, dim: 1024');
     } catch (e) {
       console.error('[EmbeddingService] Init failed:', e);
-      this.provider = null;
+      this.provider = 'local';
+      this.apiConfig = null;
+      this.embeddingDim = 1024;
+      this.initialized = true;
     }
   }
 
   /**
+   * 获取 BGE 模型路径（开发环境 + 打包环境）
+   */
+  _getBgeModelPath() {
+    const modelDir = 'bge-small-zh-v1.5';
+    const onnxFile = 'onnx/model_quantized.onnx';
+
+    try {
+      // 尝试多个可能的路径
+      const { app } = require('electron');
+      const candidates = [
+        // 开发环境：项目根目录 resources/models/
+        path.join(app.getAppPath(), 'resources', 'models', modelDir),
+        // 打包环境：extraResources 解包到 resources/models/
+        path.join(process.resourcesPath || '', 'models', modelDir),
+        // 打包环境：asar.unpacked
+        path.join(app.getAppPath(), 'resources', 'models', modelDir),
+      ];
+
+      for (const candidate of candidates) {
+        const onnxPath = path.join(candidate, onnxFile);
+        const tokenizerPath = path.join(candidate, 'tokenizer.json');
+        if (fs.existsSync(onnxPath) && fs.existsSync(tokenizerPath)) {
+          return candidate;
+        }
+      }
+    } catch (e) {
+      console.error('[EmbeddingService] Failed to find BGE model path:', e.message);
+    }
+    return null;
+  }
+
+  /**
    * 加载 Embedding 配置
-   * 优先级：用户设置 > 火山引擎 > DeepSeek
+   * 优先级：用户设置 > 火山引擎
    */
   _loadEmbeddingConfig() {
-    // 尝试从设置文件读取
     try {
       const { app } = require('electron');
       const settingsPath = path.join(app.getPath('userData'), 'settings.json');
       if (fs.existsSync(settingsPath)) {
         const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        if (settings.embedding_provider) {
+        if (settings.embedding_provider && settings.embedding_api_key) {
           return {
             provider: settings.embedding_provider,
             apiKey: settings.embedding_api_key,
@@ -83,48 +125,11 @@ class EmbeddingService {
         }
       }
     } catch {}
-
-    // 尝试火山引擎配置（复用 CC 模式的 volcano provider）
-    try {
-      const { app } = require('electron');
-      const settingsPath = path.join(app.getPath('userData'), 'settings.json');
-      if (fs.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        const volcanoToken = settings.cc_volcano_token;
-        const volcanoBaseUrl = settings.cc_volcano_base_url;
-        if (volcanoToken && volcanoBaseUrl) {
-          return {
-            provider: 'volcano',
-            apiKey: volcanoToken,
-            baseUrl: volcanoBaseUrl.replace(/\/$/, '') + '/v1',
-            model: 'doubao-embedding-text',
-            dimension: 2048,
-          };
-        }
-      }
-    } catch {}
-
     return null;
-  }
-
-  _getDeepSeekApiKey() {
-    // 从 .env 或环境变量读取
-    try {
-      const { app } = require('electron');
-      const envPath = path.join(app.getPath('userData'), '.env');
-      if (fs.existsSync(envPath)) {
-        const envContent = fs.readFileSync(envPath, 'utf8');
-        const match = envContent.match(/DEEPSEEK_API_KEY\s*=\s*(.+)/);
-        if (match) return match[1].trim();
-      }
-    } catch {}
-    return process.env.DEEPSEEK_API_KEY || null;
   }
 
   /**
    * 向量化单条文本
-   * @param {string} text - 待向量化的文本
-   * @returns {Promise<number[]|null>} 向量数组，失败返回 null
    */
   async embed(text) {
     if (!text || !text.trim()) return null;
@@ -138,14 +143,17 @@ class EmbeddingService {
       let vector;
       switch (this.provider) {
         case 'volcano':
-          vector = await this._embedOpenAI(text);
-          break;
         case 'deepseek':
           vector = await this._embedOpenAI(text);
           break;
+        case 'bge-local':
+          vector = await this._embedBGE(text);
+          break;
+        case 'local':
+          vector = this._embedLocal(text);
+          break;
         default:
-          console.warn(`[EmbeddingService] Unknown provider: ${this.provider}`);
-          return null;
+          vector = this._embedLocal(text);
       }
 
       if (vector && this.cache.size < this.cacheMaxSize) {
@@ -155,14 +163,17 @@ class EmbeddingService {
       return vector;
     } catch (e) {
       console.error('[EmbeddingService] Embed failed:', e.message);
+      // BGE 失败时降级到哈希
+      if (this.provider === 'bge-local') {
+        console.warn('[EmbeddingService] BGE embed failed, falling back to hash for this call');
+        return this._embedLocal(text);
+      }
       return null;
     }
   }
 
   /**
-   * 批量向量化（减少 API 调用次数）
-   * @param {string[]} texts - 文本数组
-   * @returns {Promise<(number[]|null)[]>} 向量数组（与输入一一对应，失败的为 null）
+   * 批量向量化
    */
   async embedBatch(texts) {
     if (!this.initialized || !this.provider) {
@@ -172,16 +183,15 @@ class EmbeddingService {
     const valid = texts.map((t, i) => ({ text: t, index: i })).filter(x => x.text && x.text.trim());
     if (valid.length === 0) return texts.map(() => null);
 
-    const batchSize = 16;
+    const batchSize = this.provider === 'bge-local' ? 8 : 16; // BGE 批量小一些减少内存峰值
     const results = new Array(texts.length).fill(null);
 
     for (let i = 0; i < valid.length; i += batchSize) {
       const batch = valid.slice(i, i + batchSize);
       try {
-        // 检查缓存
         const uncached = [];
         const uncachedIndices = [];
-        batch.forEach((b, j) => {
+        batch.forEach((b) => {
           const hash = this._hash(b.text);
           if (this.cache.has(hash)) {
             results[b.index] = this.cache.get(hash);
@@ -192,7 +202,7 @@ class EmbeddingService {
         });
 
         if (uncached.length > 0) {
-          const vectors = await this._embedBatchAPI(uncached);
+          const vectors = await this._embedBatchInternal(uncached);
           vectors.forEach((vec, j) => {
             const idx = uncachedIndices[j];
             results[idx] = vec;
@@ -203,7 +213,6 @@ class EmbeddingService {
         }
       } catch (e) {
         console.error('[EmbeddingService] Batch embed failed:', e.message);
-        // 失败的条目保持 null
       }
     }
 
@@ -211,8 +220,126 @@ class EmbeddingService {
   }
 
   /**
-   * OpenAI 兼容 API 单条向量化（火山引擎/DeepSeek 共用）
+   * 批量嵌入内部分发
    */
+  async _embedBatchInternal(texts) {
+    if (this.provider === 'local') {
+      return texts.map(t => this._embedLocal(t));
+    }
+    if (this.provider === 'bge-local') {
+      // BGE 逐条处理（transformers.js 的 batch 接口在 Node.js 上不稳定）
+      const results = [];
+      for (const text of texts) {
+        try {
+          const vec = await this._embedBGE(text);
+          results.push(vec);
+        } catch (e) {
+          console.warn('[EmbeddingService] BGE batch item failed, using hash:', e.message);
+          results.push(this._embedLocal(text));
+        }
+      }
+      return results;
+    }
+    // API 批量
+    return await this._embedBatchAPI(texts);
+  }
+
+  // ===== BGE 本地嵌入 =====
+
+  /**
+   * 懒加载 BGE pipeline
+   */
+  async _ensureBGELoaded() {
+    if (this._bgePipeline) {
+      this._bgeLastUsed = Date.now();
+      this._resetUnloadTimer();
+      return;
+    }
+    if (this._bgeLoading) {
+      // 等待其他协程完成加载
+      while (this._bgeLoading) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (this._bgePipeline) {
+        this._bgeLastUsed = Date.now();
+        this._resetUnloadTimer();
+        return;
+      }
+    }
+
+    this._bgeLoading = true;
+    try {
+      const { pipeline, env } = await import('@xenova/transformers');
+
+      // 配置 transformers.js：只使用本地文件，禁止联网
+      env.allowRemoteModels = false;
+      env.allowLocalModels = true;
+
+      // 设置模型搜索路径（模型目录的父目录）
+      const modelDir = this._bgeModelPath;
+      const modelParent = path.dirname(modelDir);
+      env.localModelPath = modelParent;
+
+      console.log(`[EmbeddingService] Loading BGE model from: ${modelDir} (parent: ${modelParent})`);
+
+      this._bgePipeline = await pipeline(
+        'feature-extraction',
+        'bge-small-zh-v1.5',
+        {
+          quantized: true,  // 自动查找 onnx/model_quantized.onnx
+        }
+      );
+
+      this._bgeLastUsed = Date.now();
+      this._resetUnloadTimer();
+      console.log('[EmbeddingService] BGE model loaded successfully');
+    } catch (e) {
+      console.error('[EmbeddingService] Failed to load BGE model:', e.message);
+      throw e;
+    } finally {
+      this._bgeLoading = false;
+    }
+  }
+
+  /**
+   * BGE 嵌入
+   */
+  async _embedBGE(text) {
+    await this._ensureBGELoaded();
+    if (!this._bgePipeline) {
+      throw new Error('BGE pipeline not available');
+    }
+
+    // 截断超长文本（BGE 最大 512 tokens）
+    const truncated = text.substring(0, 2000);
+
+    const output = await this._bgePipeline(truncated, {
+      pooling: 'cls',      // BGE 使用 CLS token 作为句向量
+      normalize: true,     // L2 归一化
+    });
+
+    return Array.from(output.data);
+  }
+
+  /**
+   * 重置自动卸载计时器
+   */
+  _resetUnloadTimer() {
+    if (this._bgeUnloadTimer) clearTimeout(this._bgeUnloadTimer);
+    this._bgeUnloadTimer = setTimeout(() => {
+      if (this._bgePipeline && Date.now() - this._bgeLastUsed >= this._bgeIdleTimeout) {
+        console.log('[EmbeddingService] BGE model idle timeout, unloading to free memory');
+        this._bgePipeline = null;
+        this._bgeUnloadTimer = null;
+      } else {
+        // 还没到时间，重新计时
+        this._resetUnloadTimer();
+      }
+    }, this._bgeIdleTimeout);
+  }
+
+  // ===== API 嵌入 =====
+
   async _embedOpenAI(text) {
     const response = await fetch(`${this.apiConfig.baseUrl}/embeddings`, {
       method: 'POST',
@@ -222,7 +349,7 @@ class EmbeddingService {
       },
       body: JSON.stringify({
         model: this.apiConfig.model,
-        input: text.substring(0, 8000), // 截断超长文本
+        input: text.substring(0, 8000),
       }),
     });
 
@@ -235,9 +362,6 @@ class EmbeddingService {
     return data.data?.[0]?.embedding || null;
   }
 
-  /**
-   * OpenAI 兼容 API 批量向量化
-   */
   async _embedBatchAPI(texts) {
     const response = await fetch(`${this.apiConfig.baseUrl}/embeddings`, {
       method: 'POST',
@@ -263,23 +387,74 @@ class EmbeddingService {
     return texts.map(() => null);
   }
 
-  /**
-   * 获取当前维度
-   */
+  // ===== 哈希降级嵌入 =====
+
+  _embedLocal(text) {
+    if (!text || !text.trim()) return null;
+    const dim = this.embeddingDim;
+    const vec = new Float32Array(dim);
+
+    const tokens = this._tokenize(text);
+
+    for (const token of tokens) {
+      const h1 = this._hashInt(token, 0) % dim;
+      const h2 = this._hashInt(token, 1) % dim;
+      vec[h1] += 1.0;
+      vec[h2] += 0.5;
+    }
+
+    let norm = 0;
+    for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
+    norm = Math.sqrt(norm);
+    if (norm > 0) {
+      for (let i = 0; i < dim; i++) vec[i] /= norm;
+    }
+
+    return Array.from(vec);
+  }
+
+  _tokenize(text) {
+    const tokens = [];
+    const enWords = text.toLowerCase().match(/[a-z]{2,}/g) || [];
+    tokens.push(...enWords);
+
+    const cleaned = text.replace(/[^\u4e00-\u9fa5]/g, ' ');
+    for (let i = 0; i < cleaned.length - 1; i++) {
+      if (cleaned[i] >= '\u4e00' && cleaned[i] <= '\u9fa5' && cleaned[i+1] >= '\u4e00' && cleaned[i+1] <= '\u9fa5') {
+        tokens.push(cleaned.substring(i, i + 2));
+      }
+    }
+
+    for (const ch of cleaned) {
+      if (ch >= '\u4e00' && ch <= '\u9fa5') tokens.push(ch);
+    }
+
+    return tokens;
+  }
+
+  _hashInt(str, seed = 0) {
+    let hash = 2166136261 ^ seed;
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  // ===== 公共方法 =====
+
   getDimension() {
     return this.embeddingDim;
   }
 
-  /**
-   * 是否可用
-   */
   isAvailable() {
     return this.initialized && this.provider !== null;
   }
 
-  /**
-   * 内容哈希（用于缓存 key）
-   */
+  getProvider() {
+    return this.provider;
+  }
+
   _hash(text) {
     return crypto.createHash('md5').update(text).digest('hex');
   }

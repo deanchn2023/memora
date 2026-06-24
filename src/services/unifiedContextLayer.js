@@ -82,7 +82,8 @@ class UnifiedContextLayer {
     const embedStart = Date.now();
     const results = await this.vectorIndex.hybridSearch(message, searchOptions);
     const searchTime = Date.now() - startTime;
-    const embedTime = Date.now() - embedStart - (searchTime - embedTime || 0);
+
+    console.log(`[UnifiedContext] 🔍 retrieve | query="${message.substring(0, 50)}" | sources=${sources.join(',')} | results=${results.length} | ${searchTime}ms | provider=${this.embedding.getProvider?.() || 'unknown'}`);
 
     if (results.length === 0) {
       return {

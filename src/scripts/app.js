@@ -1408,6 +1408,7 @@ const App = {
       if (tabName === 'context') this._loadContextSettings();
       if (tabName === 'voice') this._loadVoiceSettings();
       if (tabName === 'vector') this._loadVectorPanel();
+      if (tabName === 'clipboard') this._loadClipboardConfig();
     }
   },
 
@@ -1425,11 +1426,16 @@ const App = {
         const colInfo = Object.entries(cols).map(([name, info]) =>
           `${name}: ${info.docCount} 条`).join(' | ');
         statusEl.innerHTML = `
-          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;">
             <span>📊 状态: ${status.initialized ? '✅ 已初始化' : '❌ 未初始化'}</span>
             <span>📐 维度: ${status.dimension || 'N/A'}</span>
             <span>📋 ${colInfo}</span>
             <span>⏳ 队列: ${status.queue?.pending || 0} 待处理 / ${status.queue?.totalProcessed || 0} 已完成</span>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-tertiary);">
+            <span>🧠 嵌入: ${status.embeddingProvider || 'unknown'} (${status.embeddingDim || 0}d)</span>
+            <span>🔍 上下文层: ${status.contextLayerReady ? '✅ 就绪' : '❌ 未就绪'}</span>
+            ${status.contextLayerSkipped ? `<span style="color:var(--danger);">⚠️ ${status.contextLayerSkipped}</span>` : ''}
           </div>
         `;
       } else {
@@ -1521,6 +1527,91 @@ const App = {
         if (e.key === 'Enter') document.getElementById('vectorSearchBtn')?.click();
       });
     }
+  },
+
+  // v3.1.2: 剪贴板配置面板
+  async _loadClipboardConfig() {
+    if (!window.electronAPI?.clipboardGetConfig) return;
+    try {
+      const config = await window.electronAPI.clipboardGetConfig();
+      // 功能开关
+      document.getElementById('cbFreqEnabled').checked = config.freq_enabled !== false;
+      document.getElementById('cbBufferEnabled').checked = config.buffer_enabled !== false;
+      document.getElementById('cbAssociationEnabled').checked = config.association_enabled !== false;
+      document.getElementById('cbSplitPromptEnabled').checked = config.split_prompt_enabled !== false;
+      // 频率配置
+      document.getElementById('cbFreqActive').value = config.freq_active ?? 200;
+      document.getElementById('cbFreqNormal').value = config.freq_normal ?? 800;
+      document.getElementById('cbFreqIdle').value = config.freq_idle ?? 15000;
+      document.getElementById('cbFreqDisabled').value = config.freq_disabled ?? 10000;
+      // 阈值
+      document.getElementById('cbActiveThreshold').value = config.active_threshold ?? 10000;
+      document.getElementById('cbIdleThreshold').value = config.idle_threshold ?? 60000;
+      // 状态信息
+      this._updateClipboardStatus(config);
+    } catch (e) {
+      console.error('[Clipboard Config] Load failed:', e);
+    }
+
+    // 绑定保存/重置按钮（只绑定一次）
+    if (!this._cbConfigBound) {
+      this._cbConfigBound = true;
+      document.getElementById('cbSaveConfigBtn')?.addEventListener('click', () => this._saveClipboardConfig());
+      document.getElementById('cbResetConfigBtn')?.addEventListener('click', () => this._resetClipboardConfig());
+    }
+  },
+
+  async _saveClipboardConfig() {
+    const config = {
+      clipboard_freq_enabled: document.getElementById('cbFreqEnabled').checked,
+      clipboard_buffer_enabled: document.getElementById('cbBufferEnabled').checked,
+      clipboard_association_enabled: document.getElementById('cbAssociationEnabled').checked,
+      clipboard_split_prompt_enabled: document.getElementById('cbSplitPromptEnabled').checked,
+      clipboard_freq_active: parseInt(document.getElementById('cbFreqActive').value) || 200,
+      clipboard_freq_normal: parseInt(document.getElementById('cbFreqNormal').value) || 800,
+      clipboard_freq_idle: parseInt(document.getElementById('cbFreqIdle').value) || 15000,
+      clipboard_freq_disabled: parseInt(document.getElementById('cbFreqDisabled').value) || 10000,
+      clipboard_active_threshold: parseInt(document.getElementById('cbActiveThreshold').value) || 10000,
+      clipboard_idle_threshold: parseInt(document.getElementById('cbIdleThreshold').value) || 60000,
+    };
+    try {
+      const result = await window.electronAPI.clipboardUpdateConfig(config);
+      if (result?.success) {
+        this.showToast('剪贴板配置已保存，实时生效');
+        this._updateClipboardStatus(config);
+      } else {
+        this.showToast('保存失败', 'error');
+      }
+    } catch (e) {
+      this.showToast('保存失败: ' + e.message, 'error');
+    }
+  },
+
+  _resetClipboardConfig() {
+    document.getElementById('cbFreqEnabled').checked = true;
+    document.getElementById('cbBufferEnabled').checked = true;
+    document.getElementById('cbAssociationEnabled').checked = true;
+    document.getElementById('cbSplitPromptEnabled').checked = true;
+    document.getElementById('cbFreqActive').value = 200;
+    document.getElementById('cbFreqNormal').value = 800;
+    document.getElementById('cbFreqIdle').value = 15000;
+    document.getElementById('cbFreqDisabled').value = 10000;
+    document.getElementById('cbActiveThreshold').value = 10000;
+    document.getElementById('cbIdleThreshold').value = 60000;
+    this._saveClipboardConfig();
+  },
+
+  _updateClipboardStatus(config) {
+    const el = document.getElementById('cbStatusInfo');
+    if (!el) return;
+    const mode = config.freq_enabled === false
+      ? `🔴 频率控制已关闭（固定 ${config.freq_disabled ?? 10000}ms）`
+      : `🟢 动态频率: 活跃 ${config.freq_active ?? 200}ms / 正常 ${config.freq_normal ?? 800}ms / 空闲 ${config.freq_idle ?? 15000}ms`;
+    el.innerHTML = `
+      <div>当前模式: ${mode}</div>
+      <div style="margin-top:4px;">活跃判定: ${config.active_threshold ?? 10000}ms 内有复制 → 活跃 | ${config.idle_threshold ?? 60000}ms 无复制 → 空闲</div>
+      <div style="margin-top:4px;">暂存聚合: ${config.buffer_enabled !== false ? '✅ 开启' : '❌ 关闭'} | 关联检测: ${config.association_enabled !== false ? '✅ 开启' : '❌ 关闭'} | 拆分Prompt: ${config.split_prompt_enabled !== false ? '✅ 开启' : '❌ 关闭'}</div>
+    `;
   },
 
   _loadApiConfig() {
@@ -4170,6 +4261,22 @@ const App = {
       } else if (this._aiAssistantMode === 'cc' && window.electronAPI?.ccInvoke) {
         // M-Agent 模式：使用 Claude Code Agent SDK（Coding Plan）
         const messageContent = assistantMessage.querySelector('.message-content');
+
+        // v3.1.2: 保存用户消息供 session 记忆使用
+        this._ccLastUserMessage = sendMessage;
+
+        // v3.1.2: 构建 session 级对话历史上下文
+        const activeSessionForCtx = this._activeSessionId
+          ? this._chatSessions.find(s => s.id === this._activeSessionId)
+          : null;
+        let sessionContext = '';
+        if (activeSessionForCtx?.conversationHistory?.length > 0) {
+          const history = activeSessionForCtx.conversationHistory;
+          const historyText = history.map((turn, i) =>
+            `【第${i + 1}轮】\n用户: ${turn.user}\n助手: ${turn.assistant.substring(0, 400)}...`
+          ).join('\n\n');
+          sessionContext = `\n\n[对话历史摘要]\n以下是本对话窗口中之前的对话内容摘要，请在回答时参考这些上下文：\n${historyText}\n\n[当前问题]\n`;
+        }
         messageContent.innerHTML = `
           <div class="adp-progress cc-streaming-progress" id="adpProgress">
             <div class="adp-progress-header" id="ccProgressHeader">
@@ -4244,7 +4351,7 @@ const App = {
         });
 
         const ccResult = await window.electronAPI.ccInvoke({
-          message: sendMessage,
+          message: sessionContext ? sessionContext + sendMessage : sendMessage,
           attachments: attachmentData,
           sessionId: ccSessionId,
           systemRole: localContextSystemRole || options.systemRole || '',
@@ -4437,6 +4544,31 @@ const App = {
   // === 聊天消息事件委托处理器 ===
   // 统一处理聊天消息内所有按钮点击，替代每条消息单独 addEventListener
   async _handleChatClick(e) {
+    // --- v3.1.2: 文件路径链接（打开/在 Finder 中显示）---
+    const fileLink = e.target.closest('.chat-file-link');
+    if (fileLink) {
+      e.preventDefault();
+      e.stopPropagation();
+      const filePath = fileLink.dataset.filepath;
+      if (!filePath) return;
+      const actionBtn = e.target.closest('.chat-file-action-btn');
+      const action = actionBtn?.dataset.action || 'open';
+      try {
+        if (action === 'reveal') {
+          await window.electronAPI?.localFilesReveal?.(filePath);
+          this.showToast('已在 Finder 中显示', 'info');
+        } else {
+          const result = await window.electronAPI?.localFilesOpen?.(filePath);
+          if (result?.success === false) {
+            this.showToast('打开失败: ' + (result.error || '文件不存在'), 'error');
+          }
+        }
+      } catch (err) {
+        this.showToast('操作失败: ' + err.message, 'error');
+      }
+      return;
+    }
+
     // --- 复制助手消息 ---
     const copyBtn = e.target.closest('.copy-btn');
     if (copyBtn) {
@@ -5965,6 +6097,29 @@ const App = {
       this._ccStreamResolve = null;
     }
     this._updateStreamingUI(false);
+
+    // v3.1.2: 保存 session 级对话记忆（用于后续对话上下文注入）
+    const finalText = result || this._ccCurrentText || '';
+    if (finalText && this._activeSessionId) {
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (session) {
+        if (!session.conversationHistory) session.conversationHistory = [];
+        // 保存本轮对话摘要（用户消息 + AI 回复摘要）
+        const userMsg = this._ccLastUserMessage || '';
+        const aiSummary = finalText.substring(0, 800);
+        session.conversationHistory.push({
+          user: userMsg.substring(0, 300),
+          assistant: aiSummary,
+          timestamp: new Date().toISOString(),
+        });
+        // 最多保留 10 轮对话
+        if (session.conversationHistory.length > 10) {
+          session.conversationHistory = session.conversationHistory.slice(-10);
+        }
+        this._saveChatSessions();
+        console.log(`[CC] Session memory updated: ${session.conversationHistory.length} turns`);
+      }
+    }
 
     // 提取执行过程步骤（流式过程中积累的）
     const progressSteps = messageContent.querySelector('#adpProgressSteps');
@@ -7873,13 +8028,26 @@ const App = {
         const stepInfo = this._adpStepMap[msgId];
         if (stepInfo && stepInfo.type !== 'reply') {
           // 非 reply 消息的 text.delta → 追加到步骤详情
-          stepInfo.textBuffer = (stepInfo.textBuffer || '') + text;
-          // 实时更新步骤详情（追加模式）
+          // 增量检测：如果新文本以已缓存文本为前缀，说明是累积模式，替换而非追加
+          if (stepInfo.textBuffer && text.startsWith(stepInfo.textBuffer)) {
+            stepInfo.textBuffer = text;
+          } else {
+            stepInfo.textBuffer = (stepInfo.textBuffer || '') + text;
+          }
           this._updateADPStepDetailStreaming(msgId, stepInfo.textBuffer);
         } else {
           // reply 消息或未知消息 → 追加到主回复
           if (!this._adpCurrentBubble) this._startADPReply(messageContent);
-          this._adpCurrentText += text;
+          // 增量检测：如果新文本以已累积文本为前缀，说明 ADP 发送的是累积文本而非增量
+          // 此时应该替换而非追加，避免重复
+          if (this._adpCurrentText && text.startsWith(this._adpCurrentText)) {
+            this._adpCurrentText = text;
+          } else if (this._adpCurrentText && this._adpCurrentText.endsWith(text)) {
+            // 新文本是已累积文本的尾部 → 跳过（完全重复）
+            // 不做任何操作
+          } else {
+            this._adpCurrentText += text;
+          }
           this._renderADPBubble();
         }
         break;
@@ -8478,6 +8646,15 @@ const App = {
       return `__FILEPATH_${idx}__`;
     });
 
+    // v3.1.2: 提取本地绝对路径（cc-workspace 产出物等）
+    const localFilePaths = [];
+    text = text.replace(/(?:^|[\s（(【\[])(\/(?:Users|home|tmp|var|opt)\/[^\s"'<>\]},;，；\]\)]+\.(?:xlsx?|docx?|pptx?|pdf|csv|json|html?|xml|svg|png|jpe?g|gif|zip|tar\.gz|md|txt|py|js|ts|css|sql|sh|yaml|yml|toml|conf|cfg|ini|env))/gm, (match, filePath) => {
+      const idx = localFilePaths.length;
+      const fileName = filePath.split('/').pop();
+      localFilePaths.push({ path: filePath, name: fileName });
+      return match.replace(filePath, `__LOCALFILE_${idx}__`);
+    });
+
     let html = this.escapeHtml(text);
 
     // 还原 Markdown 链接
@@ -8517,6 +8694,15 @@ const App = {
       const im = { html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', svg: '🖼', md: '📝' };
       // 文件路径不是可下载 URL，用 data-filepath 标记，后续可走 ADP 文件下载
       html = html.replace(ph, `<div class="adp-file-card" data-url="#" data-name="${this.escapeHtml(fp.name)}" data-filepath="${this.escapeHtml(fp.path)}"><span class="adp-file-icon">${im[ext] || '📄'}</span><span class="adp-file-name">${this.escapeHtml(fp.name)}</span><span class="adp-file-save-btn" data-action="save">💾 保存</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`);
+    });
+
+    // v3.1.2: 还原本地文件路径（可点击打开/在 Finder 中显示）
+    localFilePaths.forEach((fp, idx) => {
+      const ph = `__LOCALFILE_${idx}__`;
+      const ext = fp.name.split('.').pop()?.toLowerCase();
+      const icons = { md: '📝', html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', svg: '🖼', txt: '📄', py: '🐍', js: '📜', ts: '📜', css: '🎨', sql: '🗄', sh: '⚙️', yaml: '⚙️', yml: '⚙️' };
+      const icon = icons[ext] || '📄';
+      html = html.replace(ph, `<span class="chat-file-link" data-filepath="${this.escapeHtml(fp.path)}"><span class="chat-file-icon">${icon}</span>${this.escapeHtml(fp.name)}<span class="chat-file-actions"><button class="chat-file-action-btn" data-action="open">打开</button><button class="chat-file-action-btn" data-action="reveal">📁</button></span></span>`);
     });
 
     // 🔧 还原 Markdown 表格
@@ -8592,6 +8778,60 @@ const App = {
 
     // 思考过程
     if (thinkingText && thinkingText.trim()) html = this._renderADPThinking(thinkingText) + html;
+
+    // v3.1.2: 检测 cc-workspace 文件名并转为可点击链接
+    html = this._linkifyCCWorkspaceFiles(html);
+
+    return html;
+  },
+
+  /**
+   * v3.1.2: 检测 AI 回复中的文件名，关联 cc-workspace 路径，转为可点击链接
+   * 检测模式：
+   * 1. "文件位置：xxx.ext" / "文件: xxx.ext" / "已保存到 xxx.ext"
+   * 2. 反引号包裹的文件名 `xxx.ext`
+   * 3. 行末独立文件名 xxx.ext
+   */
+  _linkifyCCWorkspaceFiles(html) {
+    // 获取 cc-workspace 路径
+    const ccWorkdir = this._getCCWorkdir() || this._ccDefaultWorkdir || '';
+    if (!ccWorkdir) return html;
+
+    // 已知文件扩展名
+    const extPattern = '(?:html?|md|json|csv|xlsx?|docx?|pptx?|pdf|png|jpe?g|gif|svg|txt|py|js|ts|css|sql|sh|yaml|yml|xml|toml|conf)';
+    const icons = { md: '📝', html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', svg: '🖼', txt: '📄', py: '🐍', js: '📜', ts: '📜', css: '🎨', sql: '🗄', sh: '⚙️', yaml: '⚙️', yml: '⚙️' };
+
+    // 跳过已在 .chat-file-link / .adp-file-card / <a> 标签内的文件名
+    // 用正则匹配不在 HTML 标签属性中的文件名
+
+    // 模式1: "文件位置：xxx.ext" / "文件: xxx.ext" / "已保存到 xxx.ext" / "已创建: xxx.ext"
+    html = html.replace(new RegExp(
+      `(文件位置[：:]\\s*|文件[：:]\\s*|已保存到\\s*|已创建[：:]?\\s*|File:\\s*)([\\w./-]+\\.${extPattern})`,
+      'gi'
+    ), (match, prefix, filename) => {
+      // 避免重复处理（已有链接的跳过）
+      if (filename.includes('</span>') || filename.includes('class=')) return match;
+      const fullPath = ccWorkdir.replace(/\/$/, '') + '/' + filename.replace(/^\.\//, '');
+      const ext = filename.split('.').pop()?.toLowerCase();
+      const icon = icons[ext] || '📄';
+      const escapedName = this.escapeHtml(filename);
+      const escapedPath = this.escapeHtml(fullPath);
+      return `${prefix}<span class="chat-file-link" data-filepath="${escapedPath}"><span class="chat-file-icon">${icon}</span>${escapedName}<span class="chat-file-actions"><button class="chat-file-action-btn" data-action="open">打开</button><button class="chat-file-action-btn" data-action="reveal">📁</button></span></span>`;
+    });
+
+    // 模式2: 反引号包裹的文件名 `xxx.ext`
+    html = html.replace(new RegExp(
+      `(?<!class="[^"]*)\`([\\w./-]+\\.${extPattern})\``,
+      'gi'
+    ), (match, filename) => {
+      const fullPath = ccWorkdir.replace(/\/$/, '') + '/' + filename.replace(/^\.\//, '');
+      const ext = filename.split('.').pop()?.toLowerCase();
+      const icon = icons[ext] || '📄';
+      const escapedName = this.escapeHtml(filename);
+      const escapedPath = this.escapeHtml(fullPath);
+      return `<span class="chat-file-link" data-filepath="${escapedPath}"><span class="chat-file-icon">${icon}</span>${escapedName}<span class="chat-file-actions"><button class="chat-file-action-btn" data-action="open">打开</button><button class="chat-file-action-btn" data-action="reveal">📁</button></span></span>`;
+    });
+
     return html;
   },
 

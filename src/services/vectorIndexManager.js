@@ -50,6 +50,30 @@ class VectorIndexManager {
       fs.mkdirSync(this.dbPath, { recursive: true });
     }
 
+    // 维度一致性检查：如果维度变化，自动删除旧索引重建
+    this.dimension = this.embedding.getDimension();
+    const dimMarkerPath = path.join(this.dbPath, '.dimension');
+    let needRebuild = false;
+    try {
+      if (fs.existsSync(dimMarkerPath)) {
+        const oldDim = parseInt(fs.readFileSync(dimMarkerPath, 'utf8').trim());
+        if (oldDim !== this.dimension) {
+          console.log(`[VectorIndex] Dimension changed: ${oldDim} → ${this.dimension}, rebuilding all collections`);
+          // 删除旧索引
+          for (const item of fs.readdirSync(this.dbPath)) {
+            const itemPath = path.join(this.dbPath, item);
+            if (fs.statSync(itemPath).isDirectory()) {
+              fs.rmSync(itemPath, { recursive: true, force: true });
+            }
+          }
+          needRebuild = true;
+        }
+      }
+      fs.writeFileSync(dimMarkerPath, String(this.dimension));
+    } catch (e) {
+      console.warn('[VectorIndex] Dimension check failed:', e.message);
+    }
+
     // 初始化 Zvec 全局配置
     try {
       z.ZVecInitialize({
@@ -59,8 +83,6 @@ class VectorIndexManager {
     } catch (e) {
       // 可能已初始化，忽略
     }
-
-    this.dimension = this.embedding.getDimension();
 
     // 创建/打开各 Collection
     try {
@@ -401,7 +423,8 @@ class VectorIndexManager {
       if (options.timeRange) {
         filters.push(`created_at >= ${options.timeRange}`);
       }
-      if (options.statusFilter) {
+      // statusFilter 仅应用于 memories（有 status 字段），notes 和 tasks 的 status 含义不同
+      if (options.statusFilter && sourceName === 'memories') {
         filters.push(`status != "${options.statusFilter}"`);
       }
       filter = filters.join(' AND ');
@@ -429,7 +452,20 @@ class VectorIndexManager {
             outputFields: ['note_id', 'memory_id', 'task_id', 'atom_id', 'title', 'content', 'category', 'created_at', 'type', 'status', 'tags'],
           };
           if (filter) multiQueryParams.filter = filter;
-          docs = await col.multiQuery(multiQueryParams);
+          try {
+            docs = await col.multiQuery(multiQueryParams);
+          } catch (mqErr) {
+            // multiQuery 失败 → 降级为纯 FTS
+            console.warn(`[VectorIndex] multiQuery ${sourceName} failed (${mqErr.message}), falling back to FTS`);
+            const queryParams = {
+              fieldName: ftsField,
+              fts: { matchString: query.substring(0, 500) },
+              topk: topK,
+              outputFields: ['note_id', 'memory_id', 'task_id', 'atom_id', 'title', 'content', 'category', 'created_at', 'type', 'status', 'tags'],
+            };
+            if (filter) queryParams.filter = filter;
+            docs = await col.query(queryParams);
+          }
         } else if (query.trim()) {
           // 降级：纯 FTS
           const ftsField = sourceName === 'notes' ? 'title' : 'content';
@@ -469,6 +505,8 @@ class VectorIndexManager {
         console.error(`[VectorIndex] Search ${sourceName} failed:`, e.message);
       }
     }
+
+    console.log(`[VectorIndex] hybridSearch | query="${query.substring(0, 40)}" | results=${allResults.length} | sources=${sources.join(',')}`);
 
     // 合并排序并截取
     return allResults.sort((a, b) => b.score - a.score).slice(0, limit);

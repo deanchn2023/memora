@@ -37,6 +37,7 @@ class AIAuditLogger {
    * @param {number} entry.latencyMs - 调用耗时(ms)
    * @param {string} entry.error - 错误信息(如有)
    * @param {string} entry.traceId - 追踪ID
+   * @param {string} entry.skill - 用户选择的 Skill（可选）
    */
   record(entry) {
     const now = new Date();
@@ -45,6 +46,7 @@ class AIAuditLogger {
       timestamp: now.toISOString(),
       module: entry.module || 'unknown',
       model: entry.model || '',
+      skill: entry.skill || null,
       baseUrl: (entry.baseUrl || '').replace(/\/chat\/completions$/, ''),
       apiKey: entry.apiKey ? this._maskSecret(entry.apiKey) : null,
       adpAppKey: entry.adpAppKey ? this._maskSecret(entry.adpAppKey) : null,

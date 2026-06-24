@@ -2471,57 +2471,110 @@ async function analyzeClipboardText(text) {
       
       // 提取结构化记忆（只保存提炼后的有效信息）
       if (memoryStore && result.is_valid_info && (result.is_task || confidence >= 0.7)) {
-        // 调用记忆提取Prompt
-        try {
-          const { response: memoryResponse } = await callAI({
-            module: 'clipboard_memory',
-            category: 'highvol',
-            messages: [
-              { role: 'system', content: getCurrentMemoryPrompt() },
-              { role: 'user', content: `从以下文本中提取结构化记忆：\n\n${optimizedText}` }
-            ],
-            traceId,
-          });
-          
-          if (memoryResponse.ok) {
-            const memoryData = await memoryResponse.json();
-            if (memoryData.choices && memoryData.choices[0]) {
-              // 兼容 markdown 代码块包裹的 JSON
-              let memoryContent = memoryData.choices[0].message.content.trim();
-              const memoryJsonMatch = memoryContent.match(/```(?:json)?\s*([\s\S]*?)```/);
-              if (memoryJsonMatch) {
-                memoryContent = memoryJsonMatch[1].trim();
-              }
-              const memoryResult = JSON.parse(memoryContent);
-              
-              // 根据提取的信息类型保存到记忆系统
-              const memoryType = memoryResult.memory_type === 'instant' ? MEMORY_TYPES.INSTANT :
-                                memoryResult.memory_type === 'long' ? MEMORY_TYPES.LONG : MEMORY_TYPES.SHORT;
-              
-              memoryStore.addMemory({
-                type: memoryType,
-                category: memoryResult.category || MEMORY_CATEGORIES.KNOWLEDGE,
-                business_category: memoryResult.business_category || (classifyBusinessContext(text).length > 0 ? classifyBusinessContext(text)[0] : BUSINESS_CATEGORIES.OTHER),
-                content: memoryResult.summary || text.substring(0, 100),
-                metadata: {
-                  persons: memoryResult.persons || [],
-                  topics: memoryResult.topics || [],
-                  keyPoints: memoryResult.key_points || [],
-                  sentiment: memoryResult.sentiment || 'neutral',
-                  entities: memoryResult.entities || [],
-                  originalNoteId: savedNoteId,
-                  extractedFrom: 'clipboard',
-                  smartLevel: memoryResult.smart_level || null,
-                  smartMissing: memoryResult.smart_missing || []
+        // v3.1: split 模式下 L2b 已合并记忆提取，直接使用结果，跳过独立 AI 调用
+        if (result._split_mode && result.memory_type) {
+          try {
+            const memoryType = result.memory_type === 'instant' ? MEMORY_TYPES.INSTANT :
+                              result.memory_type === 'long' ? MEMORY_TYPES.LONG : MEMORY_TYPES.SHORT;
+            memoryStore.addMemory({
+              type: memoryType,
+              category: result.memory_category || MEMORY_CATEGORIES.KNOWLEDGE,
+              business_category: classifyBusinessContext(text).length > 0 ? classifyBusinessContext(text)[0] : BUSINESS_CATEGORIES.OTHER,
+              content: result.summary || text.substring(0, 100),
+              metadata: {
+                persons: result.persons || [],
+                topics: result.topics || [],
+                keyPoints: result.key_points || [],
+                sentiment: result.sentiment || 'neutral',
+                entities: result.entities || [],
+                linkedKnownPersons: result.linked_known_persons || [],
+                linkedKnownProjects: result.linked_known_projects || [],
+                ttlHint: result.ttl_hint || null,
+                originalNoteId: savedNoteId,
+                extractedFrom: 'clipboard_split',
+                smartLevel: result.smart_level || null,
+                smartMissing: result.smart_missing || []
+              },
+              confidence: confidence,
+              importance: result.importance || 'normal'
+            });
+            console.log('[Memory] Structured memory saved (split mode, no extra AI call)');
+            // 审计日志：记录 split 模式记忆提取（复用 L2b 结果，无独立 AI 调用）
+            if (auditLogger) {
+              auditLogger.log({
+                module: 'clipboard_memory',
+                action: 'save_split',
+                input: { text_preview: text.substring(0, 100), trace_id: traceId },
+                output: {
+                  memory_type: result.memory_type,
+                  memory_category: result.memory_category,
+                  summary: result.summary?.substring(0, 80),
+                  persons_count: (result.persons || []).length,
+                  topics_count: (result.topics || []).length,
+                  entities_count: (result.entities || []).length,
+                  importance: result.importance,
+                  smart_level: result.smart_level,
                 },
-                confidence: confidence,
-                importance: memoryResult.importance || 'normal'
+                traceId,
+                source: 'clipboard_info_extract',
               });
-              console.log('[Memory] Structured memory extracted and saved');
             }
+          } catch (memError) {
+            console.error('[Memory] Failed to save split memory:', memError);
           }
-        } catch (memoryError) {
-          console.error('[Memory] Failed to extract memory:', memoryError);
+        } else {
+          // 单体模式 / 降级模式：调用记忆提取 Prompt
+          try {
+            const { response: memoryResponse } = await callAI({
+              module: 'clipboard_memory',
+              category: 'highvol',
+              messages: [
+                { role: 'system', content: getCurrentMemoryPrompt() },
+                { role: 'user', content: `从以下文本中提取结构化记忆：\n\n${optimizedText}` }
+              ],
+              traceId,
+            });
+            
+            if (memoryResponse.ok) {
+              const memoryData = await memoryResponse.json();
+              if (memoryData.choices && memoryData.choices[0]) {
+                // 兼容 markdown 代码块包裹的 JSON
+                let memoryContent = memoryData.choices[0].message.content.trim();
+                const memoryJsonMatch = memoryContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+                if (memoryJsonMatch) {
+                  memoryContent = memoryJsonMatch[1].trim();
+                }
+                const memoryResult = JSON.parse(memoryContent);
+                
+                // 根据提取的信息类型保存到记忆系统
+                const memoryType = memoryResult.memory_type === 'instant' ? MEMORY_TYPES.INSTANT :
+                                  memoryResult.memory_type === 'long' ? MEMORY_TYPES.LONG : MEMORY_TYPES.SHORT;
+                
+                memoryStore.addMemory({
+                  type: memoryType,
+                  category: memoryResult.category || MEMORY_CATEGORIES.KNOWLEDGE,
+                  business_category: memoryResult.business_category || (classifyBusinessContext(text).length > 0 ? classifyBusinessContext(text)[0] : BUSINESS_CATEGORIES.OTHER),
+                  content: memoryResult.summary || text.substring(0, 100),
+                  metadata: {
+                    persons: memoryResult.persons || [],
+                    topics: memoryResult.topics || [],
+                    keyPoints: memoryResult.key_points || [],
+                    sentiment: memoryResult.sentiment || 'neutral',
+                    entities: memoryResult.entities || [],
+                    originalNoteId: savedNoteId,
+                    extractedFrom: 'clipboard',
+                    smartLevel: memoryResult.smart_level || null,
+                    smartMissing: memoryResult.smart_missing || []
+                  },
+                  confidence: confidence,
+                  importance: memoryResult.importance || 'normal'
+                });
+                console.log('[Memory] Structured memory extracted and saved');
+              }
+            }
+          } catch (memoryError) {
+            console.error('[Memory] Failed to extract memory:', memoryError);
+          }
         }
       }
       
@@ -5309,11 +5362,17 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
         if (msg.type === 'assistant' && msg.message?.content) {
           for (const block of msg.message.content) {
             if (block.type === 'thinking' && block.thinking) {
-              ccHasText = true;
-              send({ event: 'thinking', content: block.thinking });
+              // thinking 不走 stream_event，需要在这里发送
+              if (!ccHasText) {
+                send({ event: 'thinking', content: block.thinking });
+              }
             } else if (block.type === 'text' && block.text) {
-              ccHasText = true;
-              send({ event: 'delta', content: block.text });
+              // 🔧 修复重复：如果 text 已通过 stream_event 增量发送（ccHasText=true），
+              // 不再从 assistant 完整消息中重复发送
+              if (!ccHasText) {
+                send({ event: 'delta', content: block.text });
+                ccHasText = true;
+              }
             } else if (block.type === 'tool_use') {
               // 先推送 tool_use（添加进度步骤），再推送 tool_result（标记完成）
               const toolName = block.name || 'tool';
@@ -8570,7 +8629,12 @@ ipcMain.handle('send-adp-message', async (event, data) => {
                   // 累积完整文本用于审计日志
                   const deltaText = parsed.Text || parsed.Content?.[0]?.Text || parsed.payload?.content?.[0]?.text || '';
                   if (deltaText && (currentEvent === 'text.delta' || currentEvent === 'message.added' || currentEvent === 'content.added')) {
-                    _adpChatFullText += deltaText;
+                    // 增量检测：如果新文本以已累积文本为前缀，说明是累积模式，替换而非追加
+                    if (_adpChatFullText && deltaText.startsWith(_adpChatFullText)) {
+                      _adpChatFullText = deltaText;
+                    } else {
+                      _adpChatFullText += deltaText;
+                    }
                     // 🔧 诊断日志：首个 text.delta（判断 ADP 是否正确读取了文档）
                     if (!_firstDeltaLogged) {
                       _firstDeltaLogged = true;
@@ -10126,14 +10190,19 @@ ipcMain.handle('clipboard:get-config', async () => {
     buffer_enabled: getSetting('clipboard_buffer_enabled') !== false,
     freq_enabled: getSetting('clipboard_freq_enabled') !== false,
     association_enabled: getSetting('clipboard_association_enabled') !== false,
+    split_prompt_enabled: getSetting('clipboard_split_prompt_enabled') !== false,
     pause_on_lock: getSetting('clipboard_pause_on_lock') !== false,
     stable_timeout_normal: parseInt(getSetting('clipboard_stable_timeout_normal')) || 3000,
     stable_timeout_highfreq: parseInt(getSetting('clipboard_stable_timeout_highfreq')) || 5000,
     stable_timeout_ultrafreq: parseInt(getSetting('clipboard_stable_timeout_ultrafreq')) || 8000,
     max_fragments: parseInt(getSetting('clipboard_max_fragments')) || 20,
     max_total_length: parseInt(getSetting('clipboard_max_total_length')) || 3000,
-    freq_normal: parseInt(getSetting('clipboard_freq_normal')) || 2000,
+    // 频率配置
+    freq_active: parseInt(getSetting('clipboard_freq_active')) || 200,
+    freq_normal: parseInt(getSetting('clipboard_freq_normal')) || 800,
     freq_idle: parseInt(getSetting('clipboard_freq_idle')) || 15000,
+    freq_disabled: parseInt(getSetting('clipboard_freq_disabled')) || 10000,
+    active_threshold: parseInt(getSetting('clipboard_active_threshold')) || 10000,
     idle_threshold: parseInt(getSetting('clipboard_idle_threshold')) || 60000,
   };
 });
@@ -10142,9 +10211,11 @@ ipcMain.handle('clipboard:get-config', async () => {
 ipcMain.handle('clipboard:update-config', async (event, config) => {
   const allowedKeys = [
     'clipboard_buffer_enabled', 'clipboard_freq_enabled', 'clipboard_association_enabled',
-    'clipboard_pause_on_lock', 'clipboard_stable_timeout_normal', 'clipboard_stable_timeout_highfreq',
+    'clipboard_split_prompt_enabled', 'clipboard_pause_on_lock',
+    'clipboard_stable_timeout_normal', 'clipboard_stable_timeout_highfreq',
     'clipboard_stable_timeout_ultrafreq', 'clipboard_max_fragments', 'clipboard_max_total_length',
-    'clipboard_freq_normal', 'clipboard_freq_idle', 'clipboard_idle_threshold'
+    'clipboard_freq_active', 'clipboard_freq_normal', 'clipboard_freq_idle', 'clipboard_freq_disabled',
+    'clipboard_active_threshold', 'clipboard_idle_threshold'
   ];
   for (const [key, value] of Object.entries(config)) {
     if (allowedKeys.includes(key)) {
@@ -10152,6 +10223,11 @@ ipcMain.handle('clipboard:update-config', async (event, config) => {
     }
   }
   console.log('[Clipboard] Config updated:', config);
+  // 通知 scheduler 更新频率配置（实时生效，无需重启）
+  const scheduler = getScheduler();
+  if (scheduler && scheduler.updateFreqConfig) {
+    scheduler.updateFreqConfig();
+  }
   return { success: true };
 });
 
@@ -10298,7 +10374,7 @@ async function _checkVectorConsistency() {
   try {
     const status = vectorIndex.getStatus();
     const noteCount = notebook ? notebook.getAllNotes().length : 0;
-    const memoryCount = memoryStore ? (memoryStore.getAllMemories()?.length || memoryStore.memories?.length || 0) : 0;
+    const memoryCount = memoryStore ? (memoryStore.memories?.length || 0) : 0;
     const taskCount = db?.data?.tasks?.length || 0;
     const indexedNoteCount = status.collections.notes?.docCount || 0;
     const indexedMemoryCount = status.collections.memories?.docCount || 0;
@@ -10311,7 +10387,7 @@ async function _checkVectorConsistency() {
     if (totalDataCount > 0 && (totalIndexedCount === 0 || totalIndexedCount < totalDataCount * 0.8)) {
       console.log(`[Vector] Consistency check: data=${totalDataCount} vs indexed=${totalIndexedCount}, auto-rebuilding...`);
       const notes = notebook ? notebook.getAllNotes() : [];
-      const memories = memoryStore ? (memoryStore.getAllMemories() || memoryStore.memories || []) : [];
+      const memories = memoryStore ? (memoryStore.memories || []) : [];
       const tasks = db?.data?.tasks || [];
       const result = await vectorIndex.rebuildAll(notes, memories, tasks, []);
       console.log('[Vector] Auto-rebuild complete:', result);
@@ -10389,7 +10465,7 @@ ipcMain.handle('vector:rebuild', async () => {
   }
   try {
     const notes = notebook ? notebook.getAllNotes() : [];
-    const memories = memoryStore ? memoryStore.getAllMemories() : [];
+    const memories = memoryStore ? (memoryStore.memories || []) : [];
     const tasks = db?.data?.tasks || [];
     const result = await vectorIndex.rebuildAll(notes, memories, tasks, []);
     return { success: true, ...result };
@@ -10401,7 +10477,16 @@ ipcMain.handle('vector:rebuild', async () => {
 // 索引状态
 ipcMain.handle('vector:status', async () => {
   if (!vectorIndex) return { success: false, initialized: false };
-  return { success: true, ...vectorIndex.getStatus(), queue: vectorQueue?.getStats() };
+  return {
+    success: true,
+    ...vectorIndex.getStatus(),
+    queue: vectorQueue?.getStats(),
+    // v3.1.2: 诊断信息
+    embeddingProvider: embeddingService?.getProvider?.() || 'unknown',
+    embeddingDim: embeddingService?.getDimension?.() || 0,
+    contextLayerReady: !!unifiedContextLayer,
+    contextLayerSkipped: unifiedContextLayer ? null : 'unifiedContextLayer is null (vectorIndex init may have failed)',
+  };
 });
 
 // 浏览向量库内容（分页查看）
@@ -10462,6 +10547,42 @@ ipcMain.handle('vector:debug-search', async (event, { query, collection, topK })
 ipcMain.handle('vector:queue-status', async () => {
   if (!vectorQueue) return { success: false };
   return { success: true, ...vectorQueue.getStats() };
+});
+
+// v3.1.2: 诊断 — 测试统一上下文层检索（从 DevTools 调用）
+ipcMain.handle('vector:diagnose-context', async (event, { query }) => {
+  const result = {
+    embeddingProvider: embeddingService?.getProvider?.() || 'unknown',
+    embeddingDim: embeddingService?.getDimension?.() || 0,
+    vectorIndexInitialized: !!vectorIndex?.initialized,
+    contextLayerReady: !!unifiedContextLayer,
+  };
+
+  if (!unifiedContextLayer) {
+    result.error = 'unifiedContextLayer is null — vectorIndex.init() may have failed. Check main process logs for [Vector] errors.';
+    return result;
+  }
+
+  try {
+    const retrieveResult = await unifiedContextLayer.retrieve(query || '测试查询', {
+      mode: 'cc',
+      topK: 5,
+      sources: ['notes', 'memories', 'tasks'],
+    });
+    result.retrieve = {
+      context_length: retrieveResult.context?.length || 0,
+      sources_count: retrieveResult.sources?.length || 0,
+      sources: retrieveResult.sources?.map(s => ({ type: s.source_type, title: (s.title || '').substring(0, 30), score: s.score?.toFixed(4) })),
+      meta: retrieveResult.retrieval_meta,
+    };
+    if (retrieveResult.context) {
+      result.context_preview = retrieveResult.context.substring(0, 200);
+    }
+  } catch (e) {
+    result.error = 'Retrieve failed: ' + e.message;
+  }
+
+  return result;
 });
 
 // v3.1: 记忆利用率统计
@@ -13715,9 +13836,9 @@ const PROMPT_META = [
   { file: 'task_recognition_v2.0.md', name: '任务识别 v2.0 (单体/降级)', icon: '📋', desc: '从剪贴板/输入文本识别待办事项（单体 Prompt，拆分模式降级时使用）', used_in: '剪贴板检测降级 + AI任务分析' },
   { file: 'clipboard_classify.md', name: '剪贴板意图分类 (L1)', icon: '🏷️', desc: 'Level 1 轻量意图分类，判断 chat/task/info/question，决定后续路由', used_in: '剪贴板检测 Level 1（高频）' },
   { file: 'clipboard_task_create.md', name: '任务创建 (L2a)', icon: '✅', desc: 'Level 2a 任务详情提取：时间解析/SMART/优先级/周期性', used_in: '剪贴板检测 Level 2a（L1判定为task时）' },
-  { file: 'clipboard_info_extract.md', name: '信息提取 (L2b)', icon: '📝', desc: 'Level 2b 有效信息提取：标题提炼/分类/SMART简化版', used_in: '剪贴板检测 Level 2b（L1判定为info时）' },
+  { file: 'clipboard_info_extract.md', name: '信息提取+记忆提炼 (L2b)', icon: '📝', desc: 'Level 2b 有效信息提取+结构化记忆提炼：标题/分类/SMART/人物/主题/关键观点/实体/情感/重要性/TTL（合并 memory_extraction_v2.0 功能）', used_in: '剪贴板检测 Level 2b（L1判定为info时）' },
   { file: 'clipboard_recommend.md', name: '推荐分类 (L2c)', icon: '💡', desc: 'Level 2c 推荐意图分类：疑问/技术问题/求证', used_in: '剪贴板检测 Level 2c（L1判定为question时）' },
-  { file: 'memory_extraction_v2.0.md', name: '记忆提取 v2.0', icon: '🧠', desc: '从文本中提取结构化记忆（人物/主题/关键观点/实体等）', used_in: '记忆提炼 + 剪贴板记忆提取' },
+  { file: 'memory_extraction_v2.0.md', name: '记忆提取 v2.0 (降级备选)', icon: '🧠', desc: '从文本中提取结构化记忆（人物/主题/关键观点/实体/SMART/TTL等）。⚠️ v3.1 起已合并到 L2b (clipboard_info_extract.md)，本文件仅在拆分模式降级时作为独立 AI 调用使用', used_in: '剪贴板记忆提取（降级模式独立调用）' },
   { file: 'priority_agent.md', name: '优先级规划 Agent', icon: '🎯', desc: '今日排程和任务优先级排序，生成 Top 5 和时间分配建议', used_in: 'Agent 对话（今日排程/优先级）' },
   { file: 'knowledge_agent.md', name: '知识梳理 Agent', icon: '📚', desc: '笔记聚类、重复检测和知识整理，发现主题和关联', used_in: 'Agent 对话（整理笔记/知识梳理）' },
   { file: 'memory_agent.md', name: '记忆整理 Agent', icon: '🔄', desc: '记忆晋升/降级/淘汰/合并建议，保持记忆系统健康', used_in: 'Agent 对话（整理记忆/记忆管理）' },
@@ -14314,19 +14435,37 @@ function buildTaskCreatePrompt(traceId) {
   return rendered.replace(/__TRACE_ID__/g, traceId);
 }
 
-// Level 2b: 信息提取
+// Level 2b: 信息提取 + 记忆提炼（合并 memory_extraction_v2.0 功能）
 function buildInfoExtractPrompt(traceId) {
   const templatePath = path.join(PROMPT_DIR, 'clipboard_info_extract.md');
   if (!fs.existsSync(templatePath)) return null;
   const template = fs.readFileSync(templatePath, 'utf8');
   const { profile, frequent_persons, active_projects, custom_categories } = _getProfileVars();
+  const examples = _getFeedbackExamples('clipboard_analysis', 3);
+
+  // 加载已知实体库（从 entity-graph.json）
+  let known_entities = [];
+  try {
+    if (memoryStore) {
+      const graph = memoryStore.getEntityGraph();
+      known_entities = Object.entries(graph || {})
+        .sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
+        .slice(0, 30)
+        .map(([name, info]) => ({ id: name, name, type: info.type || 'unknown' }));
+    }
+  } catch (_) {}
+
   const vars = {
     'user_profile.name': profile.user?.name || '用户',
     'user_profile.english_name': profile.user?.english_name || '',
     'user_profile.role': profile.user?.role || '',
+    current_time: _getCurrentTimeStr(),
     frequent_persons,
     active_projects,
+    known_entities,
     custom_categories,
+    positive_examples: examples.positive,
+    negative_examples: examples.negative,
     input_text: '',
   };
   let rendered = promptEngine.render(template, vars);
@@ -14531,7 +14670,7 @@ async function analyzeClipboardSplit(text, traceId, userPrompt, isBufferMerged, 
   // 等待所有 Level 2 完成
   const level2Results = await Promise.all(level2Promises);
 
-  // 合并结果为与原单体 Prompt 兼容的格式
+  // 合并结果为与原单体 Prompt 兼容的格式（含记忆提取字段）
   const merged = {
     trace_id: traceId,
     is_task: false,
@@ -14553,6 +14692,19 @@ async function analyzeClipboardSplit(text, traceId, userPrompt, isBufferMerged, 
     smart_level: null,
     smart_missing: [],
     smart_optimized: false,
+    // 记忆提取字段（由 L2b 合并提供，覆盖 memory_extraction_v2.0 功能）
+    memory_type: null,
+    memory_category: null,
+    summary: null,
+    persons: [],
+    topics: [],
+    key_points: [],
+    sentiment: 'neutral',
+    importance: 'medium',
+    entities: [],
+    linked_known_persons: [],
+    linked_known_projects: [],
+    ttl_hint: null,
     reason: classification.quick_reason || '',
     reasoning_steps: [`L1: intent=${classification.intent} (${classification.confidence})`],
     _split_mode: true,
@@ -14592,7 +14744,20 @@ async function analyzeClipboardSplit(text, traceId, userPrompt, isBufferMerged, 
       if (!merged.smart_level) merged.smart_level = result.data.smart_level;
       if (!merged.smart_missing?.length) merged.smart_missing = result.data.smart_missing || [];
       merged.smart_optimized = merged.smart_optimized || result.data.smart_optimized;
-      merged.reasoning_steps.push('L2b: info extracted');
+      // 记忆提取字段（L2b 合并了 memory_extraction_v2.0 功能）
+      merged.memory_type = result.data.memory_type || null;
+      merged.memory_category = result.data.memory_category || null;
+      merged.summary = result.data.summary || null;
+      merged.persons = [...new Set([...merged.persons, ...(result.data.persons || [])])];
+      merged.topics = [...new Set([...merged.topics, ...(result.data.topics || [])])];
+      merged.key_points = [...new Set([...merged.key_points, ...(result.data.key_points || [])])];
+      merged.sentiment = result.data.sentiment || 'neutral';
+      merged.importance = result.data.importance || 'medium';
+      merged.entities = [...merged.entities, ...(result.data.entities || [])];
+      merged.linked_known_persons = [...new Set([...merged.linked_known_persons, ...(result.data.linked_known_persons || [])])];
+      merged.linked_known_projects = [...new Set([...merged.linked_known_projects, ...(result.data.linked_known_projects || [])])];
+      merged.ttl_hint = result.data.ttl_hint || null;
+      merged.reasoning_steps.push('L2b: info + memory extracted');
     }
 
     if (result.type === 'recommend' && result.data) {
