@@ -9883,7 +9883,17 @@ const App = {
     listEl.innerHTML = sorted.map(session => {
       // 根据类型选择图标和标签
       const taskType = session.taskType || (session.isGroupChat ? 'group' : 'chat');
+      const agentTypes = session.agentTypes || []; // 并行任务的 Agent 类型列表
       let icon, badge;
+      
+      // Agent 类型图标映射
+      const agentIconMap = {
+        cc: '🤖',
+        adp: '🤖',
+        agent: '🤖',
+        llm: '🤖',
+      };
+      
       switch (taskType) {
         case 'scheduled':
           icon = '⏰';
@@ -9893,9 +9903,27 @@ const App = {
           icon = '👥';
           badge = '<span class="chat-session-type-badge group">群聊</span>';
           break;
+        case 'parallel':
+          // 并行任务：显示多个 Agent 图标
+          if (agentTypes.length > 0) {
+            const agentIcons = agentTypes.slice(0, 3).map(mode => agentIconMap[mode] || '🤖').join(' ');
+            icon = agentIcons;
+            badge = `<span class="chat-session-type-badge parallel">并行 · ${agentTypes.length}</span>`;
+          } else {
+            icon = '⚡';
+            badge = '<span class="chat-session-type-badge parallel">并行</span>';
+          }
+          break;
         default:
-          icon = '💬';
-          badge = '';
+          // 检查是否有 Agent 类型信息
+          if (agentTypes.length > 0) {
+            const agentIcons = agentTypes.map(mode => agentIconMap[mode] || '🤖').join(' ');
+            icon = agentIcons;
+            badge = '';
+          } else {
+            icon = '💬';
+            badge = '';
+          }
       }
       return `
       <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}" data-session-id="${session.id}">
@@ -9908,7 +9936,7 @@ const App = {
     }).join('');
   },
 
-  createNewChatSession() {
+  createNewChatSession(parallelModes = null) {
     // 如果正在流式，先停止
     if (this._adpStreaming || this._ccStreaming || this._activeParallelTasks.size > 0) {
       this.stopADPGeneration();
@@ -9933,6 +9961,9 @@ const App = {
       messageCount: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      // 标记会话类型
+      taskType: parallelModes ? 'parallel' : null,
+      agentTypes: parallelModes || [], // 并行任务的 Agent 类型列表
     };
 
     this._chatSessions.unshift(session);
@@ -10782,6 +10813,11 @@ const App = {
       }
     }
 
+    // 保存并行任务结果到对话消息（用于持久化）
+    if (status === 'completed' && taskInfo.textBuffer && this._activeSessionId) {
+      this._saveParallelTaskResult(taskId, taskInfo.mode, taskInfo.textBuffer);
+    }
+
     // 检查是否所有任务都完成了
     this._checkAllTasksComplete();
   },
@@ -10869,6 +10905,57 @@ const App = {
   },
 
   /**
+   * 保存并行任务结果到对话消息（持久化）
+   */
+  _saveParallelTaskResult(taskId, mode, textBuffer) {
+    if (!this._activeSessionId) return;
+    
+    // 找到对应的会话
+    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+    if (!session) return;
+    
+    // 标记 Agent 类型（如果还没有标记）
+    if (!session.agentTypes.includes(mode)) {
+      session.agentTypes.push(mode);
+      this._saveChatSessions();
+      this._renderChatSessionList();
+    }
+    
+    // 将结果保存到 localStorage（与对话消息一起）
+    const msgKey = `memora_session_msg_${session.id}`;
+    let existingHtml = localStorage.getItem(msgKey) || '';
+    
+    // 添加 Agent 结果卡片到 HTML
+    const modeLabels = {
+      cc: 'M-Agent',
+      adp: 'Agent',
+      agent: 'Agent',
+      llm: 'LLM',
+    };
+    const modeLabel = modeLabels[mode] || mode;
+    
+    const resultCardHtml = `
+      <div class="parallel-result-card" data-mode="${mode}">
+        <div class="parallel-result-header">
+          <span class="parallel-result-badge ${mode}">${modeLabel}</span>
+          <span class="parallel-result-time">${this._formatChatTime(new Date())}</span>
+        </div>
+        <div class="parallel-result-content">
+          ${this._renderTaskText(textBuffer)}
+        </div>
+      </div>
+    `;
+    
+    // 在最后一个用户消息后插入结果卡片
+    if (!existingHtml.includes('parallel-result-card')) {
+      existingHtml += resultCardHtml;
+      localStorage.setItem(msgKey, existingHtml);
+    }
+    
+    console.log(`[Parallel] Saved result for ${mode}: ${textBuffer.length} chars`);
+  },
+
+  /**
    * 发送并行消息 — 同时调用多个 AI
    */
   async _sendParallelMessage(message, options = {}) {
@@ -10878,9 +10965,19 @@ const App = {
     // 解析文件引用
     const resolvedMessage = this._resolveFileRefs(message);
 
-    // 确保有会话
+    // 确保有会话，并标记为并行任务会话
+    const modes = this._getParallelModes();
     if (!this._activeSessionId) {
-      this.createNewChatSession();
+      this.createNewChatSession(modes);
+    } else {
+      // 标记当前会话为并行任务
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (session) {
+        session.taskType = 'parallel';
+        session.agentTypes = [...modes];
+        this._saveChatSessions();
+        this._renderChatSessionList();
+      }
     }
 
     const chatMessages = document.getElementById('chatMessages');
@@ -10947,8 +11044,7 @@ const App = {
       }
     }
 
-    // 确定要调用的 AI 模式
-    const modes = this._getParallelModes();
+    // 确定要调用的 AI 模式（modes 已在上方声明）
     if (modes.length === 0) {
       this._showToast('请至少选择一个 AI 模式', 'warning');
       return;

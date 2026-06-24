@@ -1061,6 +1061,11 @@
   color: #34C759;
 }
 
+.chat-session-type-badge.parallel {
+  background: rgba(0, 122, 255, 0.12);
+  color: #007AFF;
+}
+
 /* 按钮图标 */
 .btn-icon {
   background: none;
