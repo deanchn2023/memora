@@ -59,7 +59,7 @@ const App = {
     
     // 加载对话会话列表
     this._loadChatSessions();
-    this._renderChatSessionList();
+    this._renderChatSessionListWithPin();
 
     // 加载设置（包括本地上下文开关等）
     this._settings = Store.getSettings();
@@ -1114,14 +1114,14 @@ const App = {
       chatSearchInput.addEventListener('input', (e) => {
         const kw = e.target.value;
         if (chatSearchClear) chatSearchClear.classList.toggle('hidden', !kw);
-        this._renderChatSessionList(kw);
+        this._renderChatSessionListWithPin(kw);
       });
       // 回车时也触发搜索
       chatSearchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           chatSearchInput.value = '';
           if (chatSearchClear) chatSearchClear.classList.add('hidden');
-          this._renderChatSessionList();
+          this._renderChatSessionListWithPin();
         }
       });
     }
@@ -1129,19 +1129,55 @@ const App = {
       chatSearchClear.addEventListener('click', () => {
         if (chatSearchInput) chatSearchInput.value = '';
         chatSearchClear.classList.add('hidden');
-        this._renderChatSessionList();
+        this._renderChatSessionListWithPin();
       });
     }
     // 对话列表点击
     document.getElementById('chatSessionList')?.addEventListener('click', (e) => {
       const item = e.target.closest('.chat-session-item');
-      const deleteBtn = e.target.closest('.chat-session-delete');
-      if (deleteBtn) {
+      const moreBtn = e.target.closest('.chat-session-more-btn');
+      const toggleBtn = e.target.closest('.pinned-toggle');
+      const menuBtn = e.target.closest('.session-menu-item');
+      
+      // 下拉菜单项点击
+      if (menuBtn) {
         e.stopPropagation();
-        const sessionId = deleteBtn.dataset.sessionId;
-        this.deleteChatSession(sessionId);
+        const sessionId = menuBtn.dataset.sessionId;
+        const action = menuBtn.dataset.action;
+        this._handleSessionMenuAction(sessionId, action);
+        // 关闭菜单
+        document.querySelector('.session-dropdown-menu')?.remove();
         return;
       }
+      
+      // 更多按钮 — 显示下拉菜单
+      if (moreBtn) {
+        e.stopPropagation();
+        const sessionId = moreBtn.dataset.sessionId;
+        this._showSessionDropdownMenu(sessionId, moreBtn);
+        return;
+      }
+      
+      // 置顶区域展开/折叠
+      if (toggleBtn) {
+        e.stopPropagation();
+        const action = toggleBtn.dataset.action;
+        const list = toggleBtn.closest('.pinned-list');
+        if (list) {
+          if (action === 'expand') {
+            list.classList.remove('collapsed');
+            toggleBtn.textContent = '收起';
+            toggleBtn.dataset.action = 'collapse';
+          } else {
+            list.classList.add('collapsed');
+            toggleBtn.textContent = '展开全部';
+            toggleBtn.dataset.action = 'expand';
+          }
+        }
+        return;
+      }
+      
+      // 点击会话项切换
       if (item) {
         this.switchChatSession(item.dataset.sessionId);
       }
@@ -1280,10 +1316,18 @@ const App = {
     document.getElementById('notebookList')?.addEventListener('click', (e) => {
       // 复选框点击不触发预览展开
       if (e.target.classList.contains('note-checkbox')) return;
-      
+
+      // v3.2: Agent 跳转按钮
+      const agentJumpBtn = e.target.closest('.note-agent-jump');
+      if (agentJumpBtn) {
+        e.stopPropagation();
+        this.jumpToExpertSession(agentJumpBtn.dataset.noteId);
+        return;
+      }
+
       const noteItem = e.target.closest('.note-item');
       if (!noteItem) return;
-      
+
       const noteId = noteItem.dataset.id;
 
       // 点击图片缩略图/预览图区域：不 toggle 预览，仅靠双击打开查看器
@@ -1539,6 +1583,7 @@ const App = {
       document.getElementById('cbBufferEnabled').checked = config.buffer_enabled !== false;
       document.getElementById('cbAssociationEnabled').checked = config.association_enabled !== false;
       document.getElementById('cbSplitPromptEnabled').checked = config.split_prompt_enabled !== false;
+      document.getElementById('cbExpertAutoProcess').checked = config.expert_auto_process !== false;
       // 频率配置
       document.getElementById('cbFreqActive').value = config.freq_active ?? 200;
       document.getElementById('cbFreqNormal').value = config.freq_normal ?? 800;
@@ -1567,6 +1612,7 @@ const App = {
       clipboard_buffer_enabled: document.getElementById('cbBufferEnabled').checked,
       clipboard_association_enabled: document.getElementById('cbAssociationEnabled').checked,
       clipboard_split_prompt_enabled: document.getElementById('cbSplitPromptEnabled').checked,
+      clipboard_expert_auto_process: document.getElementById('cbExpertAutoProcess').checked,
       clipboard_freq_active: parseInt(document.getElementById('cbFreqActive').value) || 200,
       clipboard_freq_normal: parseInt(document.getElementById('cbFreqNormal').value) || 800,
       clipboard_freq_idle: parseInt(document.getElementById('cbFreqIdle').value) || 15000,
@@ -1592,6 +1638,7 @@ const App = {
     document.getElementById('cbBufferEnabled').checked = true;
     document.getElementById('cbAssociationEnabled').checked = true;
     document.getElementById('cbSplitPromptEnabled').checked = true;
+    document.getElementById('cbExpertAutoProcess').checked = true;
     document.getElementById('cbFreqActive').value = 200;
     document.getElementById('cbFreqNormal').value = 800;
     document.getElementById('cbFreqIdle').value = 15000;
@@ -3856,9 +3903,35 @@ const App = {
     const input = document.getElementById('aiChatInput');
     const message = input.value.trim();
 
+    // 检测当前是否有任务在执行
+    const isBusy = this._adpStreaming || this._ccStreaming || this._activeParallelTasks.size > 0;
+
     // v3.1: 并行模式 — 同时调用多个 AI
     if (this._parallelMode && !forceMode) {
+      // 并行模式下，不停止已有任务，新任务直接并发执行
       return this._sendParallelMessage(message, options);
+    }
+
+    // 串行模式下，如果当前有任务在执行，提示用户选择
+    if (isBusy && !forceMode && message) {
+      const choice = await this._showTaskConflictDialog();
+      if (choice === 'parallel') {
+        // 用户选择开启并行模式
+        this._parallelMode = true;
+        const btn = document.getElementById('parallelToggleBtn');
+        if (btn) btn.classList.add('active');
+        return this._sendParallelMessage(message, options);
+      } else if (choice === 'queue') {
+        // 用户选择等待，将消息加入队列
+        this._pendingMessage = { message, options };
+        this._showToast('消息已加入队列，当前任务完成后自动发送', 'info');
+        // 显示队列提示
+        this._showPendingMessageIndicator();
+        return;
+      } else {
+        // 用户取消
+        return;
+      }
     }
     
     // 需要有消息或附件
@@ -4012,7 +4085,7 @@ const App = {
       session.title = message.length > 30 ? message.slice(0, 30) + '...' : message;
       session.updatedAt = new Date().toISOString();
       this._saveChatSessions();
-      this._renderChatSessionList();
+      this._renderChatSessionListWithPin();
     }
 
     // 添加助手消息占位符（带加载动画）
@@ -4192,6 +4265,17 @@ const App = {
         if (selectedProviderId) {
           adpMessageData.providerHint = selectedProviderId;
         }
+        
+        // 保存原始消息用于会话过期时自动重试
+        this._lastSendMessage = message;
+        
+        // 如果是 460919 重试，注入历史上下文到 systemRole
+        if (this._adpRetryContext) {
+          adpMessageData.systemRole = (adpMessageData.systemRole || '') + this._adpRetryContext;
+          console.log('[ADP] Retry context injected:', this._adpRetryContext.length, 'chars');
+          this._adpRetryContext = null; // 用完清除
+        }
+        
         result = await window.electronAPI.sendADPMessage(adpMessageData);
 
         // 文档解析阶段已结束，移除上传进度监听并隐藏状态行
@@ -4254,9 +4338,82 @@ const App = {
           messageContent.insertAdjacentHTML('beforeend', `<div class="adp-config-source">${sourceLabel}</div>`);
           this._addCopyButton(messageContent);
         } else {
-          const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
-          const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
-          throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
+          // 检测会话过期错误（HTTP 层面）
+          const errStr = result.error || '';
+          if (errStr.includes('460919') || errStr.includes('会话ID已存在')) {
+            console.log('[ADP] HTTP 460919 detected, clearing session and retrying with context...');
+            // 清除旧会话
+            window.electronAPI?.setADPConversationId?.(null);
+            if (this._activeSessionId) {
+              const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+              if (session) {
+                session.conversationId = null;
+                this._saveChatSessions();
+              }
+            }
+            // 构建历史上下文并注入
+            const retryContext = this._buildADPRetryContext();
+            if (retryContext) {
+              adpMessageData.systemRole = (adpMessageData.systemRole || '') + '\n\n' + retryContext;
+            }
+            // 重试一次（带历史上下文）
+            const retryResult = await window.electronAPI.sendADPMessage(adpMessageData);
+            if (retryResult.success && retryResult.streaming) {
+              this._adpStreaming = true;
+              document.body.classList.add('streaming-active');
+              this._adpCurrentText = '';
+              this._adpThinkingText = '';
+              this._adpStepMap = {};
+              this._updateStreamingUI(true);
+              this._adpToolStepCount = 0;
+              this._adpFileItems = [];
+              this._adpCurrentBubble = null;
+              this._adpRenderPending = false;
+              this._adpConfigSource = retryResult.configSource || '';
+              this._adpReplyMsgId = '';
+              this._adpCurrentMessageEl = messageContent;
+              if (retryResult.conversationId && this._activeSessionId) {
+                const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+                if (session && session.conversationId !== retryResult.conversationId) {
+                  session.conversationId = retryResult.conversationId;
+                  this._saveChatSessions();
+                  console.log('[Chat] Saved new convId after retry:', retryResult.conversationId);
+                }
+              }
+              this._adpTimerStart = Date.now();
+              this._adpTimerEl = null;
+              const _timerMsgEl2 = messageContent;
+              this._adpTimerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - this._adpTimerStart) / 1000);
+                let el = this._adpTimerEl;
+                if (!el) {
+                  el = _timerMsgEl2?.querySelector('#adpProgressTimer') || document.getElementById('adpProgressTimer');
+                  this._adpTimerEl = el;
+                }
+                if (el) el.textContent = elapsed + 's';
+              }, 1000);
+              await new Promise((resolve) => {
+                this._adpStreamResolve = resolve;
+                window.electronAPI.onADPSSEEvent((evt) => {
+                  this._handleADPSSEEvent(evt, assistantMessage);
+                });
+              });
+              this.showToast('会话已过期，已自动创建新会话', 'info');
+            } else if (retryResult.success && !retryResult.streaming) {
+              const renderedContent = this.escapeHtml(retryResult.content).replace(/\n/g, '<br>');
+              messageContent.innerHTML = `<div class="adp-response-text">${renderedContent}</div>`;
+              this._addCopyButton(messageContent);
+              this.showToast('会话已过期，已自动创建新会话', 'info');
+            } else {
+              const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+              const sourceLabel = sourceLabels[retryResult.configSource] || '📦 内置默认';
+              throw new Error(`${retryResult.error || '发送失败'}（${sourceLabel}）`);
+            }
+          } else {
+            const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
+            const sourceLabel = sourceLabels[result.configSource] || '📦 内置默认';
+            throw new Error(`${result.error || '发送失败'}（${sourceLabel}）`);
+          }
         }
       } else if (this._aiAssistantMode === 'cc' && window.electronAPI?.ccInvoke) {
         // M-Agent 模式：使用 Claude Code Agent SDK（Coding Plan）
@@ -7877,6 +8034,42 @@ const App = {
     if (event === 'error') {
       const errMsg = data?.Error?.Message || data?.error?.message || data?.msg || data?.Message || '未知错误';
       const errCode = data?.Error?.Code || data?.code || '';
+      
+      // 检测会话过期错误（460919），自动清除旧会话并重试（带历史上下文）
+      if ((errCode === 460919 || errCode === '460919' || errMsg.includes('会话ID已存在')) && !this._adpRetrying) {
+        this._adpRetrying = true;
+        console.log('[ADP] Session expired (460919), auto-retrying with new session + history context...');
+        
+        // 从历史消息构建上下文摘要
+        this._adpRetryContext = this._buildADPRetryContext();
+        
+        // 清除旧的 conversationId
+        window.electronAPI?.setADPConversationId?.(null);
+        if (this._activeSessionId) {
+          const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+          if (session) {
+            session.conversationId = null;
+            this._saveChatSessions();
+          }
+        }
+        
+        // 显示恢复提示（不是错误，是进度提示）
+        messageContent.innerHTML = `<div class="adp-progress"><div class="adp-progress-header"><div class="adp-progress-spinner"></div><span class="adp-progress-title">⏳ 会话已过期，正在恢复对话上下文...</span></div></div>`;
+        
+        // 延迟后自动重试发送最后一条消息
+        setTimeout(() => {
+          this._adpRetrying = false;
+          const lastUserMsg = this._lastSendMessage || '';
+          if (lastUserMsg) {
+            // 移除当前提示
+            assistantMessage.remove();
+            // 重新发送（sendMessage 会自动注入 _adpRetryContext）
+            this.sendMessage(lastUserMsg);
+          }
+        }, 800);
+        return;
+      }
+      
       this._addErrorToADP(messageContent, errCode ? `[${errCode}] ${errMsg}` : errMsg);
       this._finishADPMessage(messageContent);
       return;
@@ -8075,6 +8268,61 @@ const App = {
         }
         break;
 
+      case 'message.done': {
+        // ADP V2: message.done 包含消息的最终完整内容
+        const msg = data?.Message || {};
+        const msgId = data?.MessageId || msg.MessageId || '';
+        const msgType = msg.Type || '';
+        
+        console.log('[ADP] message.done: type=', msgType, 'msgId=', msgId, 'contents=', msg.Contents?.length || 0);
+        
+        // 如果是 reply 类型且有文本内容，用最终内容补充
+        if (msgType === 'reply' || msg.Name === 'reply') {
+          const finalText = msg.Contents?.[0]?.Text || '';
+          if (finalText) {
+            console.log('[ADP] message.done reply text length:', finalText.length, 'vs streamed:', this._adpCurrentText?.length || 0, 'isWidget:', this._isADPWidgetContent(finalText));
+            // 如果最终文本比流式累积的更完整，使用最终文本
+            if (finalText.length > (this._adpCurrentText?.length || 0)) {
+              this._adpCurrentText = finalText;
+              if (!this._adpCurrentBubble) this._startADPReply(messageContent);
+              this._renderADPBubble();
+            }
+          }
+          
+          // 检查 Contents 中是否有多个内容项（widget 可能是第二个 Content）
+          if (msg.Contents && msg.Contents.length > 1) {
+            for (let i = 1; i < msg.Contents.length; i++) {
+              const contentText = msg.Contents[i]?.Text || '';
+              if (contentText && this._isADPWidgetContent(contentText)) {
+                console.log('[ADP] Widget detected in reply Contents[' + i + ']');
+                try {
+                  const widgetData = JSON.parse(contentText);
+                  const widgetContainer = document.createElement('div');
+                  widgetContainer.className = 'adp-widget-container';
+                  messageContent.appendChild(widgetContainer);
+                  this._renderADPWidget(msgId, widgetData, widgetContainer);
+                } catch (e) {
+                  console.warn('[ADP] Failed to render widget from Contents[' + i + ']:', e);
+                }
+              }
+            }
+          }
+        }
+        
+        // 如果 message.done 有 Contents 但非 reply 类型，也检查是否需要补充
+        if (msg.Contents?.[0]?.Text && msgType !== 'reply' && msgType !== 'tool_call' && msgType !== 'thought') {
+          const stepInfo = this._adpStepMap[msgId];
+          if (stepInfo && stepInfo.type !== 'reply') {
+            const finalText = msg.Contents[0].Text;
+            if (finalText.length > (stepInfo.textBuffer?.length || 0)) {
+              stepInfo.textBuffer = finalText;
+              this._updateADPStepDetailStreaming(msgId, finalText);
+            }
+          }
+        }
+        break;
+      }
+
       case 'thought':
         // 兼容旧版 thought 事件（V1 接口）
         if (data?.Text || data?.Content) {
@@ -8113,7 +8361,18 @@ const App = {
     this._adpRenderPending = true;
     requestAnimationFrame(() => {
       if (this._adpCurrentBubble) {
-        this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(this._adpCurrentText, this._adpThinkingText);
+        const text = this._adpCurrentText || '';
+        // 流式过程中如果检测到 widget JSON，先用 <pre> 显示原始 JSON
+        // 最终渲染时会在 _finishADPMessage 中正确渲染为 widget
+        if (this._isADPWidgetContent(text)) {
+          // 尝试提取 widget 前的普通文本
+          const jsonStart = text.indexOf('{');
+          const textBefore = jsonStart > 0 ? text.substring(0, jsonStart) : '';
+          const markdownHtml = textBefore.trim() ? this._renderADPMarkdown(textBefore, this._adpThinkingText) : '';
+          this._adpCurrentBubble.innerHTML = `${markdownHtml}<div class="adp-widget-loading">📋 正在加载交互式表单...</div>`;
+        } else {
+          this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(text, this._adpThinkingText);
+        }
       }
       this._adpRenderPending = false;
     });
@@ -8138,7 +8397,32 @@ const App = {
     if (this._adpCurrentBubble) {
       this._adpCurrentBubble.classList.remove('adp-response-streaming');
       this._adpCurrentBubble.removeAttribute('id');
-      this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(this._adpCurrentText, this._adpThinkingText);
+
+      // 检查 _adpCurrentText 是否包含 widget 内容
+      const currentText = this._adpCurrentText || '';
+      if (this._isADPWidgetContent(currentText)) {
+        try {
+          const widgetData = JSON.parse(currentText);
+          // 先渲染前面的普通文本（如果有）
+          const textBeforeWidget = currentText.substring(0, currentText.indexOf('{'));
+          if (textBeforeWidget.trim()) {
+            this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(textBeforeWidget, this._adpThinkingText);
+          } else {
+            this._adpCurrentBubble.innerHTML = '';
+          }
+          // 渲染 widget
+          const widgetContainer = document.createElement('div');
+          widgetContainer.className = 'adp-widget-container';
+          this._adpCurrentBubble.appendChild(widgetContainer);
+          this._renderADPWidget('', widgetData, widgetContainer);
+          console.log('[ADP] Widget rendered from _adpCurrentText in _finishADPMessage');
+        } catch (e) {
+          console.warn('[ADP] Failed to parse widget from reply text:', e);
+          this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(currentText, this._adpThinkingText);
+        }
+      } else {
+        this._adpCurrentBubble.innerHTML = this._renderADPMarkdown(currentText, this._adpThinkingText);
+      }
 
       // 事件委托已在 _handleChatClick 中统一处理链接、思考折叠、产物保存等
     }
@@ -8188,8 +8472,34 @@ const App = {
       this._adpStreamResolve = null;
     }
 
+    // 处理排队消息
+    if (this._pendingMessage && !this._parallelMode) {
+      setTimeout(() => this._processPendingMessage(), 500);
+    }
+
     const chatMessages = document.getElementById('chatMessages');
     if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // v3.2: 保存 ADP 对话历史（用于 460919 重试时构建上下文）
+    if (this._adpCurrentText && this._activeSessionId) {
+      const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+      if (session) {
+        if (!session.conversationHistory) session.conversationHistory = [];
+        const userMsg = this._lastSendMessage || '';
+        const aiSummary = this._adpCurrentText.substring(0, 800);
+        if (userMsg && aiSummary) {
+          session.conversationHistory.push({
+            user: userMsg.substring(0, 500),
+            assistant: aiSummary,
+            timestamp: new Date().toISOString(),
+          });
+          if (session.conversationHistory.length > 10) {
+            session.conversationHistory = session.conversationHistory.slice(-10);
+          }
+          this._saveChatSessions();
+        }
+      }
+    }
 
     // 流式完成后保存会话消息
     this._saveCurrentSessionMessages();
@@ -8893,18 +9203,23 @@ const App = {
   // ===== ADP 交互式技能组件（Widget）渲染 =====
 
   _isADPWidgetContent(text) {
-    if (!text || typeof text !== 'string' || text.length < 20) return false;
+    if (!text || typeof text !== 'string' || text.length < 10) return false;
+    // 快速检查：必须以 { 开头
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{')) return false;
     let parsed;
     try {
-      parsed = JSON.parse(text);
+      parsed = JSON.parse(trimmed);
     } catch { return false; }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
     const keys = Object.keys(parsed);
-    const widgetKeywords = ['widget', 'form', 'skill', 'question', 'interactive', 'options', 'fields', 'actions', 'buttons', 'steps', 'choices'];
+    // 扩展关键词：支持更多 widget 结构
+    const widgetKeywords = ['widget', 'form', 'skill', 'question', 'interactive', 'options', 'fields', 'actions', 'buttons', 'steps', 'choices', 'questions', 'items', 'inputs', 'params', 'required', 'placeholder', 'label', 'hint'];
     const hasWidgetKeyword = widgetKeywords.some(kw => keys.some(k => k.toLowerCase().includes(kw)));
-    const hasArrayChildren = ['options', 'fields', 'actions', 'buttons', 'steps', 'choices'].some(k => Array.isArray(parsed[k]) && parsed[k].length > 0);
-    const hasType = parsed.type && ['widget', 'form', 'question', 'skill', 'interactive'].includes(String(parsed.type).toLowerCase());
-    return !!(hasWidgetKeyword || hasArrayChildren || hasType);
+    const hasArrayChildren = ['options', 'fields', 'actions', 'buttons', 'steps', 'choices', 'questions', 'items', 'inputs'].some(k => Array.isArray(parsed[k]) && parsed[k].length > 0);
+    const hasType = parsed.type && ['widget', 'form', 'question', 'skill', 'interactive', 'ask_user_question', 'ask_user'].includes(String(parsed.type).toLowerCase());
+    const hasContentType = parsed.content_type && ['widget', 'form', 'question', 'interactive'].includes(String(parsed.content_type).toLowerCase());
+    return !!(hasWidgetKeyword || hasArrayChildren || hasType || hasContentType);
   },
 
   _renderADPWidget(msgId, data, container) {
@@ -9812,7 +10127,7 @@ const App = {
     if (this._activeSessionId) {
       this._restoreSessionMessages(this._activeSessionId);
       // 标记当前会话为选中状态
-      this._renderChatSessionList();
+      this._renderChatSessionListWithPin();
     }
   },
 
@@ -9825,16 +10140,21 @@ const App = {
         messageCount: s.messageCount || 0,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt || s.createdAt,
-        conversationId: s.conversationId || null, // 必须持久化 ADP 会话 ID 才能保持上下文
-        _fromCloud: s._fromCloud || false,        // 来自云端的会话标记
-        _revision: s._revision || 0,              // 云端同步 revision
-        isGroupChat: s.isGroupChat || false,       // 群聊标记
-        groupId: s.groupId || null,               // 专家团 ID
-        groupName: s.groupName || null,           // 专家团名称
-        taskType: s.taskType || 'chat',           // chat=对话, scheduled=定时任务, group=群聊
-        expertId: s.expertId || null,             // 关联的专家 ID
-        expertName: s.expertName || null,         // 关联的专家名称
-        taskId: s.taskId || null,                 // 关联的定时任务 ID
+        conversationId: s.conversationId || null,
+        _fromCloud: s._fromCloud || false,
+        _revision: s._revision || 0,
+        isGroupChat: s.isGroupChat || false,
+        groupId: s.groupId || null,
+        groupName: s.groupName || null,
+        taskType: s.taskType || 'chat',
+        expertId: s.expertId || null,
+        expertName: s.expertName || null,
+        taskId: s.taskId || null,
+        pinned: s.pinned || false,
+        pinnedAt: s.pinnedAt || null,
+        agentTypes: s.agentTypes || [],
+        imported: s.imported || false,
+        importedFrom: s.importedFrom || null,
       }));
       localStorage.setItem('memora_chat_sessions', JSON.stringify(toSave));
     } catch (e) {
@@ -9883,16 +10203,10 @@ const App = {
     listEl.innerHTML = sorted.map(session => {
       // 根据类型选择图标和标签
       const taskType = session.taskType || (session.isGroupChat ? 'group' : 'chat');
-      const agentTypes = session.agentTypes || []; // 并行任务的 Agent 类型列表
+      const agentTypes = session.agentTypes || [];
       let icon, badge;
       
-      // Agent 类型图标映射
-      const agentIconMap = {
-        cc: '🤖',
-        adp: '🤖',
-        agent: '🤖',
-        llm: '🤖',
-      };
+      const agentIconMap = { cc: '🤖', adp: '🤖', agent: '🤖', llm: '🤖' };
       
       switch (taskType) {
         case 'scheduled':
@@ -9904,7 +10218,6 @@ const App = {
           badge = '<span class="chat-session-type-badge group">群聊</span>';
           break;
         case 'parallel':
-          // 并行任务：显示多个 Agent 图标
           if (agentTypes.length > 0) {
             const agentIcons = agentTypes.slice(0, 3).map(mode => agentIconMap[mode] || '🤖').join(' ');
             icon = agentIcons;
@@ -9915,35 +10228,220 @@ const App = {
           }
           break;
         default:
-          // 检查是否有 Agent 类型信息
           if (agentTypes.length > 0) {
-            const agentIcons = agentTypes.map(mode => agentIconMap[mode] || '🤖').join(' ');
-            icon = agentIcons;
+            icon = agentTypes.map(mode => agentIconMap[mode] || '🤖').join(' ');
             badge = '';
           } else {
             icon = '💬';
             badge = '';
           }
       }
+      
+      const pinnedIndicator = session.pinned ? '<span class="chat-session-pinned-indicator">📌</span>' : '';
+      
       return `
-      <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}" data-session-id="${session.id}">
+      <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}${session.pinned ? ' pinned' : ''}" data-session-id="${session.id}">
+        ${pinnedIndicator}
         <span class="chat-session-type-icon">${icon}</span>
         <span class="chat-session-title">${this.escapeHtml(session.title || '新对话')}</span>
         ${badge}
-        <button class="chat-session-delete" data-session-id="${session.id}" title="删除对话">×</button>
+        <button class="chat-session-more-btn" data-session-id="${session.id}" title="更多操作">⋮</button>
       </div>
     `;
     }).join('');
   },
 
+  /**
+   * 渲染置顶区域
+   */
+  _renderPinnedSection(pinnedSessions) {
+    const maxVisible = 5;
+    const hasMore = pinnedSessions.length > maxVisible;
+    const visibleSessions = pinnedSessions.slice(0, maxVisible);
+    const hiddenCount = pinnedSessions.length - maxVisible;
+    
+    let html = `
+      <div class="chat-session-pinned-section">
+        <div class="pinned-header">
+          <span class="pinned-title">📌 置顶 (${pinnedSessions.length})</span>
+          ${hasMore ? '<button class="pinned-toggle" data-action="expand">展开全部</button>' : ''}
+        </div>
+        <div class="pinned-list ${hasMore ? 'collapsed' : ''}">
+          ${visibleSessions.map(session => {
+            const taskType = session.taskType || 'chat';
+            const agentTypes = session.agentTypes || [];
+            let icon, badge;
+            const agentIconMap = { cc: '🤖', adp: '🤖', agent: '🤖', llm: '🤖' };
+            
+            switch (taskType) {
+              case 'scheduled':
+                icon = '⏰';
+                badge = '<span class="chat-session-type-badge scheduled">定时</span>';
+                break;
+              case 'group':
+                icon = '👥';
+                badge = '<span class="chat-session-type-badge group">群聊</span>';
+                break;
+              case 'parallel':
+                if (agentTypes.length > 0) {
+                  const agentIcons = agentTypes.slice(0, 3).map(mode => agentIconMap[mode] || '🤖').join(' ');
+                  icon = agentIcons;
+                  badge = `<span class="chat-session-type-badge parallel">并行 · ${agentTypes.length}</span>`;
+                } else {
+                  icon = '⚡';
+                  badge = '<span class="chat-session-type-badge parallel">并行</span>';
+                }
+                break;
+              default:
+                if (agentTypes.length > 0) {
+                  icon = agentTypes.map(mode => agentIconMap[mode] || '🤖').join(' ');
+                  badge = '';
+                } else {
+                  icon = '💬';
+                  badge = '';
+                }
+            }
+            
+            const pinBtnIcon = '📍';
+            return `
+              <div class="chat-session-item pinned-item ${session.id === this._activeSessionId ? 'active' : ''}" data-session-id="${session.id}">
+                <span class="chat-session-pinned-indicator">📌</span>
+                <span class="chat-session-type-icon">${icon}</span>
+                <span class="chat-session-title">${this.escapeHtml(session.title || '新对话')}</span>
+                ${badge}
+                <button class="chat-session-more-btn" data-session-id="${session.id}" title="更多操作">⋮</button>
+              </div>
+            `;
+          }).join('')}
+          ${hasMore ? `
+            <div class="pinned-collapsed">
+              <div class="pinned-collapsed-count">还有 ${hiddenCount} 个置顶会话</div>
+              <button class="pinned-toggle" data-action="expand">展开查看</button>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+    
+    return html;
+  },
+
+  /**
+   * 渲染会话列表（支持置顶）
+   */
+  _renderChatSessionListWithPin(keyword) {
+    const listEl = document.getElementById('chatSessionList');
+    if (!listEl) return;
+
+    if (this._chatSessions.length === 0) {
+      listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-tertiary); font-size: 12px;">暂无对话</div>';
+      return;
+    }
+
+    // 复制数组避免修改原数组
+    let sorted = [...this._chatSessions];
+
+    // 搜索过滤
+    if (keyword && keyword.trim()) {
+      const kw = keyword.trim().toLowerCase();
+      sorted = sorted.filter(session => {
+        const title = (session.title || '新对话').toLowerCase();
+        const msgHtml = localStorage.getItem('memora_session_msg_' + session.id) || '';
+        return title.includes(kw) || msgHtml.toLowerCase().includes(kw);
+      });
+    }
+
+    // 分离置顶和普通会话
+    const pinnedSessions = sorted.filter(s => s.pinned).sort((a, b) => 
+      new Date(b.pinnedAt || b.createdAt) - new Date(a.pinnedAt || a.createdAt)
+    );
+    const normalSessions = sorted.filter(s => !s.pinned).sort((a, b) =>
+      new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)
+    );
+
+    // 渲染
+    let html = '';
+    
+    // 置顶区域
+    if (pinnedSessions.length > 0) {
+      html += this._renderPinnedSection(pinnedSessions);
+    }
+    
+    // 普通会话区域
+    if (normalSessions.length > 0) {
+      html += normalSessions.map(session => {
+        const taskType = session.taskType || (session.isGroupChat ? 'group' : 'chat');
+        const agentTypes = session.agentTypes || [];
+        let icon, badge;
+        
+        const agentIconMap = { cc: '🤖', adp: '🤖', agent: '🤖', llm: '🤖' };
+        
+        switch (taskType) {
+          case 'scheduled':
+            icon = '⏰';
+            badge = '<span class="chat-session-type-badge scheduled">定时</span>';
+            break;
+          case 'group':
+            icon = '👥';
+            badge = '<span class="chat-session-type-badge group">群聊</span>';
+            break;
+          case 'parallel':
+            if (agentTypes.length > 0) {
+              const agentIcons = agentTypes.slice(0, 3).map(mode => agentIconMap[mode] || '🤖').join(' ');
+              icon = agentIcons;
+              badge = `<span class="chat-session-type-badge parallel">并行 · ${agentTypes.length}</span>`;
+            } else {
+              icon = '⚡';
+              badge = '<span class="chat-session-type-badge parallel">并行</span>';
+            }
+            break;
+          default:
+            if (agentTypes.length > 0) {
+              icon = agentTypes.map(mode => agentIconMap[mode] || '🤖').join(' ');
+              badge = '';
+            } else {
+              icon = '💬';
+              badge = '';
+            }
+        }
+        
+        const pinBtnIcon = '📌';
+        
+        return `
+        <div class="chat-session-item${session.id === this._activeSessionId ? ' active' : ''}" data-session-id="${session.id}">
+          <span class="chat-session-pinned-indicator"></span>
+          <span class="chat-session-type-icon">${icon}</span>
+          <span class="chat-session-title">${this.escapeHtml(session.title || '新对话')}</span>
+          ${badge}
+          <button class="chat-session-more-btn" data-session-id="${session.id}" title="更多操作">⋮</button>
+        </div>
+      `;
+      }).join('');
+    }
+    
+    listEl.innerHTML = html;
+  },
+
   createNewChatSession(parallelModes = null) {
     // 如果正在流式，先停止
     if (this._adpStreaming || this._ccStreaming || this._activeParallelTasks.size > 0) {
+      // 并行任务进行中提示
+      if (this._activeParallelTasks.size > 0) {
+        this._showToast('⚠️ 并行任务正在执行，切换会话可能丢失未完成的任务结果', 'warning');
+      }
       this.stopADPGeneration();
     }
 
-    // 保存当前对话消息
-    this._saveCurrentSessionMessages();
+    // 立即保存当前会话消息到正确的 session（防止切换后 _activeSessionId 变化导致存错）
+    const oldSessionId = this._activeSessionId;
+    if (oldSessionId) {
+      this._saveSessionMessagesForSession(oldSessionId);
+    }
+    // 清除防抖定时器，避免延迟保存到新会话
+    if (this._saveSessionTimer) {
+      clearTimeout(this._saveSessionTimer);
+      this._saveSessionTimer = null;
+    }
 
     // 通知主进程重置 ConversationId
     window.electronAPI?.newADPChat?.();
@@ -9969,7 +10467,7 @@ const App = {
     this._chatSessions.unshift(session);
     this._activeSessionId = sessionId;
     this._saveChatSessions();
-    this._renderChatSessionList();
+    this._renderChatSessionListWithPin();
 
     // 同步：推送新会话到云端
     this._syncPushConversation(session);
@@ -10007,8 +10505,15 @@ const App = {
       this.stopADPGeneration();
     }
 
-    // 保存当前对话消息
-    this._saveCurrentSessionMessages();
+    // 立即保存当前会话消息到正确的 session（防止切换后存错）
+    const oldSessionId = this._activeSessionId;
+    if (oldSessionId) {
+      this._saveSessionMessagesForSession(oldSessionId);
+    }
+    if (this._saveSessionTimer) {
+      clearTimeout(this._saveSessionTimer);
+      this._saveSessionTimer = null;
+    }
 
     // 切换到目标会话
     this._activeSessionId = sessionId;
@@ -10018,7 +10523,7 @@ const App = {
       targetSession.updatedAt = new Date().toISOString();
       this._saveChatSessions();
     }
-    this._renderChatSessionList();
+    this._renderChatSessionListWithPin();
     localStorage.setItem('memora_active_session', sessionId);
 
     // CC 模式：更新工作目录指示器（每个会话可有不同 workdir）
@@ -10062,14 +10567,323 @@ const App = {
     this._saveChatSessions();
 
     // 如果删除的是当前会话，切换到其他会话或新建
-    if (sessionId === this._activeSessionId) {
+    if (this._activeSessionId === sessionId) {
       if (this._chatSessions.length > 0) {
-        this.switchChatSession(this._chatSessions[0].id);
+        this._activeSessionId = this._chatSessions[0].id;
+        this._renderChatSessionListWithPin();
+        this._restoreSessionMessages(this._activeSessionId);
       } else {
         this.createNewChatSession();
       }
     } else {
-      this._renderChatSessionList();
+      this._renderChatSessionListWithPin();
+    }
+  },
+
+  // ========== 会话置顶功能 ==========
+
+  /**
+   * 从当前会话历史消息构建 ADP 重试上下文
+   * 用于会话过期(460919)后，将历史对话压缩注入新会话
+   */
+  _buildADPRetryContext() {
+    if (!this._activeSessionId) return '';
+    
+    // 优先使用已保存的 conversationHistory（更准确，是原始文本摘要）
+    const session = this._chatSessions.find(s => s.id === this._activeSessionId);
+    if (session?.conversationHistory?.length > 0) {
+      const turns = session.conversationHistory.map(turn =>
+        `用户: ${turn.user}\n助手: ${(turn.assistant || '').substring(0, 300)}`
+      );
+      const recentTurns = turns.slice(-5);
+      const context = `[对话历史摘要]\n以下是本对话窗口中之前的对话内容，请在回答时参考这些上下文，保持对话的连续性：\n\n${recentTurns.join('\n\n')}\n\n[当前问题]\n`;
+      console.log(`[ADP Retry] Built context from saved history: ${recentTurns.length} turns, ${context.length} chars`);
+      return context;
+    }
+    
+    // 降级：从 HTML 消息解析
+    const msgHtml = localStorage.getItem('memora_session_msg_' + this._activeSessionId) || '';
+    if (!msgHtml) return '';
+    
+    const history = this._parseConversationHistory(msgHtml);
+    if (history.length === 0) return '';
+    
+    const turns = [];
+    let currentUserText = '';
+    
+    for (const msg of history) {
+      if (msg.role === 'user') {
+        currentUserText = msg.text.substring(0, 500);
+      } else if (msg.role === 'assistant' && currentUserText) {
+        const aiText = msg.text.substring(0, 300).trim();
+        turns.push(`用户: ${currentUserText}\n助手: ${aiText}`);
+        currentUserText = '';
+      }
+    }
+    
+    if (turns.length === 0) return '';
+    
+    const recentTurns = turns.slice(-5);
+    const context = `[对话历史摘要]\n以下是本对话窗口中之前的对话内容，请在回答时参考这些上下文，保持对话的连续性：\n\n${recentTurns.join('\n\n')}\n\n[当前问题]\n`;
+    
+    console.log(`[ADP Retry] Built context from HTML: ${recentTurns.length} turns, ${context.length} chars`);
+    return context;
+  },
+
+  /**
+
+  /**
+   * 显示会话操作下拉菜单
+   */
+  _showSessionDropdownMenu(sessionId, anchorEl) {
+    // 先关闭已有菜单
+    document.querySelector('.session-dropdown-menu')?.remove();
+    
+    const session = this._chatSessions.find(s => s.id === sessionId);
+    if (!session) return;
+    
+    const menu = document.createElement('div');
+    menu.className = 'session-dropdown-menu';
+    
+    const isPinned = session.pinned;
+    const items = [
+      { action: 'pin', label: isPinned ? '📍 取消置顶' : '📌 置顶会话' },
+      { action: 'export', label: '📤 导出为 .ora' },
+      { action: 'import', label: '📥 导入 .ora 文件' },
+      { action: 'delete', label: '🗑️ 删除会话', danger: true },
+    ];
+    
+    menu.innerHTML = items.map(item => 
+      `<div class="session-menu-item${item.danger ? ' danger' : ''}" data-session-id="${sessionId}" data-action="${item.action}">${item.label}</div>`
+    ).join('');
+    
+    // 定位菜单
+    const rect = anchorEl.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.right = (window.innerWidth - rect.right) + 'px';
+    
+    document.body.appendChild(menu);
+    
+    // 直接在菜单项上绑定点击事件（不依赖父容器事件委托）
+    menu.querySelectorAll('.session-menu-item').forEach(itemEl => {
+      itemEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sid = itemEl.dataset.sessionId;
+        const action = itemEl.dataset.action;
+        this._handleSessionMenuAction(sid, action);
+        menu.remove();
+      });
+    });
+    
+    // 点击外部关闭
+    const closeHandler = (e) => {
+      if (!menu.contains(e.target) && e.target !== anchorEl) {
+        menu.remove();
+        document.removeEventListener('click', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+  },
+
+  /**
+   * 处理菜单项动作
+   */
+  _handleSessionMenuAction(sessionId, action) {
+    switch (action) {
+      case 'pin':
+        this._toggleSessionPin(sessionId);
+        break;
+      case 'export':
+        this.exportSession(sessionId);
+        break;
+      case 'import':
+        this.importSession();
+        break;
+      case 'delete':
+        if (confirm('确定删除此会话？删除后不可恢复。')) {
+          this.deleteChatSession(sessionId);
+        }
+        break;
+    }
+  },
+
+  /**
+   * 切换会话置顶状态
+   */
+  async _toggleSessionPin(sessionId) {
+    const session = this._chatSessions.find(s => s.id === sessionId);
+    if (!session) return;
+    
+    session.pinned = !session.pinned;
+    session.pinnedAt = session.pinned ? new Date().toISOString() : null;
+    session.updatedAt = new Date().toISOString();
+    
+    this._saveChatSessions();
+    this._renderChatSessionListWithPin();
+    
+    this.showToast(session.pinned ? '已置顶会话' : '已取消置顶', 'success');
+  },
+
+  // ========== 会话导出/导入功能 ==========
+
+  /**
+   * 导出会话为 .ora 文件
+   */
+  async exportSession(sessionId = null) {
+    const targetSession = sessionId || this._activeSessionId;
+    if (!targetSession) {
+      this.showToast('请先选择要导出的会话', 'warning');
+      return;
+    }
+
+    const session = this._chatSessions.find(s => s.id === targetSession);
+    if (!session) {
+      this.showToast('会话不存在', 'error');
+      return;
+    }
+
+    try {
+      // 1. 收集会话数据（渲染进程可做的部分）
+      const sessionData = this._collectSessionData(session);
+      
+      // 2. 调用主进程打包（主进程负责收集 artifacts + ZIP）
+      const result = await window.electronAPI?.sessionExport?.({ sessionData });
+      
+      if (result?.success) {
+        this.showToast('会话已导出', 'success');
+      } else {
+        this.showToast('导出失败: ' + (result?.error || '未知错误'), 'error');
+      }
+    } catch (err) {
+      console.error('[SessionExport] Error:', err);
+      this.showToast('导出异常: ' + err.message, 'error');
+    }
+  },
+
+  /**
+   * 收集会话数据
+   */
+  _collectSessionData(session) {
+    const msgHtml = localStorage.getItem('memora_session_msg_' + session.id) || '';
+    const conversationHistory = this._parseConversationHistory(msgHtml);
+    
+    return {
+      formatVersion: '1.0',
+      memoraVersion: '3.1.0',
+      sessionId: session.id,
+      title: session.title || '新对话',
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt || session.createdAt,
+      taskType: session.taskType || 'chat',
+      agentTypes: session.agentTypes || [],
+      expertId: session.expertId || null,
+      expertName: session.expertName || null,
+      messageCount: session.messageCount || conversationHistory.length,
+      conversationHistory,
+      messagesHtml: msgHtml,
+      metadata: {
+        exportedBy: 'Memora',
+        exportedAt: new Date().toISOString(),
+        platform: navigator.platform || 'unknown',
+        userName: 'admin',
+      },
+    };
+  },
+
+  /**
+   * 解析对话历史
+   */
+  _parseConversationHistory(html) {
+    const history = [];
+    if (!html) return history;
+    
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      
+      const messages = doc.querySelectorAll('.message');
+      messages.forEach(msg => {
+        const isUser = msg.classList.contains('user');
+        const contentEl = msg.querySelector('.message-content');
+        const text = contentEl ? contentEl.textContent : '';
+        const timestamp = msg.dataset?.sendTime;
+        
+        if (text.trim()) {
+          history.push({
+            timestamp,
+            role: isUser ? 'user' : 'assistant',
+            text: text.substring(0, 5000),
+          });
+        }
+      });
+    } catch (err) {
+      console.warn('[SessionExport] Failed to parse conversation history:', err);
+    }
+    
+    return history;
+  },
+
+  /**
+   * 导入 .ora 文件
+   */
+  async importSession() {
+    try {
+      // 打开文件选择对话框
+      const result = await window.electronAPI?.dialogOpen?.({
+        title: '导入会话',
+        filters: [{ name: 'Memora 会话', extensions: ['ora'] }],
+      });
+      
+      if (!result?.success || !result.filePath) return;
+      
+      // 调用主进程解析
+      const importResult = await window.electronAPI?.sessionImport?.({ filePath: result.filePath });
+      
+      if (!importResult?.success) {
+        this.showToast('导入失败: ' + (importResult?.error || '未知错误'), 'error');
+        return;
+      }
+      
+      const { sessionData, tempDir } = importResult;
+      
+      // 创建新会话
+      const newSession = {
+        id: sessionData.sessionId + '_imported_' + Date.now(),
+        title: sessionData.title,
+        messageCount: sessionData.messageCount || 0,
+        createdAt: sessionData.createdAt,
+        updatedAt: new Date().toISOString(),
+        taskType: sessionData.taskType || 'chat',
+        agentTypes: sessionData.agentTypes || [],
+        imported: true,
+        importedFrom: sessionData.memoraVersion,
+        importedAt: new Date().toISOString(),
+      };
+      
+      // 添加到会话列表
+      this._chatSessions.unshift(newSession);
+      this._saveChatSessions();
+      
+      // 保存消息 HTML
+      if (sessionData.messagesHtml) {
+        localStorage.setItem('memora_session_msg_' + newSession.id, sessionData.messagesHtml);
+      }
+      
+      // 清理临时目录
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
+      
+      // 切换到新导入的会话
+      this._activeSessionId = newSession.id;
+      this._renderChatSessionListWithPin();
+      this._restoreSessionMessages(newSession.id);
+      
+      this.showToast(`已导入会话: ${sessionData.title}`, 'success');
+    } catch (err) {
+      console.error('[SessionImport] Error:', err);
+      this.showToast('导入异常: ' + err.message, 'error');
     }
   },
 
@@ -10375,6 +11189,49 @@ const App = {
     }, 500);
   },
 
+  /**
+   * 立即保存指定会话的消息（不防抖，用于切换会话前保存）
+   */
+  _saveSessionMessagesForSession(sessionId) {
+    if (!sessionId) return;
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+
+    const messages = chatMessages.querySelectorAll('.message');
+    const htmlParts = [];
+    messages.forEach(msg => htmlParts.push(msg.outerHTML));
+
+    const session = this._chatSessions.find(s => s.id === sessionId);
+    if (session) {
+      session.messageCount = messages.length;
+      session.updatedAt = new Date().toISOString();
+      if (session.title === '新对话') {
+        const firstUserMsg = chatMessages.querySelector('.message.user .message-content p');
+        if (firstUserMsg) {
+          session.title = firstUserMsg.textContent.trim().slice(0, 30);
+          if (firstUserMsg.textContent.trim().length > 30) session.title += '...';
+        }
+      }
+    }
+
+    const STORAGE_KEY = 'memora_session_msg_' + sessionId;
+    const MAX_BYTES = 2 * 1024 * 1024;
+    let html = htmlParts.join('\n');
+    try {
+      if (html.length > MAX_BYTES) {
+        // 只保留最后 N 条消息
+        const ratio = MAX_BYTES / html.length;
+        const keepCount = Math.max(5, Math.floor(messages.length * ratio));
+        const recentMessages = Array.from(messages).slice(-keepCount);
+        html = recentMessages.map(m => m.outerHTML).join('\n');
+        console.warn(`[Chat] Session ${sessionId} messages truncated to ${keepCount} (size limit)`);
+      }
+      localStorage.setItem(STORAGE_KEY, html);
+    } catch (e) {
+      console.error('[Chat] Failed to save session messages:', e);
+    }
+  },
+
   _doSaveCurrentSessionMessages() {
     if (!this._activeSessionId) return;
 
@@ -10427,7 +11284,7 @@ const App = {
     }
 
     this._saveChatSessions();
-    this._renderChatSessionList();
+    this._renderChatSessionListWithPin();
   },
 
   _restoreSessionMessages(sessionId) {
@@ -10539,12 +11396,111 @@ const App = {
     if (btn) {
       btn.classList.toggle('active', this._parallelMode);
     }
-    // 显示/隐藏并行模式选择面板
-    this._showToast(
-      this._parallelMode ? '并行模式已开启：发送消息将同时调用多个 AI' : '并行模式已关闭',
-      'info'
-    );
+
+    if (this._parallelMode) {
+      this._showToast('并行模式已开启：新消息将与正在执行的任务同时运行', 'info');
+    } else {
+      this._showToast('并行模式已关闭', 'info');
+    }
     console.log('[Parallel] Mode:', this._parallelMode ? 'ON' : 'OFF');
+  },
+
+  /**
+   * 显示任务冲突对话框（当前有任务在执行时，用户发送新消息）
+   * 返回: 'parallel' | 'queue' | 'cancel'
+   */
+  _showTaskConflictDialog() {
+    return new Promise((resolve) => {
+      // 创建遮罩
+      const overlay = document.createElement('div');
+      overlay.className = 'task-conflict-overlay';
+      overlay.innerHTML = `
+        <div class="task-conflict-dialog">
+          <div class="task-conflict-title">⚡ 当前有任务正在执行</div>
+          <div class="task-conflict-desc">你想如何处理新消息？</div>
+          <div class="task-conflict-options">
+            <button class="task-conflict-btn parallel" data-choice="parallel">
+              <span class="task-conflict-icon">⚡</span>
+              <span class="task-conflict-label">同时执行</span>
+              <span class="task-conflict-hint">开启并行模式，新任务与当前任务一起跑</span>
+            </button>
+            <button class="task-conflict-btn queue" data-choice="queue">
+              <span class="task-conflict-icon">⏳</span>
+              <span class="task-conflict-label">排队等待</span>
+              <span class="task-conflict-hint">等当前任务完成后自动发送</span>
+            </button>
+            <button class="task-conflict-btn cancel" data-choice="cancel">
+              <span class="task-conflict-icon">✕</span>
+              <span class="task-conflict-label">取消</span>
+              <span class="task-conflict-hint">不发送此消息</span>
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      // 恢复输入框内容（sendAIMessage 之前可能已清空）
+      const input = document.getElementById('aiChatInput');
+
+      overlay.querySelectorAll('.task-conflict-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const choice = btn.dataset.choice;
+          overlay.remove();
+          resolve(choice);
+        });
+      });
+
+      // 点击遮罩取消
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          overlay.remove();
+          resolve('cancel');
+        }
+      });
+    });
+  },
+
+  /**
+   * 显示排队消息指示器
+   */
+  _showPendingMessageIndicator() {
+    let indicator = document.getElementById('pendingMessageIndicator');
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = 'pendingMessageIndicator';
+      indicator.className = 'pending-message-indicator';
+      indicator.innerHTML = `
+        <span class="pending-icon">⏳</span>
+        <span class="pending-text">排队中：等待当前任务完成...</span>
+        <button class="pending-cancel-btn">取消</button>
+      `;
+      const chatMessages = document.getElementById('chatMessages');
+      if (chatMessages) {
+        chatMessages.appendChild(indicator);
+      }
+      indicator.querySelector('.pending-cancel-btn')?.addEventListener('click', () => {
+        this._pendingMessage = null;
+        indicator.remove();
+        this._showToast('已取消排队消息', 'info');
+      });
+    }
+  },
+
+  /**
+   * 处理排队消息（任务完成后自动发送）
+   */
+  _processPendingMessage() {
+    if (!this._pendingMessage) return;
+    const { message, options } = this._pendingMessage;
+    this._pendingMessage = null;
+    document.getElementById('pendingMessageIndicator')?.remove();
+    // 恢复输入框内容
+    const input = document.getElementById('aiChatInput');
+    if (input) {
+      input.value = message;
+    }
+    this._showToast('正在发送排队消息...', 'info');
+    this.sendAIMessage(false, options);
   },
 
   /**
@@ -10612,7 +11568,6 @@ const App = {
         break;
       }
       case 'text.replace': {
-        // 替换整个文本
         const data = evt.data || {};
         const newText = data.Text || data.Content?.[0]?.Text || '';
         if (newText) {
@@ -10622,16 +11577,30 @@ const App = {
         break;
       }
       case 'thought': {
-        // 思考过程（不直接显示在内容区，可扩展）
         break;
       }
+      case 'message.done':
+      case 'response.completed':
+      case 'response.complete':
       case 'done': {
-        this._completeTask(taskId, evt.aborted ? 'cancelled' : 'completed');
+        // 防止重复完成
+        if (!taskInfo.completed) {
+          this._completeTask(taskId, evt.aborted ? 'cancelled' : 'completed');
+        }
         break;
       }
       case 'error': {
-        const errMsg = evt.data?.Error?.Message || 'ADP 请求失败';
+        const errMsg = evt.data?.Error?.Message || evt.data?.error?.message || 'ADP 请求失败';
         this._failTask(taskId, errMsg);
+        break;
+      }
+      default: {
+        // 未识别的事件，检查是否包含完成信号
+        if (evt.data?.Type === 'done' || evt.data?.type === 'done') {
+          if (!taskInfo.completed) {
+            this._completeTask(taskId, 'completed');
+          }
+        }
         break;
       }
     }
@@ -10781,6 +11750,10 @@ const App = {
       clearInterval(taskInfo._timerInterval);
       taskInfo._timerInterval = null;
     }
+    if (taskInfo._timeoutHandle) {
+      clearTimeout(taskInfo._timeoutHandle);
+      taskInfo._timeoutHandle = null;
+    }
 
     const { cardEl, statusEl, contentEl } = taskInfo;
     if (cardEl) {
@@ -10836,6 +11809,10 @@ const App = {
       clearInterval(taskInfo._timerInterval);
       taskInfo._timerInterval = null;
     }
+    if (taskInfo._timeoutHandle) {
+      clearTimeout(taskInfo._timeoutHandle);
+      taskInfo._timeoutHandle = null;
+    }
 
     const { cardEl, statusEl, contentEl } = taskInfo;
     if (cardEl) {
@@ -10870,6 +11847,11 @@ const App = {
     if (allDone) {
       this._updateStreamingUI(false);
       document.getElementById('aiChatInput')?.focus();
+
+      // 处理排队消息
+      if (this._pendingMessage) {
+        setTimeout(() => this._processPendingMessage(), 500);
+      }
 
       // 清理已完成任务的引用（延迟，保留 UI）
       setTimeout(() => {
@@ -10918,7 +11900,7 @@ const App = {
     if (!session.agentTypes.includes(mode)) {
       session.agentTypes.push(mode);
       this._saveChatSessions();
-      this._renderChatSessionList();
+      this._renderChatSessionListWithPin();
     }
     
     // 将结果保存到 localStorage（与对话消息一起）
@@ -10976,7 +11958,7 @@ const App = {
         session.taskType = 'parallel';
         session.agentTypes = [...modes];
         this._saveChatSessions();
-        this._renderChatSessionList();
+        this._renderChatSessionListWithPin();
       }
     }
 
@@ -11016,7 +11998,7 @@ const App = {
       session.title = message.length > 30 ? message.slice(0, 30) + '...' : message;
       session.updatedAt = new Date().toISOString();
       this._saveChatSessions();
-      this._renderChatSessionList();
+      this._renderChatSessionListWithPin();
     }
 
     // 构建默认上下文
@@ -11084,6 +12066,17 @@ const App = {
         const elapsed = Math.floor((Date.now() - taskInfo._timerStart) / 1000);
         if (taskInfo.timerEl) taskInfo.timerEl.textContent = elapsed + 's';
       }, 1000);
+
+      // 超时兜底：5 分钟后自动完成未完成的任务
+      taskInfo._timeoutHandle = setTimeout(() => {
+        if (!taskInfo.completed) {
+          console.warn(`[Task ${taskId}] Timeout (5min), auto-completing`);
+          this._completeTask(taskId, 'completed');
+          if (taskInfo.statusEl) {
+            taskInfo.statusEl.innerHTML = `<span class="live-dot"></span>已超时自动完成`;
+          }
+        }
+      }, 5 * 60 * 1000);
 
       tasks.push({ taskId, mode, cardEl, taskInfo });
     }
@@ -12315,6 +13308,13 @@ ${JSON.stringify(reportData, null, 2)}`;
               <span class="note-date">${new Date(note.createdAt).toLocaleString()}</span>
               ${note.analyzed ? '<span class="note-analyzed">已分析</span>' : ''}
               ${this.getAnalysisStatusTag(note)}
+              ${(note.analysis?.expertMatched || note.linkedSessionId) ? `
+                <span class="note-agent-badge">
+                  <span class="note-agent-icon">🤖</span>
+                  <span class="note-agent-text">${this.escapeHtml(note.analysis?.matchedExpertName || note.linkedExpertName || 'AI 专家')}已处理</span>
+                  <button class="note-agent-jump" data-note-id="${note.id}">查看结果 →</button>
+                </span>
+              ` : ''}
               <div class="note-actions">
                 ${imageActions}
               </div>
@@ -13797,7 +14797,165 @@ ${JSON.stringify(reportData, null, 2)}`;
         console.log('[App] New note added from background:', data.title);
         this.incrementNewNoteCount();
       });
+
+      // v3.2: 监听剪贴板任务匹配到专家
+      window.electronAPI?.onClipboardExpertMatched?.((data) => {
+        console.log('[App] Clipboard expert matched:', data.expert.name, 'confidence:', data.confidence);
+        this._handleExpertMatchedTask(data);
+      });
     }
+  },
+
+  /**
+   * v3.2: 处理剪贴板任务匹配到专家的事件
+   * 自动切换到专家会话并发送任务
+   */
+  async _handleExpertMatchedTask(data) {
+    const { noteId, task, expert, confidence, reason, suggestedPrompt } = data;
+
+    // 1. 显示匹配通知
+    this._showExpertMatchNotification(task, expert, confidence, reason, noteId);
+
+    // 2. 自动切换到 AI 助手视图
+    this.showAIAssistantView();
+
+    // 3. 选中对应专家
+    if (window.ExpertSystem) {
+      const experts = await window.electronAPI?.expertsGetAll?.();
+      const matchedExpert = experts?.experts?.find(e => e.id === expert.id);
+      if (matchedExpert) {
+        window.ExpertSystem._activeExpertId = expert.id;
+        window.ExpertSystem._updateExpertUI?.();
+        // 更新模式为 agent
+        if (matchedExpert.modes?.includes('agent')) {
+          this._setAIMode('agent');
+        }
+        console.log('[App] Expert selected:', expert.name);
+      }
+    }
+
+    // 4. 创建新会话
+    this.createNewChatSession();
+
+    // 5. 填入建议 Prompt 并自动发送
+    const input = document.getElementById('aiChatInput');
+    if (input && suggestedPrompt) {
+      input.value = suggestedPrompt;
+      // 延迟发送确保 UI 准备好
+      setTimeout(() => {
+        this.sendAIMessage();
+        // 6. 会话创建后关联到记事本
+        if (this._activeSessionId && noteId) {
+          this._linkSessionToNote(this._activeSessionId, noteId, expert);
+        }
+      }, 300);
+    }
+  },
+
+  /**
+   * 显示专家匹配通知
+   */
+  _showExpertMatchNotification(task, expert, confidence, reason, noteId) {
+    // 移除已有通知
+    document.querySelector('.expert-match-notification')?.remove();
+
+    const notification = document.createElement('div');
+    notification.className = 'expert-match-notification';
+    notification.innerHTML = `
+      <div class="expert-match-header">
+        <span class="expert-match-icon">${expert.icon || '🤖'}</span>
+        <span class="expert-match-title">⚡ AI 自动处理</span>
+        <span class="expert-match-confidence">${Math.round(confidence * 100)}% 匹配</span>
+      </div>
+      <div class="expert-match-body">
+        <div class="expert-match-task">📋 ${this.escapeHtml(task.title || '')}</div>
+        <div class="expert-match-expert">→ ${this.escapeHtml(expert.name)} 正在处理</div>
+        <div class="expert-match-reason">${this.escapeHtml(reason || '')}</div>
+      </div>
+      <div class="expert-match-actions">
+        <button class="expert-match-btn view" data-action="view">查看进度</button>
+        <button class="expert-match-btn dismiss" data-action="dismiss">知道了</button>
+      </div>
+    `;
+
+    document.body.appendChild(notification);
+
+    // 8 秒后自动消失
+    setTimeout(() => notification.classList.add('fade-out'), 8000);
+    setTimeout(() => notification.remove(), 8500);
+
+    // 按钮事件
+    notification.querySelector('[data-action="view"]')?.addEventListener('click', () => {
+      this.showAIAssistantView();
+      notification.remove();
+    });
+    notification.querySelector('[data-action="dismiss"]')?.addEventListener('click', () => {
+      notification.remove();
+    });
+  },
+
+  /**
+   * 关联会话到记事本
+   */
+  _linkSessionToNote(sessionId, noteId, expert) {
+    // 通过 IPC 更新笔记
+    window.electronAPI?.notebookUpdateNote?.(noteId, {
+      linkedSessionId: sessionId,
+      linkedExpertId: expert.id,
+      linkedExpertName: expert.name,
+      agentProcessed: true,
+    }).then(result => {
+      if (result?.success) {
+        console.log('[App] Session linked to note:', noteId, '→', sessionId);
+      }
+    }).catch(err => {
+      console.warn('[App] Failed to link session to note:', err);
+    });
+
+    // 同时在会话中标记关联的笔记
+    if (this._activeSessionId) {
+      const session = this._chatSessions.find(s => s.id === sessionId);
+      if (session) {
+        session.linkedNoteId = noteId;
+        session.linkedExpertId = expert.id;
+        this._saveChatSessions();
+      }
+    }
+  },
+
+  /**
+   * 从记事本跳转到专家会话
+   */
+  jumpToExpertSession(noteId) {
+    if (!window.electronAPI?.notebookGetNotes) return;
+
+    window.electronAPI.notebookGetNotes().then(result => {
+      const note = result?.notes?.find(n => n.id === noteId);
+      if (!note?.linkedSessionId) {
+        this.showToast('该待办未关联专家会话', 'info');
+        return;
+      }
+
+      // 切换到 AI 助手视图
+      this.showAIAssistantView();
+
+      // 切换到关联的会话
+      setTimeout(() => {
+        // 检查会话是否存在于列表中
+        const sessionExists = this._chatSessions.find(s => s.id === note.linkedSessionId);
+        if (sessionExists) {
+          this.switchChatSession(note.linkedSessionId);
+          this.showToast('已跳转到专家会话', 'success');
+        } else {
+          // 会话可能已删除，提示用户
+          this.showToast('关联的会话已不存在', 'warning');
+          console.warn('[App] Linked session not found:', note.linkedSessionId);
+        }
+      }, 300);
+    }).catch(err => {
+      console.error('[App] jumpToExpertSession error:', err);
+      this.showToast('跳转失败: ' + err.message, 'error');
+    });
   },
 
   handleClipboardCandidate(data) {
@@ -16847,7 +18005,7 @@ ${JSON.stringify(reportData, null, 2)}`;
 
       if (added > 0) {
         this._saveChatSessions();
-        this._renderChatSessionList();
+        this._renderChatSessionListWithPin();
         console.log('[ChatSync] Merged', added, 'cloud conversations');
       }
     } catch (e) {

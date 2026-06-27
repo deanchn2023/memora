@@ -407,6 +407,313 @@
 
 .parallel-result-time {
   font-size: 11px;
+}
+
+/* ========== 置顶区域样式 ========== */
+.chat-session-pinned-section {
+  border-bottom: 0.5px solid var(--border-light, rgba(0,0,0,0.08));
+  margin-bottom: 8px;
+  background: linear-gradient(180deg, rgba(0, 122, 255, 0.04) 0%, transparent 100%);
+  padding: 4px 0;
+}
+
+.pinned-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+}
+
+.pinned-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.pinned-toggle {
+  font-size: 11px;
+  color: var(--accent-blue, #007AFF);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.pinned-toggle:hover {
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.pinned-list {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.pinned-list.collapsed {
+  max-height: 220px;
+}
+
+.pinned-collapsed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #f5f5f7);
+  border-radius: 8px;
+  margin: 4px 12px;
+}
+
+.pinned-collapsed-count {
+  font-size: 12px;
+  color: var(--text-tertiary, #86868b);
+}
+
+/* 置顶会话项 */
+.chat-session-item.pinned {
+  background: var(--bg-secondary, #f5f5f7);
+  margin: 2px 8px;
+  border-radius: 10px;
+}
+
+.chat-session-item.pinned:hover {
+  background: var(--bg-tertiary, #ebebef);
+}
+
+.chat-session-pinned-indicator {
+  color: var(--accent-orange, #FF9500);
+  font-size: 10px;
+  margin-right: 2px;
+  display: inline-block;
+}
+
+/* 置顶/导出/更多按钮 */
+.chat-session-pin-btn,
+.chat-session-export-btn,
+.chat-session-more-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-tertiary, #86868b);
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  opacity: 0;
+}
+
+.chat-session-item:hover .chat-session-pin-btn,
+.chat-session-item:hover .chat-session-export-btn,
+.chat-session-item:hover .chat-session-more-btn {
+  opacity: 1;
+}
+
+.chat-session-pin-btn:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--accent-blue, #007AFF);
+}
+
+.chat-session-export-btn:hover {
+  background: rgba(52, 199, 89, 0.1);
+  color: var(--accent-green, #34C759);
+}
+
+.chat-session-more-btn:hover {
+  background: rgba(142, 142, 147, 0.1);
+  color: var(--text-secondary, #86868b);
+}
+
+/* 置顶区域的会话项始终显示按钮 */
+.chat-session-item.pinned .chat-session-pin-btn {
+  opacity: 1;
+}
+
+/* ========== 会话下拉菜单 ========== */
+.session-dropdown-menu {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 0.5px solid rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  z-index: 10000;
+  min-width: 170px;
+  font-size: 13px;
+}
+
+.session-menu-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: #1d1d1f;
+  white-space: nowrap;
+}
+
+.session-menu-item:hover {
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.session-menu-item.danger {
+  color: #FF3B30;
+}
+
+.session-menu-item.danger:hover {
+  background: rgba(255, 59, 48, 0.1);
+}
+
+/* ========== 任务冲突对话框 ========== */
+.task-conflict-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.task-conflict-dialog {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.task-conflict-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin-bottom: 4px;
+}
+
+.task-conflict-desc {
+  font-size: 13px;
+  color: #86868b;
+  margin-bottom: 16px;
+}
+
+.task-conflict-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-conflict-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  background: #f5f5f7;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.task-conflict-btn:hover {
+  border-color: #007AFF;
+  background: rgba(0, 122, 255, 0.04);
+}
+
+.task-conflict-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.task-conflict-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.task-conflict-hint {
+  font-size: 12px;
+  color: #86868b;
+  display: block;
+}
+
+.task-conflict-btn.parallel:hover {
+  border-color: #007AFF;
+}
+
+.task-conflict-btn.queue:hover {
+  border-color: #FF9500;
+}
+
+/* 排队消息指示器 */
+.pending-message-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255, 149, 0, 0.08);
+  border-top: 0.5px solid rgba(255, 149, 0, 0.2);
+  font-size: 13px;
+  color: #FF9500;
+}
+
+.pending-icon {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.pending-cancel-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #86868b;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.pending-cancel-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1d1d1f;
+}
+
+.chat-session-more-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-tertiary, #86868b);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  opacity: 0;
+  flex-shrink: 0;
+}
+
+.chat-session-item:hover .chat-session-more-btn {
+  opacity: 1;
+}
+
+.chat-session-more-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary, #1d1d1f);
+}
   color: var(--text-tertiary, #86868b);
 }
 

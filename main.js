@@ -2465,6 +2465,54 @@ async function analyzeClipboardText(text) {
             console.error('[Knowledge] Atom extraction error:', err);
           });
         }
+
+        // 🔧 v3.2: 剪贴板任务自动匹配专家 Agent
+        if (result.is_task && savedNoteId && getSetting('clipboard_expert_auto_process') !== false) {
+          try {
+            const matchResult = await _matchExpertForTask({
+              title: result.title || text.substring(0, 30),
+              description: result.description || optimizedText,
+              tags: result.tags || [],
+            });
+
+            if (matchResult.can_auto_process && matchResult.confidence >= 0.7) {
+              console.log('[Clipboard] Expert matched:', matchResult.expert_name, 'confidence:', matchResult.confidence);
+
+              // 更新笔记：标记为已匹配专家
+              if (notebook) {
+                const savedNote = notebook.getNoteById(savedNoteId);
+                if (savedNote) {
+                  savedNote.analysis = savedNote.analysis || {};
+                  savedNote.analysis.expertMatched = true;
+                  savedNote.analysis.matchedExpertId = matchResult.expert_id;
+                  savedNote.analysis.matchedExpertName = matchResult.expert_name;
+                  savedNote.analysis.matchConfidence = matchResult.confidence;
+                  notebook.updateNote(savedNoteId, { analysis: savedNote.analysis });
+                }
+              }
+
+              // 通知前端：匹配到专家，自动创建会话处理
+              mainWindow?.webContents?.send('clipboard:expert-matched', {
+                noteId: savedNoteId,
+                task: {
+                  title: result.title,
+                  description: result.description,
+                },
+                expert: {
+                  id: matchResult.expert_id,
+                  name: matchResult.expert_name,
+                },
+                confidence: matchResult.confidence,
+                reason: matchResult.reason,
+                suggestedPrompt: matchResult.suggested_prompt || result.description,
+              });
+            } else {
+              console.log('[Clipboard] No expert matched:', matchResult.reason);
+            }
+          } catch (e) {
+            console.warn('[Clipboard] Expert match failed:', e.message);
+          }
+        }
       } else {
         console.log('[Notebook] Skipped: not valid info -', result.reason);
       }
@@ -8549,6 +8597,10 @@ ipcMain.handle('send-adp-message', async (event, data) => {
 
     if (!response.ok) {
       _clearCtrl();
+      // 读取错误体，检测会话过期错误
+      let errBody = '';
+      try { errBody = await response.clone().text(); } catch {}
+      
       // 审计日志：HTTP 错误
       if (auditLogger) {
         auditLogger.record({
@@ -8561,12 +8613,19 @@ ipcMain.handle('send-adp-message', async (event, data) => {
           output: { status: response.status, contentLen: 0, content: '', finishReason: null },
           tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
           latencyMs: Date.now(),
-          error: `HTTP ${response.status}`,
+          error: `HTTP ${response.status}: ${errBody.substring(0, 200)}`,
           traceId: _adpTraceId,
           vectorSources: _vectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
         });
       }
-      return { success: false, error: `ADP请求失败: HTTP ${response.status}`, configSource };
+      
+      // 检测会话过期错误，清除旧会话 ID
+      if (errBody.includes('460919') || errBody.includes('会话ID已存在')) {
+        currentADPConversationId = null;
+        console.log('[ADP Chat] Session expired (460919), cleared conversationId for retry');
+      }
+      
+      return { success: false, error: `ADP请求失败: HTTP ${response.status}${errBody ? ' ' + errBody.substring(0, 200) : ''}`, configSource };
     }
 
     // 立即返回成功，后续通过 IPC 事件流式推送每个 SSE event
@@ -8761,6 +8820,87 @@ ipcMain.handle('task:list', async (event, { sessionId }) => {
 
 // ===== 专家系统 IPC 通道 =====
 const EXPERTS_FILE = path.join(app.getPath('userData'), 'experts.json');
+
+/**
+ * v3.2: 剪贴板任务自动匹配专家
+ * 从已配置的专家中找到最适合处理该任务的专家
+ */
+async function _matchExpertForTask(task) {
+  const data = _loadExpertsData();
+  const experts = (data.experts || []).filter(e => e.appKey); // 只考虑有 AppKey 的专家
+
+  if (experts.length === 0) {
+    return { can_auto_process: false, reason: '未配置可用专家' };
+  }
+
+  // 构建 L3 匹配 Prompt
+  const expertList = experts.map(e => {
+    const qa = (e.quickAccesses || []).map(q => q.label).filter(Boolean);
+    return `### ${e.icon || '🤖'} ${e.name}
+- 专业领域：${e.intro || '暂无介绍'}
+- 擅长场景：${qa.length > 0 ? qa.join('、') : '通用'}
+- ID：${e.id}`;
+  }).join('\n');
+
+  const systemPrompt = `你是 Memora 的任务路由 AI，负责判断待办任务是否可以由已配置的专家 Agent 自动处理。
+
+# 待办任务
+- 标题：${task.title}
+- 描述：${task.description}
+- 标签：${(task.tags || []).join('、')}
+
+# 可用专家列表
+${expertList}
+
+# 判断规则
+## 可自动处理
+- 产品咨询、功能查询、竞品分析 → 产品知识助手
+- 需求评估、方案设计、工作量评估 → 需求分析专家
+- 文档生成、报告撰写、文案起草、通知编写 → 文档生成专家
+- 代码审查、技术方案评估 → 技术专家
+- 数据分析、报表生成 → 数据分析专家
+- 知识检索、资料查找、信息汇总 → 知识检索专家
+- 内容翻译、摘要提取、格式转换 → 内容处理专家
+
+## 不可自动处理
+- 需要人工沟通（打电话、开会、面谈）
+- 需要物理操作（寄快递、签合同）
+- 需要人工决策（审批、确认、拍板）
+- 涉及敏感信息（薪资、人事）
+- 时间驱动型（提醒、跟进），非内容处理型
+
+# 输出格式（严格 JSON）
+匹配到：{"can_auto_process":true,"expert_id":"expert_xxx","expert_name":"名称","confidence":0.85,"reason":"原因","suggested_prompt":"发送给专家的提示词"}
+未匹配：{"can_auto_process":false,"confidence":0.9,"reason":"原因"}
+只输出 JSON。`;
+
+  try {
+    const { response } = await callAI({
+      module: 'clipboard_expert_match',
+      category: 'highvol',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `任务：${task.title}\n描述：${task.description}` }
+      ],
+      fetchOptions: { temperature: 0.1, max_tokens: 500 },
+    });
+
+    if (!response.ok) {
+      return { can_auto_process: false, reason: `AI 匹配失败: HTTP ${response.status}` };
+    }
+
+    const respData = await response.json();
+    const content = respData.choices?.[0]?.message?.content || '';
+    const cleaned = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    const match = JSON.parse(cleaned);
+    console.log('[Clipboard] Expert match result:', match.can_auto_process, match.expert_name || 'N/A');
+    return match;
+  } catch (e) {
+    console.error('[Clipboard] Expert match error:', e.message);
+    return { can_auto_process: false, reason: '匹配异常: ' + e.message };
+  }
+}
 
 function _loadExpertsData() {
   try {
@@ -10191,6 +10331,7 @@ ipcMain.handle('clipboard:get-config', async () => {
     freq_enabled: getSetting('clipboard_freq_enabled') !== false,
     association_enabled: getSetting('clipboard_association_enabled') !== false,
     split_prompt_enabled: getSetting('clipboard_split_prompt_enabled') !== false,
+    expert_auto_process: getSetting('clipboard_expert_auto_process') !== false,
     pause_on_lock: getSetting('clipboard_pause_on_lock') !== false,
     stable_timeout_normal: parseInt(getSetting('clipboard_stable_timeout_normal')) || 3000,
     stable_timeout_highfreq: parseInt(getSetting('clipboard_stable_timeout_highfreq')) || 5000,
@@ -10211,7 +10352,7 @@ ipcMain.handle('clipboard:get-config', async () => {
 ipcMain.handle('clipboard:update-config', async (event, config) => {
   const allowedKeys = [
     'clipboard_buffer_enabled', 'clipboard_freq_enabled', 'clipboard_association_enabled',
-    'clipboard_split_prompt_enabled', 'clipboard_pause_on_lock',
+    'clipboard_split_prompt_enabled', 'clipboard_expert_auto_process', 'clipboard_pause_on_lock',
     'clipboard_stable_timeout_normal', 'clipboard_stable_timeout_highfreq',
     'clipboard_stable_timeout_ultrafreq', 'clipboard_max_fragments', 'clipboard_max_total_length',
     'clipboard_freq_active', 'clipboard_freq_normal', 'clipboard_freq_idle', 'clipboard_freq_disabled',
@@ -11276,6 +11417,177 @@ ipcMain.handle('artifacts:show-in-folder', async (event, { filePath }) => {
     if (!resolved.startsWith(path.resolve(basePath))) return;
     shell.showItemInFolder(resolved);
   } catch {}
+});
+
+// ============= 会话导出/导入功能 =============
+
+const AdmZip = require('adm-zip');
+
+// 导出会话为 .ora 文件
+ipcMain.handle('session:export', async (event, { sessionData }) => {
+  try {
+    const os = require('os');
+    const { dialog, shell } = require('electron');
+    
+    // 创建临时目录
+    const tempDir = path.join(os.tmpdir(), `memora-export-${Date.now()}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+    
+    // 1. 写入 session.json
+    const sessionJsonPath = path.join(tempDir, 'session.json');
+    fs.writeFileSync(sessionJsonPath, JSON.stringify(sessionData, null, 2), 'utf8');
+    
+    // 2. 写入 messages.html（如果存在）
+    if (sessionData.messagesHtml) {
+      const messagesHtmlPath = path.join(tempDir, 'messages.html');
+      fs.writeFileSync(messagesHtmlPath, sessionData.messagesHtml, 'utf8');
+    }
+    
+    // 3. 主进程收集并复制 artifacts 文件
+    const basePath = getArtifactsBasePath();
+    const artifactsDir = path.join(tempDir, 'artifacts');
+    fs.mkdirSync(artifactsDir, { recursive: true });
+    
+    // 根据会话日期收集 artifacts
+    const sessionDate = new Date(sessionData.updatedAt || sessionData.createdAt).toISOString().split('T')[0];
+    const recentDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    let artifactCount = 0;
+    
+    // 扫描最近 7 天的日期目录
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      const dateStr = date.toISOString().split('T')[0];
+      const dateDir = path.join(basePath, dateStr);
+      
+      if (fs.existsSync(dateDir)) {
+        try {
+          const files = fs.readdirSync(dateDir);
+          for (const file of files) {
+            if (file.startsWith('.')) continue;
+            const filePath = path.join(dateDir, file);
+            try {
+              const stat = fs.statSync(filePath);
+              if (stat.isFile() && stat.mtime >= recentDate) {
+                // 复制到临时目录
+                const destDir = path.join(artifactsDir, dateStr);
+                if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+                fs.copyFileSync(filePath, path.join(destDir, file));
+                artifactCount++;
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+    }
+    
+    console.log(`[SessionExport] Collected ${artifactCount} artifacts`);
+    
+    // 4. 打包为 ZIP
+    const oraFileName = `${sessionData.title || 'session'}.ora`;
+    const oraFileNameSafe = oraFileName.replace(/[<>:"/\\|?*]/g, '_');
+    const outputPath = path.join(os.tmpdir(), oraFileNameSafe);
+    
+    const zip = new AdmZip();
+    addDirectoryToZip(zip, tempDir, '');
+    zip.writeZip(outputPath);
+    
+    // 5. 清理临时目录
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    
+    // 6. 弹出保存对话框让用户选择保存位置
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: '保存会话文件',
+      defaultPath: oraFileNameSafe,
+      filters: [{ name: 'Memora 会话', extensions: ['ora'] }],
+    });
+    
+    if (saveResult.canceled || !saveResult.filePath) {
+      // 用户取消，删除临时文件
+      try { fs.unlinkSync(outputPath); } catch {}
+      return { success: false, error: '用户取消保存' };
+    }
+    
+    // 7. 复制到用户选择的位置
+    fs.copyFileSync(outputPath, saveResult.filePath);
+    try { fs.unlinkSync(outputPath); } catch {} // 删除临时文件
+    
+    // 8. 在 Finder 中显示文件
+    shell.showItemInFolder(saveResult.filePath);
+    
+    console.log('[SessionExport] Saved to:', saveResult.filePath);
+    return { success: true, filePath: saveResult.filePath };
+  } catch (err) {
+    console.error('[SessionExport] Error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// 递归添加目录到 ZIP
+function addDirectoryToZip(zip, dirPath, prefix) {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      addDirectoryToZip(zip, entryPath, path.join(prefix, entry.name));
+    } else {
+      zip.addLocalFile(entryPath, prefix);
+    }
+  }
+}
+
+// 导入 .ora 文件
+ipcMain.handle('session:import', async (event, { filePath }) => {
+  try {
+    const os = require('os');
+    const { dialog } = require('electron');
+    
+    // 解压 .ora 文件到临时目录
+    const tempDir = path.join(os.tmpdir(), `memora-import-${Date.now()}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+    
+    const zip = new AdmZip(filePath);
+    zip.extractAllTo(tempDir, true);
+    
+    // 读取 session.json
+    const sessionJsonPath = path.join(tempDir, 'session.json');
+    if (!fs.existsSync(sessionJsonPath)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      return { success: false, error: '无效的 .ora 文件：缺少 session.json' };
+    }
+    
+    const sessionData = JSON.parse(fs.readFileSync(sessionJsonPath, 'utf8'));
+    
+    // 验证格式版本
+    if (!sessionData.formatVersion || sessionData.formatVersion !== '1.0') {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      return { success: false, error: '不支持的 .ora 格式版本' };
+    }
+    
+    // 返回导入数据（由渲染进程处理会话创建）
+    return { 
+      success: true, 
+      sessionData,
+      tempDir,
+    };
+  } catch (err) {
+    console.error('[SessionImport] Error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// 打开文件选择对话框
+ipcMain.handle('dialog:open', async (event, { title, filters }) => {
+  const { dialog } = require('electron');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: title || '选择文件',
+    filters: filters || [],
+    properties: ['openFile']
+  });
+  if (result.canceled || !result.filePaths?.[0]) {
+    return { success: false, filePath: null };
+  }
+  return { success: true, filePath: result.filePaths[0] };
 });
 
 // 读取 src/data/ 目录下的数据文件（供渲染进程加载图谱数据）

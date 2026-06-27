@@ -317,6 +317,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   artifactsSave: (data) => ipcRenderer.invoke('artifacts:save', data),
   artifactsDownloadAndSave: (data) => ipcRenderer.invoke('artifacts:download-and-save', data),
   ccExecuteCommand: (data) => ipcRenderer.invoke('cc:execute-command', data),
+
+  // 会话导出/导入
+  sessionExport: (data) => ipcRenderer.invoke('session:export', data),
+  sessionImport: (data) => ipcRenderer.invoke('session:import', data),
+  dialogOpen: (data) => ipcRenderer.invoke('dialog:open', data),
   
   // 读取 src/data/ 目录下的数据文件
   readDataFile: (fileName) => ipcRenderer.invoke('read-data-file', fileName),
@@ -461,7 +466,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onNewNoteAdded: (callback) => {
     ipcRenderer.on('new-note-added', (event, data) => callback(data));
   },
-  
+
+  // v3.2: 剪贴板任务匹配到专家
+  onClipboardExpertMatched: (callback) => {
+    ipcRenderer.on('clipboard:expert-matched', (event, data) => callback(data));
+  },
+  removeClipboardExpertMatchedListeners: () => {
+    ipcRenderer.removeAllListeners('clipboard:expert-matched');
+  },
+
   // 窗口控制
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
