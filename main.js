@@ -412,9 +412,8 @@ let autoBackupTimer = null;
 let weeklyOptimizerTimer = null;
 
 // 默认内置API Key（用户未配置时使用，限制10次/天）
-// 打包版不内置 LLM API Key，用户必须登录从云端同步或手动填写
-// 开发时可通过 .env 的 DEFAULT_API_KEY 覆盖
-const DEFAULT_API_KEY = process.env.DEFAULT_API_KEY || '';
+// 打包版内置 LLM API Key，用户登录后从云端同步覆盖
+const DEFAULT_API_KEY = process.env.DEFAULT_API_KEY || 'ark-8884b1e5-d1b2-4e58-9319-0fcfce0543d7-15773';
 const DEFAULT_BASE_URL = process.env.DEFAULT_BASE_URL || 'https://ark.cn-beijing.volces.com/api/coding/v3';
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'deepseek-v4-flash';
 
