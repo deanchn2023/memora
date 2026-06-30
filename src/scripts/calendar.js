@@ -728,12 +728,19 @@ const Calendar = {
 
     const year = this.currentDate.getFullYear();
     const month = this.currentDate.getMonth();
-    const tasks = Store.getTasksByMonth(year, month);
 
     const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay());
+    // 月视图网格显示42天，获取整个范围内的任务（包括上月底和下月初）
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 42);
+    const allTasks = Store.getTasks();
+    const tasks = allTasks.filter(task => {
+      if (!task.dueDate) return false;
+      const dueDate = new Date(task.dueDate);
+      return dueDate >= startDate && dueDate < endDate;
+    });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);

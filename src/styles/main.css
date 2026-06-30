@@ -3879,6 +3879,21 @@ body {
   border-top: 0.5px solid var(--border-light);
 }
 
+.adp-output-summary {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(0, 122, 255, 0.04);
+  border-radius: 10px;
+  border: 0.5px solid rgba(0, 122, 255, 0.1);
+}
+
+.adp-output-summary-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #007AFF;
+  margin-bottom: 8px;
+}
+
 /* ===== ADP 链接 ===== */
 .adp-link {
   color: var(--primary-color);

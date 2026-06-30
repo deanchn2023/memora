@@ -1036,6 +1036,7 @@ const App = {
           const result = await window.electronAPI.notebookUpdateNote(noteId, { category: targetCategory });
           if (result.success) {
             this.showToast(`已移至「${this.getNoteCategoryLabel(targetCategory)}」`, 'success');
+            this._recordClassifyFeedback(noteId, oldCategory, targetCategory);
             const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
             this.loadNotes(activeCat);
           }
@@ -4893,6 +4894,8 @@ const App = {
       if (card) {
         const url = card.dataset.url;
         const savedPath = card.dataset.savedPath;
+        const name = card.dataset.name;
+        // 已保存的文件：直接打开
         if (savedPath && window.electronAPI?.artifactsRead) {
           try {
             const result = await window.electronAPI.artifactsRead({ filePath: savedPath });
@@ -4909,10 +4912,19 @@ const App = {
             }
           } catch {}
         }
+        // 有 URL：直接打开 URL
         if (url && url !== '#') {
           window.electronAPI?.openExternal(url);
+        } else if (card.dataset.filepath) {
+          // 容器内文件路径：尝试直接打开
+          window.electronAPI?.openExternal?.('file://' + card.dataset.filepath);
         } else {
-          this.showToast('请先保存后再打开', 'info');
+          // 未保存且有 URL：自动保存再打开
+          if (url && url !== '#' || card.dataset.filepath) {
+            this._downloadFileToArtifacts(url, name, card);
+          } else {
+            this.showToast('无法打开此文件', 'info');
+          }
         }
       }
       return;
@@ -4997,9 +5009,13 @@ const App = {
       if (!codeEl) return;
       const codeContent = codeEl.textContent || '';
       const lang = toolbar.querySelector('.cc-code-lang')?.textContent || 'txt';
-      const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv' };
+      const extMap = { html: 'html', svg: 'svg', xml: 'xml', json: 'json', md: 'md', markdown: 'md', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', css: 'css', yaml: 'yaml', yml: 'yml', bash: 'sh', shell: 'sh', sql: 'sql', csv: 'csv', pptx: 'pptx', ppt: 'ppt', xlsx: 'xlsx', xls: 'xls', docx: 'docx', doc: 'doc', pdf: 'pdf', png: 'png', jpg: 'jpg', jpeg: 'jpeg' };
       const ext = extMap[lang] || 'txt';
       const fileName = `cc-output-${Date.now()}.${ext}`;
+
+      // 检测内容是否为文件路径（如 /Users/xxx/file.pptx）
+      const trimmedContent = codeContent.trim();
+      const isFilePath = /^[/~]/.test(trimmedContent) && /\.\w+$/.test(trimmedContent) && !trimmedContent.includes('\n');
 
       if (ccCopyBtn) {
         try {
@@ -5044,6 +5060,22 @@ const App = {
         this._showHTMLPreview(codeContent, ext);
         return;
       }
+
+      // 如果内容是文件路径，直接打开文件（不需要保存文本内容）
+      if (isFilePath && (ccOpenBtn || ccSaveBtn)) {
+        const filePath = trimmedContent.replace(/^~/, require('os').homedir());
+        if (ccOpenBtn) {
+          // 直接打开文件
+          window.electronAPI?.openExternal?.('file://' + filePath);
+          this.showToast('已打开文件: ' + trimmedContent.split('/').pop(), 'success');
+        } else if (ccSaveBtn) {
+          // 保存按钮也直接打开文件（文件已存在）
+          window.electronAPI?.openExternal?.('file://' + filePath);
+          this.showToast('文件已存在: ' + trimmedContent.split('/').pop(), 'info');
+        }
+        return;
+      }
+
       if (ccSaveBtn) {
         ccSaveBtn.disabled = true;
         ccSaveBtn.textContent = '保存中...';
@@ -8444,6 +8476,23 @@ const App = {
       messageContent.appendChild(filesEl);
     }
 
+    // v3.2: 扫描回复文本中的文件路径，生成输出物摘要
+    const detectedFiles = this._scanFilePathsFromText(this._adpCurrentText || '');
+    if (detectedFiles.length > 0) {
+      const icons = { md: '📝', html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', ppt: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', gif: '🖼', svg: '🖼', txt: '📄', py: '🐍', js: '📜', mp4: '🎬', mov: '🎬' };
+      const summaryHtml = detectedFiles.map(f => {
+        const ext = f.name.split('.').pop()?.toLowerCase();
+        const icon = icons[ext] || '📄';
+        return `<div class="adp-file-card" data-url="#" data-name="${this.escapeHtml(f.name)}" data-filepath="${this.escapeHtml(f.path)}">
+          <span class="adp-file-icon">${icon}</span><span class="adp-file-name">${this.escapeHtml(f.name)}</span><span class="adp-file-open-btn" data-action="open">↗ 打开</span></div>`;
+      }).join('');
+      const summaryEl = document.createElement('div');
+      summaryEl.className = 'adp-files-section adp-output-summary';
+      summaryEl.innerHTML = `<div class="adp-output-summary-title">📦 输出物列表 (${detectedFiles.length})</div>${summaryHtml}`;
+      messageContent.appendChild(summaryEl);
+      console.log('[ADP] Detected output files from text:', detectedFiles.length);
+    }
+
     // 配置来源标识
     const sourceLabels = { cloud: '☁️ 云端配置', local: '💻 本地配置', default: '📦 内置默认' };
     const sourceLabel = sourceLabels[this._adpConfigSource] || '📦 内置默认';
@@ -9091,6 +9140,65 @@ const App = {
 
     // v3.1.2: 检测 cc-workspace 文件名并转为可点击链接
     html = this._linkifyCCWorkspaceFiles(html);
+
+    // v3.2: 检测绝对文件路径（/workdir/xxx.pptx, /Users/xxx/xxx.pdf 等）并转为可点击链接
+    html = this._linkifyAbsolutePaths(html);
+
+    return html;
+  },
+
+  /**
+   * v3.2: 从文本中扫描文件路径，返回去重的文件列表
+   */
+  _scanFilePathsFromText(text) {
+    if (!text) return [];
+    const extPattern = '(?:html?|md|json|csv|xlsx?|docx?|pptx?|pdf|png|jpe?g|gif|svg|txt|py|js|ts|css|sql|sh|yaml|yml|xml|mp4|mov|mp3|wav)';
+    const pathRegex = new RegExp(
+      `(/[/\\w.\\-]+\\.${extPattern}|~/[/\\w.\\-]+\\.${extPattern})`,
+      'gi'
+    );
+    const seen = new Set();
+    const files = [];
+    let match;
+    while ((match = pathRegex.exec(text)) !== null) {
+      const filePath = match[1].replace(/^~/, '');
+      const fileName = filePath.split('/').pop();
+      if (!seen.has(filePath)) {
+        seen.add(filePath);
+        files.push({ path: filePath, name: fileName });
+      }
+    }
+    return files;
+  },
+
+  /**
+   * v3.2: 检测文本中的绝对文件路径并转为可点击链接
+   * 支持 /workdir/xxx.ext, /Users/xxx/xxx.ext, ~/xxx/xxx.ext
+   */
+  _linkifyAbsolutePaths(html) {
+    // 已知文件扩展名
+    const extPattern = '(?:html?|md|json|csv|xlsx?|docx?|pptx?|pdf|png|jpe?g|gif|svg|txt|py|js|ts|css|sql|sh|yaml|yml|xml|toml|conf|wav|mp3|mp4|mov)';
+    const icons = { md: '📝', html: '🌐', htm: '🌐', pdf: '📖', xlsx: '📊', xls: '📊', docx: '📝', doc: '📝', pptx: '📊', ppt: '📊', csv: '📋', json: '📋', png: '🖼', jpg: '🖼', jpeg: '🖼', gif: '🖼', svg: '🖼', txt: '📄', py: '🐍', js: '📜', ts: '📜', css: '🎨', sql: '🗄', sh: '⚙️', yaml: '⚙️', yml: '⚙️', xml: '📄', mp4: '🎬', mov: '🎬', mp3: '🎵', wav: '🎵' };
+
+    // 匹配绝对路径文件：/xxx/xxx.ext 或 ~/xxx/xxx.ext
+    // 跳过已在 HTML 标签属性中的路径（src=, href=, data-filepath= 等）
+    const pathRegex = new RegExp(
+      `(?<!["'=])(?<!class="[^"]*)(/[/\\w.\\-]+\\.${extPattern}|~/[/\\w.\\-]+\\.${extPattern})`,
+      'gi'
+    );
+
+    html = html.replace(pathRegex, (match, filePath) => {
+      // 跳过已在链接/标签内的
+      if (filePath.includes('</span>') || filePath.includes('class=') || filePath.includes('</a>')) return match;
+      // 展开 ~ 为 home 目录
+      const fullPath = filePath.replace(/^~/, '');
+      const fileName = filePath.split('/').pop();
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      const icon = icons[ext] || '📄';
+      const escapedPath = this.escapeHtml(fullPath);
+      const escapedName = this.escapeHtml(fileName);
+      return `<span class="chat-file-link" data-filepath="${escapedPath}"><span class="chat-file-icon">${icon}</span>${escapedName}<span class="chat-file-actions"><button class="chat-file-action-btn" data-action="open">打开</button><button class="chat-file-action-btn" data-action="reveal">📁</button></span></span>`;
+    });
 
     return html;
   },
@@ -14139,6 +14247,38 @@ ${JSON.stringify(reportData, null, 2)}`;
     }
   },
 
+  // 记录分类反馈（拖拽/点击改分类时自动调用）
+  _recordClassifyFeedback(noteId, oldCategory, newCategory) {
+    try {
+      const note = this.notesCache?.find(n => n.id === noteId);
+      if (!note) return;
+      window.electronAPI?.recordFeedback?.({
+        type: 'classify_correction',
+        content: note.content?.substring(0, 500) || '',
+        ai_output: {
+          category: oldCategory,
+          intent: note.analysis?.intent || null,
+          is_task: note.analysis?.isTask ?? null,
+          needs_recommendation: note.analysis?.needsRecommendation ?? null,
+        },
+        user_final: { category: newCategory },
+        is_positive: false,
+        reject_reason: `改分类: ${this.getNoteCategoryLabel(oldCategory)} → ${this.getNoteCategoryLabel(newCategory)}`,
+        metadata: {
+          noteId,
+          originalCategory: oldCategory,
+          correctedCategory: newCategory,
+          originalIntent: note.analysis?.intent || null,
+          traceId: note.analysis?._aiTraceId || null,
+        },
+        timestamp: new Date().toISOString()
+      });
+      console.log('[App] Classify feedback recorded:', oldCategory, '→', newCategory);
+    } catch (e) {
+      console.warn('[App] Failed to record classify feedback:', e);
+    }
+  },
+
   async changeNoteCategory(noteId, currentCategory) {
     // 移除已存在的旧弹出菜单
     const oldPopup = document.querySelector('.category-popup');
@@ -14196,6 +14336,7 @@ ${JSON.stringify(reportData, null, 2)}`;
           });
           if (result.success) {
             this.showToast(`分类已修改为「${this.getNoteCategoryLabel(newCategory)}」`);
+            this._recordClassifyFeedback(noteId, currentCategory, newCategory);
             const activeCat = document.querySelector('.category-item.active')?.dataset.category || 'all';
             this.loadNotes(activeCat);
           }
@@ -16526,6 +16667,7 @@ ${JSON.stringify(reportData, null, 2)}`;
           e.stopPropagation();
           const url = card.dataset.url;
           const savedPath = card.dataset.savedPath;
+          const name = card.dataset.name;
           // 优先打开已保存的本地文件
           if (savedPath && window.electronAPI?.artifactsRead) {
             try {
@@ -16543,11 +16685,15 @@ ${JSON.stringify(reportData, null, 2)}`;
               }
             } catch {}
           }
-          // 其次打开 URL
+          // 有 URL：直接打开
           if (url && url !== '#') {
             window.electronAPI?.openExternal(url);
+          } else if (card.dataset.filepath) {
+            // 容器内文件路径：尝试直接打开
+            window.electronAPI?.openExternal?.('file://' + card.dataset.filepath);
           } else {
-            this.showToast('请先保存后再打开', 'info');
+            // 未保存：自动保存再打开
+            this._downloadFileToArtifacts(url, name, card);
           }
         });
       }

@@ -1474,29 +1474,69 @@ function preClassify(text) {
   if (!text || text.trim().length === 0) {
     return { shouldAnalyze: false, reason: '空内容' };
   }
-  
+
+  const trimmed = text.trim();
+
   // 2. 长度检查（合并后的文本允许更长，由缓冲器的 maxTotalLength 控制）
   const effectiveMaxLength = text.startsWith('[以下是从剪贴板分') ? 3000 : FILTER_CONFIG.maxLength;
   if (text.length > effectiveMaxLength) {
     return { shouldAnalyze: false, reason: `内容过长（${text.length}字 > ${effectiveMaxLength}字）` };
   }
-  
+
+  // 2.5 短文本过滤：太短的内容没有足够信息量，直接拒绝
+  // 含 @提及 或 编号列表 的短文本可能是有效任务信号，放行到 3
+  const hasAtMentionShort = /@\S+/.test(trimmed);
+  const hasNumberedListShort = /\d+[）\).]\s*/.test(trimmed);
+  if (trimmed.length < 6 && !hasAtMentionShort && !hasNumberedListShort) {
+    return { shouldAnalyze: false, reason: `内容过短（${trimmed.length}字 < 6字）` };
+  }
+
+  // 2.6 短文本类型过滤：单字、纯数字、纯人名、纯词组
+  if (trimmed.length <= 20) {
+    // 纯数字（如 893157353）
+    if (/^\d+$/.test(trimmed)) {
+      return { shouldAnalyze: false, reason: '纯数字' };
+    }
+    // 单字（如 翚）
+    if (trimmed.length === 1) {
+      return { shouldAnalyze: false, reason: '单字' };
+    }
+    // 纯英文单词/短语无上下文（如 Forward Deployed Engineer）
+    // 仅当不含中文且 ≤20 字时过滤（纯英文短语通常没有足够的中文上下文来判断意图）
+    if (!/[\u4e00-\u9fa5]/.test(trimmed) && trimmed.length <= 30 && !hasAtMentionShort) {
+      // 但保留含问号的英文
+      if (!/[?？]/.test(trimmed)) {
+        return { shouldAnalyze: false, reason: '纯英文短文本无上下文' };
+      }
+    }
+    // 纯词组（2-4个汉字，无标点无动词，如"私有化"）
+    // 检测：全是汉字且 ≤4字 且无标点
+    if (/^[\u4e00-\u9fa5]{1,4}$/.test(trimmed)) {
+      return { shouldAnalyze: false, reason: '纯词组（无上下文）' };
+    }
+    // 纯人名（2-4个汉字 + 可能带姓氏，如"孔德明"）
+    // 2-4 个汉字无标点无空格，且不包含待办动词
+    if (/^[\u4e00-\u9fa5]{2,4}$/.test(trimmed)) {
+      return { shouldAnalyze: false, reason: '疑似人名（无上下文）' };
+    }
+  }
+
   // 3. 黑名单过滤
   for (const pattern of FILTER_CONFIG.blacklistPatterns) {
     if (pattern.test(text)) {
       return { shouldAnalyze: false, reason: `匹配黑名单模式: ${pattern}` };
     }
   }
-  
+
   // 4. 检测强信号用于辅助提示（不作为过滤条件）
   let hasAtMention = /@\S+/.test(text);
   let hasNumberedList = /\d+[）\).]\s*/.test(text);
-  
+
   // 通过预分类，交给AI判断（不再用白名单硬过滤）
   const matchInfo = hasAtMention ? '含@提及' : hasNumberedList ? '含编号列表' : '自然语言文本';
-  
-  return { 
-    shouldAnalyze: true, 
+
+  return {
+    shouldAnalyze: true,
     reason: `通过预分类（${matchInfo}）`,
     hasAtMention,
     hasNumberedList
