@@ -2543,7 +2543,9 @@ async function analyzeClipboardText(text) {
                 },
                 confidence: matchResult.confidence,
                 reason: matchResult.reason,
-                suggestedPrompt: matchResult.suggested_prompt || result.description,
+                suggestedPrompt: matchResult.suggested_prompt || `${result.description || result.title}
+
+请直接生成初版方案/表格，不需要我来创建。`,
               });
             } else {
               console.log('[Clipboard] No expert matched:', matchResult.reason);
@@ -8892,24 +8894,31 @@ async function _matchExpertForTask(task) {
 ${expertList}
 
 # 判断规则
-## 可自动处理
+## 可自动处理（优先级从高到低）
+- 信息收集、资料汇总、整理收集、收集大家的项目/商机/进度等 → 选择最相关的专家，suggested_prompt 要求生成表格
+- 表格生成、Excel、报表、数据统计、汇总表 → 选择最相关的专家，suggested_prompt 明确要求生成表格
+- 文档生成、报告撰写、文案起草、通知编写、方案初版 → 文档生成专家
 - 产品咨询、功能查询、竞品分析 → 产品知识助手
 - 需求评估、方案设计、工作量评估 → 需求分析专家
-- 文档生成、报告撰写、文案起草、通知编写 → 文档生成专家
 - 代码审查、技术方案评估 → 技术专家
-- 数据分析、报表生成 → 数据分析专家
-- 知识检索、资料查找、信息汇总 → 知识检索专家
+- 数据分析、数据报表 → 数据分析专家
+- 知识检索、资料查找 → 知识检索专家
 - 内容翻译、摘要提取、格式转换 → 内容处理专家
+- 涉及文档/表格/方案的初版制作 → 交给最相关的专家，让 ADP 生成初版
 
 ## 不可自动处理
 - 需要人工沟通（打电话、开会、面谈）
 - 需要物理操作（寄快递、签合同）
 - 需要人工决策（审批、确认、拍板）
 - 涉及敏感信息（薪资、人事）
-- 时间驱动型（提醒、跟进），非内容处理型
+- 纯时间驱动型提醒（仅有时间无内容产出）
+
+## 默认策略
+- 如果任务涉及"收集""整理""汇总""生成""制作"等词，且有明确的产出物（表格/文档/报告/方案），即使没有完美匹配的专家，也应 can_auto_process=true，选择最接近的专家
+- suggested_prompt 中必须明确要求 ADP 生成的产出格式（如 Excel 表格、Markdown 文档等）
 
 # 输出格式（严格 JSON）
-匹配到：{"can_auto_process":true,"expert_id":"expert_xxx","expert_name":"名称","confidence":0.85,"reason":"原因","suggested_prompt":"发送给专家的提示词"}
+匹配到：{"can_auto_process":true,"expert_id":"expert_xxx","expert_name":"名称","confidence":0.85,"reason":"原因","suggested_prompt":"发送给专家的提示词，包含明确的产出要求（如：请生成一个Excel表格，包含以下列：客户名称、应用场景、项目金额、项目状态）"}
 未匹配：{"can_auto_process":false,"confidence":0.9,"reason":"原因"}
 只输出 JSON。`;
 
@@ -11167,8 +11176,8 @@ ipcMain.handle('notebook:get-image', async (event, imagePath) => {
           if (!downloaded) {
             try {
               console.log('[Notebook] Trying authenticated API for image:', imagePath);
-              // 先通过 server_path 查找图片元数据
-              const listResult = await syncApiRequest(`/notes/images?limit=50`);
+              // 先通过 server_path 查找图片元数据（必须用 GET，syncApiRequest 默认是 POST）
+              const listResult = await syncApiRequest(`/notes/images?limit=50`, { method: 'GET' });
               if (listResult.ok && listResult.images) {
                 const imgMeta = listResult.images.find(img => img.server_path === imagePath);
                 if (imgMeta) {

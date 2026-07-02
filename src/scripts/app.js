@@ -14982,14 +14982,14 @@ ${JSON.stringify(reportData, null, 2)}`;
     const input = document.getElementById('aiChatInput');
     if (input && suggestedPrompt) {
       input.value = suggestedPrompt;
-      // 延迟发送确保 UI 准备好
-      setTimeout(() => {
-        this.sendAIMessage();
-        // 6. 会话创建后关联到记事本
-        if (this._activeSessionId && noteId) {
-          this._linkSessionToNote(this._activeSessionId, noteId, expert);
-        }
-      }, 300);
+      // 直接发送（createNewChatSession 已同步完成，_activeSessionId 已就绪）
+      await this.sendAIMessage();
+      // 强制立即保存会话消息（不防抖），确保会话记录不丢失
+      this._saveSessionMessagesForSession(this._activeSessionId);
+      // 6. 会话创建后关联到记事本
+      if (this._activeSessionId && noteId) {
+        this._linkSessionToNote(this._activeSessionId, noteId, expert);
+      }
     }
   },
 

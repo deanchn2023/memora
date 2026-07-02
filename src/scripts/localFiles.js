@@ -164,6 +164,8 @@ const LocalFiles = {
 
   async onShow() {
     this.init();
+    // 确保 isLoading 不会卡住（防止异常退出后状态残留）
+    this.isLoading = false;
     if (!this.indexBuilt) {
       await this.buildIndex(false);
     } else {
@@ -190,7 +192,7 @@ const LocalFiles = {
       if (result.success) {
         this.indexBuilt = true;
         this._updateIndexStatus(result);
-        this.searchFiles();
+        await this.searchFiles();
       } else {
         if (statusEl) statusEl.innerHTML = `<span class="local-index-error">❌ 索引失败${result.error ? ': ' + result.error : ''}</span>`;
       }
@@ -231,14 +233,19 @@ const LocalFiles = {
         this.total = result.total;
         this.hasMore = result.hasMore;
         if (resetList) {
-          this.files = result.files;
+          this.files = result.files || [];
         } else {
-          this.files = this.files.concat(result.files);
+          this.files = this.files.concat(result.files || []);
         }
+        console.log('[LocalFiles] Search result:', result.files?.length, 'files, total:', result.total);
         this.renderFileList();
+      } else {
+        console.error('[LocalFiles] Search returned not success:', result);
       }
     } catch (e) {
       console.error('[LocalFiles] Search error:', e);
+      const grid = document.getElementById('localFilesGrid');
+      if (grid) grid.innerHTML = `<div style="padding:20px;color:#FF3B30;">搜索失败: ${e.message || e}</div>`;
     } finally {
       this.isLoading = false;
       if (loadingEl) loadingEl.style.display = 'none';
