@@ -5124,7 +5124,13 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 ## 使用示例
 当用户说"标记所有待办为已完成"，你应该调用 \`complete_all_tasks\` 工具
 当用户说"创建一个待办任务：明天开会"，你应该调用 \`create_task\` 工具
-当用户说"搜索所有关于项目的笔记"，你应该调用 \`search_notes\` 工具`;
+当用户说"搜索所有关于项目的笔记"，你应该调用 \`search_notes\` 工具
+
+## 图片处理注意事项
+- 当前模型仅支持文本输入，**不支持图片理解**
+- 如果任务涉及图片生成（如截图、绘图），完成后只需报告文件路径，不要尝试"查看"或"分析"图片内容
+- 图片文件生成后，直接总结任务完成情况，不需要读取或描述图片内容
+- 如果遇到"Model only support text input"错误，请立即停止尝试处理图片，转为纯文本总结`;
 
   const finalSystemRole = systemRole
     ? `${defaultSystemRole}\n\n## 用户附加指令\n${systemRole}`
@@ -5620,23 +5626,53 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
             }
             if (!errMsg) errMsg = 'CC 查询失败，请查看控制台日志';
             console.error('[CC] Result error:', errMsg);
-            // 审计日志：CC 结果错误
-            if (auditLogger) {
-              auditLogger.record({
-                module: 'cc_chat',
-                model: _ccAuditModel,
-                skill: skill || null,
-                baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl || '',
-                input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
-                output: { status: msg.api_error_status || 500, contentLen: 0, content: '', finishReason: 'error' },
-                tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-                latencyMs: Date.now() - _ccAuditStart,
-                error: errMsg,
-                traceId: _ccTraceId,
-                vectorSources: _ccVectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
-              });
+
+            // v3.2: 处理 "Model only support text input" 错误 — 自动重试纯文本总结
+            if (errMsg.includes('Model only support text input') || errMsg.includes('only support text input')) {
+              console.warn('[CC] Model does not support image input, retrying with text-only summary...');
+              send({ event: 'info', level: 'warning', content: '⚠️ 当前模型不支持图片输入，正在尝试纯文本总结...' });
+              
+              // 发送纯文本总结请求
+              const textOnlyOptions = { ...options };
+              textOnlyOptions.systemPrompt = `${defaultSystemRole}\n\n## 紧急指令\n任务已完成，请直接用纯文本总结任务结果，不要尝试查看或分析任何图片文件。`;
+              
+              try {
+                const retryStream = query({ prompt: '总结已完成的任务，不要查看任何图片文件', options: textOnlyOptions });
+                for await (const retryMsg of retryStream) {
+                  if (_ccController?.signal.aborted) break;
+                  if (retryMsg.type === 'stream_event' && retryMsg.event?.type === 'content_block_delta') {
+                    if (retryMsg.event.delta?.type === 'text_delta' && retryMsg.event.delta.text) {
+                      send({ event: 'delta', content: retryMsg.event.delta.text });
+                    }
+                  } else if (retryMsg.type === 'result' && retryMsg.subtype === 'success') {
+                    send({ event: 'done', sessionId: retryMsg.session_id || newSessionId, result: retryMsg.result });
+                    break;
+                  }
+                }
+              } catch (retryErr) {
+                console.error('[CC] Retry failed:', retryErr.message);
+                // 如果重试也失败，至少返回已完成的信息
+                send({ event: 'done', sessionId: newSessionId, result: '任务已完成，但模型不支持图片输入，无法生成详细总结。请手动查看生成的文件。' });
+              }
+            } else {
+              // 审计日志：CC 结果错误
+              if (auditLogger) {
+                auditLogger.record({
+                  module: 'cc_chat',
+                  model: _ccAuditModel,
+                  skill: skill || null,
+                  baseUrl: providerEnv?.ANTHROPIC_BASE_URL || config.baseUrl || '',
+                  input: { systemPromptLen: 0, userPromptLen: message.length, userPrompt: message },
+                  output: { status: msg.api_error_status || 500, contentLen: 0, content: '', finishReason: 'error' },
+                  tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                  latencyMs: Date.now() - _ccAuditStart,
+                  error: errMsg,
+                  traceId: _ccTraceId,
+                  vectorSources: _ccVectorSources.map(s => ({ source_type: s.source_type, source_id: s.source_id, title: s.title, score: s.score })),
+                });
+              }
+              send({ event: 'error', error: errMsg });
             }
-            send({ event: 'error', error: errMsg });
           }
           break;
         }
