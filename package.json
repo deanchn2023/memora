@@ -98,6 +98,7 @@
       "prompts/**",
       "resources/**",
       "package.json",
+      "node_modules/**",
       "!src/scripts/memory/memories.json",
       "!src/scripts/memory/entity-graph.json",
       "!src/scripts/notebook/notes.json",
