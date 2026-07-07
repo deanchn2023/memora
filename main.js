@@ -13445,6 +13445,29 @@ app.whenReady().then(() => {
     }
   })();
   
+  // v3.2: 初始化 MCP Server（待办、记事本、设置模块）
+  const TaskMCPServer = require('./src/mcp/task-mcp-server');
+  const NotebookMCPServer = require('./src/mcp/notebook-mcp-server');
+  const SettingsMCPServer = require('./src/mcp/settings-mcp-server');
+  
+  const taskMcpServer = new TaskMCPServer();
+  taskMcpServer.setDependencies(db, vectorQueue);
+  taskMcpServer.registerTools();
+  
+  const notebookMcpServer = new NotebookMCPServer();
+  notebookMcpServer.setDependencies(notebook, vectorQueue, feedbackLogger);
+  notebookMcpServer.registerTools();
+  
+  const settingsMcpServer = new SettingsMCPServer();
+  settingsMcpServer.setDependencies(getSetting, setSetting, deleteSetting, settingsCache, authState);
+  settingsMcpServer.registerTools();
+  
+  // 启动 HTTP 模式的 MCP Server（端口 3002-3004）
+  taskMcpServer.start('http', 3002);
+  notebookMcpServer.start('http', 3003);
+  settingsMcpServer.start('http', 3004);
+  console.log('[MCP] MCP Servers started: tasks(3002), notebook(3003), settings(3004)');
+  
   createWindow();
   console.log('[App] Window created');
   // Set mainWindow for SubTaskPoller
