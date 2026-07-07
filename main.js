@@ -5112,7 +5112,39 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 - 如需修改配置，引导用户在 Memora 的设置面板中操作
 - 可以使用 Bash/Read/Write/Edit/Glob/Grep/WebSearch 等工具完成编程任务
 - Bash 工具可用：可执行 git、npm、npx 等命令
-- 工作目录是 CC 的工作区，可在其中创建和修改文件`;
+- 工作目录是 CC 的工作区，可在其中创建和修改文件
+
+## 内置 Memora MCP 工具（自动注入）
+你可以直接调用以下工具来操作 Memora 应用的数据：
+
+### 待办任务 (memora-tasks)
+- \`get_tasks\` - 获取任务列表
+- \`create_task\` - 创建新任务
+- \`update_task\` - 更新任务
+- \`delete_task\` - 删除任务
+- \`complete_task\` - 标记任务完成
+- \`complete_all_tasks\` - 标记所有任务完成
+- \`get_task_stats\` - 获取任务统计
+
+### 记事本 (memora-notebook)
+- \`get_notes\` - 获取笔记列表
+- \`create_note\` - 创建笔记
+- \`update_note\` - 更新笔记
+- \`delete_note\` - 删除笔记
+- \`search_notes\` - 搜索笔记
+- \`change_note_category\` - 修改笔记分类
+- \`get_categories\` - 获取分类列表
+
+### 设置 (memora-settings)
+- \`get_setting\` - 获取设置项
+- \`set_setting\` - 设置配置项
+- \`get_ai_config\` - 获取 AI 配置
+- \`get_auth_state\` - 获取认证状态
+
+## 使用示例
+当用户说"标记所有待办为已完成"，你应该调用 \`complete_all_tasks\` 工具
+当用户说"创建一个待办任务：明天开会"，你应该调用 \`create_task\` 工具
+当用户说"搜索所有关于项目的笔记"，你应该调用 \`search_notes\` 工具`;
 
   const finalSystemRole = systemRole
     ? `${defaultSystemRole}\n\n## 用户附加指令\n${systemRole}`
@@ -5183,6 +5215,33 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
     options.mcpServers = mcpServers;
     console.log(`[CC] MCP servers: ${selectedConnectors.map(c => c.name).join(', ')}`);
   }
+
+  // v3.2: 内置 MCP Server 自动注入（待办任务、记事本、设置）
+  const builtinMcpServers = [
+    {
+      'memora-tasks': {
+        type: 'http',
+        url: 'http://localhost:3002',
+        headers: {}
+      }
+    },
+    {
+      'memora-notebook': {
+        type: 'http',
+        url: 'http://localhost:3003',
+        headers: {}
+      }
+    },
+    {
+      'memora-settings': {
+        type: 'http',
+        url: 'http://localhost:3004',
+        headers: {}
+      }
+    }
+  ];
+  options.mcpServers = [...(options.mcpServers || []), ...builtinMcpServers];
+  console.log(`[CC] Built-in MCP servers injected: ${builtinMcpServers.map(s => Object.keys(s)[0]).join(', ')}`);
 
   // Agent Plan 专属 MCP Server 自动注入（豆包搜索 + 多模态生成）
   if (activeProviderId === 'volcano_agent') {
