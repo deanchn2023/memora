@@ -5114,32 +5114,12 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
 - Bash 工具可用：可执行 git、npm、npx 等命令
 - 工作目录是 CC 的工作区，可在其中创建和修改文件
 
-## 内置 Memora MCP 工具（自动注入）
-你可以直接调用以下工具来操作 Memora 应用的数据：
+## 内置 Memora MCP 工具
+你可以直接调用以下内置工具来操作 Memora 应用的数据：
 
-### 待办任务 (memora-tasks)
-- \`get_tasks\` - 获取任务列表
-- \`create_task\` - 创建新任务
-- \`update_task\` - 更新任务
-- \`delete_task\` - 删除任务
-- \`complete_task\` - 标记任务完成
-- \`complete_all_tasks\` - 标记所有任务完成
-- \`get_task_stats\` - 获取任务统计
-
-### 记事本 (memora-notebook)
-- \`get_notes\` - 获取笔记列表
-- \`create_note\` - 创建笔记
-- \`update_note\` - 更新笔记
-- \`delete_note\` - 删除笔记
-- \`search_notes\` - 搜索笔记
-- \`change_note_category\` - 修改笔记分类
-- \`get_categories\` - 获取分类列表
-
-### 设置 (memora-settings)
-- \`get_setting\` - 获取设置项
-- \`set_setting\` - 设置配置项
-- \`get_ai_config\` - 获取 AI 配置
-- \`get_auth_state\` - 获取认证状态
+- **待办任务** (memora-tasks): 获取/创建/更新/删除任务、标记完成、任务统计
+- **记事本** (memora-notebook): 获取/创建/更新/删除笔记、搜索笔记、分类管理
+- **设置** (memora-settings): 读写配置项、获取 AI/认证状态
 
 ## 使用示例
 当用户说"标记所有待办为已完成"，你应该调用 \`complete_all_tasks\` 工具
@@ -5217,26 +5197,33 @@ ipcMain.handle('cc:invoke', async (event, { message, attachments, sessionId, sys
   }
 
   // v3.2: 内置 MCP Server 自动注入（待办任务、记事本、设置）
+  const userDataPath = app.getPath('userData');
   const builtinMcpServers = [
     {
       'memora-tasks': {
-        type: 'http',
-        url: 'http://localhost:3002',
-        headers: {}
+        type: 'stdio',
+        command: 'node',
+        args: [path.join(__dirname, 'src', 'mcp', 'start-task-server.js')],
+        env: { DB_PATH: path.join(userDataPath, 'memora-data.json') }
       }
     },
     {
       'memora-notebook': {
-        type: 'http',
-        url: 'http://localhost:3003',
-        headers: {}
+        type: 'stdio',
+        command: 'node',
+        args: [path.join(__dirname, 'src', 'mcp', 'start-notebook-server.js')],
+        env: { 
+          NOTES_PATH: path.join(userDataPath, 'notebook-data.json'),
+          CATEGORIES_PATH: path.join(userDataPath, 'notebook-categories.json')
+        }
       }
     },
     {
       'memora-settings': {
-        type: 'http',
-        url: 'http://localhost:3004',
-        headers: {}
+        type: 'stdio',
+        command: 'node',
+        args: [path.join(__dirname, 'src', 'mcp', 'start-settings-server.js')],
+        env: { SETTINGS_PATH: path.join(userDataPath, 'memora-data.json') }
       }
     }
   ];
@@ -13503,29 +13490,6 @@ app.whenReady().then(() => {
       console.error('[Vector] Init error:', e.message);
     }
   })();
-  
-  // v3.2: 初始化 MCP Server（待办、记事本、设置模块）
-  const TaskMCPServer = require('./src/mcp/task-mcp-server');
-  const NotebookMCPServer = require('./src/mcp/notebook-mcp-server');
-  const SettingsMCPServer = require('./src/mcp/settings-mcp-server');
-  
-  const taskMcpServer = new TaskMCPServer();
-  taskMcpServer.setDependencies(db, vectorQueue);
-  taskMcpServer.registerTools();
-  
-  const notebookMcpServer = new NotebookMCPServer();
-  notebookMcpServer.setDependencies(notebook, vectorQueue, feedbackLogger);
-  notebookMcpServer.registerTools();
-  
-  const settingsMcpServer = new SettingsMCPServer();
-  settingsMcpServer.setDependencies(getSetting, setSetting, deleteSetting, settingsCache, authState);
-  settingsMcpServer.registerTools();
-  
-  // 启动 HTTP 模式的 MCP Server（端口 3002-3004）
-  taskMcpServer.start('http', 3002);
-  notebookMcpServer.start('http', 3003);
-  settingsMcpServer.start('http', 3004);
-  console.log('[MCP] MCP Servers started: tasks(3002), notebook(3003), settings(3004)');
   
   createWindow();
   console.log('[App] Window created');
