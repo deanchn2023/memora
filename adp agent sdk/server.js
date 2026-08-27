@@ -20,8 +20,12 @@ try {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3201;
-const ADP_APP_KEY = process.env.ADP_APP_KEY || '';
-const ADP_URL = process.env.ADP_URL || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+// ===== v4.0 火山引擎版本：腾讯云 ADP 配置已注释 =====
+// TODO(v4.0): 确认火山引擎智能体引擎后替换
+// const ADP_APP_KEY = process.env.ADP_APP_KEY || '';
+// const ADP_URL = process.env.ADP_URL || 'https://wss.lke.cloud.tencent.com/adp/v2/chat';
+const ADP_APP_KEY = '';
+const ADP_URL = '';
 
 if (!ADP_APP_KEY) {
   console.warn('⚠️  未配置 ADP_APP_KEY，请在 .env 文件中设置。');

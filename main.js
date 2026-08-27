@@ -5861,16 +5861,23 @@ ipcMain.handle('test-llm-connection', async (event, { baseUrl, apiKey, model }) 
   }
 });
 
-// ADP配置相关
-const DEFAULT_ADP_APP_KEY = process.env.ADP_APP_KEY || '';
-// 知识推荐和知识搜索使用的专用 AppKey（与通用 ADP 助手不同）
-const DEFAULT_ADP_KNOWLEDGE_APP_KEY = process.env.ADP_KNOWLEDGE_APP_KEY || '';
-// 知识聚类使用的 AppKey（默认与智能推荐相同）
-const DEFAULT_ADP_CLUSTERING_APP_KEY = process.env.ADP_CLUSTERING_APP_KEY || '';
-// v2.3: 洞察模块 AppKey（活化/演化/冲突 — 暂复用知识 Key，后续可独立配置）
+// ===== v4.0 火山引擎版本：腾讯云 ADP 配置已注释，后续替换为火山引擎智能体引擎 =====
+// TODO(v4.0): 确认火山引擎智能体引擎后，替换以下 AppKey 和 URL
+// --- 腾讯云 ADP 配置（已注释，保留以供参考）---
+// const DEFAULT_ADP_APP_KEY = process.env.ADP_APP_KEY || '';
+// const DEFAULT_ADP_KNOWLEDGE_APP_KEY = process.env.ADP_KNOWLEDGE_APP_KEY || '';
+// const DEFAULT_ADP_CLUSTERING_APP_KEY = process.env.ADP_CLUSTERING_APP_KEY || '';
+// const DEFAULT_ADP_ACTIVATION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+// const DEFAULT_ADP_EVOLUTION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+// const DEFAULT_ADP_CONFLICT_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+// --- 腾讯云 ADP 配置结束 ---
+const DEFAULT_ADP_APP_KEY = '';
+const DEFAULT_ADP_KNOWLEDGE_APP_KEY = '';
+const DEFAULT_ADP_CLUSTERING_APP_KEY = '';
 const DEFAULT_ADP_ACTIVATION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
 const DEFAULT_ADP_EVOLUTION_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
 const DEFAULT_ADP_CONFLICT_APP_KEY = DEFAULT_ADP_KNOWLEDGE_APP_KEY;
+// ===== 火山引擎版本 ADP 配置注释结束 =====
 // File Share 服务默认 API Key
 const DEFAULT_FILE_SHARE_API_KEY = process.env.FILE_SHARE_API_KEY || '';
 

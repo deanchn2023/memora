@@ -168,13 +168,24 @@ function getDefaultConfig() {
       model: 'deepseek-v4-flash',
       daily_limit: 500
     },
+    // ===== v4.0 火山引擎版本：腾讯云 ADP 配置已注释 =====
+    // TODO(v4.0): 确认火山引擎智能体引擎后替换
+    // adp: {
+    //   app_key: process.env.ADP_APP_KEY || '',
+    //   knowledge_app_key: process.env.ADP_KNOWLEDGE_APP_KEY || '',
+    //   search_app_key: process.env.ADP_SEARCH_APP_KEY || '',
+    //   clustering_app_key: process.env.ADP_CLUSTERING_APP_KEY || '',
+    //   graph_app_key: process.env.ADP_GRAPH_APP_KEY || '',
+    //   url: 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
+    //   agent_name: '我的AI助手'
+    // },
     adp: {
-      app_key: process.env.ADP_APP_KEY || '',
-      knowledge_app_key: process.env.ADP_KNOWLEDGE_APP_KEY || '',
-      search_app_key: process.env.ADP_SEARCH_APP_KEY || '',
-      clustering_app_key: process.env.ADP_CLUSTERING_APP_KEY || '',
-      graph_app_key: process.env.ADP_GRAPH_APP_KEY || '',
-      url: 'https://wss.lke.cloud.tencent.com/adp/v2/chat',
+      app_key: '',
+      knowledge_app_key: '',
+      search_app_key: '',
+      clustering_app_key: '',
+      graph_app_key: '',
+      url: '',
       agent_name: '我的AI助手'
     },
     file_share: {
