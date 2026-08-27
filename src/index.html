@@ -2875,28 +2875,32 @@
 
         <!-- 向量数据库 -->
         <div class="settings-panel hidden" id="vectorPanel">
-          <div style="padding: 20px;">
-            <h3 style="margin-bottom: 16px;">🗄️ 向量数据库 (Zvec)</h3>
-            <div id="vectorStatusInfo" style="margin-bottom: 20px; font-size: 13px; color: var(--text-secondary);"></div>
+          <h4 class="settings-section-title">🗄️ 向量数据库 (Zvec)</h4>
+          <div id="vectorStatusInfo" class="config-status"></div>
 
-            <div style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
-              <select id="vectorCollectionSelect" class="settings-input" style="width: auto;">
+          <div class="form-group">
+            <label for="vectorCollectionSelect">数据集合</label>
+            <div class="vector-action-row">
+              <select id="vectorCollectionSelect" class="settings-input">
                 <option value="notes">📝 笔记 (notes)</option>
                 <option value="memories">🧠 记忆 (memories)</option>
                 <option value="tasks">✅ 待办 (tasks)</option>
                 <option value="knowledge">📚 知识 (knowledge)</option>
               </select>
-              <button class="btn primary" id="vectorBrowseBtn" style="padding: 6px 16px;">浏览数据</button>
-              <button class="btn secondary" id="vectorRebuildBtn" style="padding: 6px 16px;">🔄 重建索引</button>
+              <button class="btn primary" id="vectorBrowseBtn">浏览数据</button>
+              <button class="btn secondary" id="vectorRebuildBtn">🔄 重建索引</button>
             </div>
-
-            <div style="margin-bottom: 16px;">
-              <input type="text" id="vectorSearchInput" class="settings-input" placeholder="输入搜索词测试语义检索..." style="width: 60%; display: inline-block;" />
-              <button class="btn primary" id="vectorSearchBtn" style="padding: 6px 16px; margin-left: 8px;">🔍 搜索</button>
-            </div>
-
-            <div id="vectorResults" style="max-height: 500px; overflow-y: auto; border: 1px solid var(--border-light, rgba(0,0,0,0.08)); border-radius: 8px; padding: 12px; font-size: 12px;"></div>
           </div>
+
+          <div class="form-group">
+            <label for="vectorSearchInput">语义检索测试</label>
+            <div class="vector-action-row">
+              <input type="text" id="vectorSearchInput" class="settings-input" placeholder="输入搜索词测试语义检索..." />
+              <button class="btn primary" id="vectorSearchBtn">🔍 搜索</button>
+            </div>
+          </div>
+
+          <div id="vectorResults" class="vector-results"></div>
         </div>
 
         <!-- 剪贴板配置 -->
